@@ -1,9 +1,9 @@
 {
   "manifest_version": "0.3",
   "name": "orcid-mcp-server",
-  "version": "0.1.0",
-  "description": "",
-  "author": { "name": "" },
+  "version": "0.1.1",
+  "description": "Search and retrieve researcher profiles, works, affiliations, funding, and peer review records from the ORCID registry.",
+  "author": { "name": "cyanheads" },
   "server": {
     "type": "node",
     "entry_point": "dist/index.js",

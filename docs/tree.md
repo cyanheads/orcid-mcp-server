@@ -1,6 +1,6 @@
 # orcid-mcp-server - Directory Structure
 
-Generated on: 2026-05-26 00:19:11
+Generated on: 2026-05-26 03:15:37
 
 ```text
 orcid-mcp-server/
@@ -104,26 +104,45 @@ orcid-mcp-server/
 │   └── tool-defs-analysis/
 │       └── SKILL.md
 ├── src/
+│   ├── config/
+│   │   └── server-config.ts
 │   ├── mcp-server/
 │   │   ├── prompts/
 │   │   │   └── definitions/
-│   │   │       └── echo.prompt.ts
 │   │   ├── resources/
 │   │   │   └── definitions/
-│   │   │       ├── echo-app-ui.app-resource.ts
-│   │   │       └── echo.resource.ts
+│   │   │       ├── researcher-profile.resource.ts
+│   │   │       └── researcher-works.resource.ts
 │   │   └── tools/
 │   │       └── definitions/
-│   │           ├── echo-app.app-tool.ts
-│   │           └── echo.tool.ts
+│   │           ├── get-affiliations.tool.ts
+│   │           ├── get-funding.tool.ts
+│   │           ├── get-peer-reviews.tool.ts
+│   │           ├── get-profile.tool.ts
+│   │           ├── get-works.tool.ts
+│   │           ├── resolve-researcher.tool.ts
+│   │           └── search-researchers.tool.ts
+│   ├── services/
+│   │   └── orcid/
+│   │       ├── normalizers.ts
+│   │       ├── orcid-service.ts
+│   │       └── types.ts
 │   └── index.ts
 ├── tests/
-│   ├── prompts/
-│   │   └── echo.prompt.test.ts
 │   ├── resources/
-│   │   └── echo.resource.test.ts
+│   │   ├── researcher-profile.resource.test.ts
+│   │   └── researcher-works.resource.test.ts
+│   ├── services/
+│   │   └── orcid/
+│   │       └── normalizers.test.ts
 │   └── tools/
-│       └── echo.tool.test.ts
+│       ├── get-affiliations.tool.test.ts
+│       ├── get-funding.tool.test.ts
+│       ├── get-peer-reviews.tool.test.ts
+│       ├── get-profile.tool.test.ts
+│       ├── get-works.tool.test.ts
+│       ├── resolve-researcher.tool.test.ts
+│       └── search-researchers.tool.test.ts
 ├── .dockerignore
 ├── .env.example
 ├── .gitignore
