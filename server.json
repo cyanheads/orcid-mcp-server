@@ -1,19 +1,19 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.cyanheads/orcid-mcp-server",
-  "description": "Search and retrieve researcher profiles, works, affiliations, funding, and peer review records from the ORCID registry.",
+  "description": "Researcher profiles, works, affiliations, funding, and peer reviews from the ORCID registry.",
   "repository": {
     "url": "https://github.com/cyanheads/orcid-mcp-server",
     "source": "github"
   },
-  "version": "0.1.1",
+  "version": "0.1.2",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/orcid-mcp-server",
       "runtimeHint": "node",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "packageArguments": [
         {
           "type": "positional",
@@ -42,7 +42,7 @@
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/orcid-mcp-server",
       "runtimeHint": "node",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "packageArguments": [
         {
           "type": "positional",
