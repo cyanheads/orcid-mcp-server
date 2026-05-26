@@ -1,15 +1,16 @@
 # orcid-mcp-server - Directory Structure
 
-Generated on: 2026-05-26 03:15:37
+Generated on: 2026-05-26 07:42:33
 
 ```text
 orcid-mcp-server/
 ├── .claude/
 ├── .github/
-│   └── ISSUE_TEMPLATE/
-│       ├── bug_report.yml
-│       ├── config.yml
-│       └── feature_request.yml
+│   ├── ISSUE_TEMPLATE/
+│   │   ├── bug_report.yml
+│   │   ├── config.yml
+│   │   └── feature_request.yml
+│   └── FUNDING.yml
 ├── .vscode/
 │   ├── extensions.json
 │   └── settings.json

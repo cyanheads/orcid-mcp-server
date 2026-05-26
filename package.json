@@ -1,6 +1,6 @@
 {
   "name": "@cyanheads/orcid-mcp-server",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "mcpName": "io.github.cyanheads/orcid-mcp-server",
   "description": "Search and retrieve researcher profiles, works, affiliations, funding, and peer review records from the ORCID registry via MCP. STDIO or Streamable HTTP.",
   "type": "module",
@@ -20,7 +20,7 @@
   ],
   "scripts": {
     "build": "bun run scripts/build.ts",
-    "rebuild": "bun run scripts/clean.ts && bun run scripts/build.ts",
+    "rebuild": "bun run scripts/clean.ts && bun run build",
     "clean": "bun run scripts/clean.ts",
     "devcheck": "bun run scripts/devcheck.ts",
     "audit:refresh": "rm -f bun.lock && bun install && bun audit",
@@ -30,13 +30,12 @@
     "lint:mcp": "bun run scripts/lint-mcp.ts",
     "lint:packaging": "bun run scripts/lint-packaging.ts",
     "publish-mcp": "mcp-publisher login github -token \"$(security find-generic-password -a \"$USER\" -s mcp-publisher-github-pat -w)\" && mcp-publisher publish",
-    "bundle": "npm run build && npx -y @anthropic-ai/mcpb pack . dist/orcid-mcp-server.mcpb",
+    "bundle": "bun run build && npx -y @anthropic-ai/mcpb pack . dist/orcid-mcp-server.mcpb",
     "changelog:build": "bun run scripts/build-changelog.ts",
     "changelog:check": "bun run scripts/build-changelog.ts --check",
-    "test": "vitest run",
-    "start": "node dist/index.js",
-    "start:stdio": "MCP_TRANSPORT_TYPE=stdio node dist/index.js",
-    "start:http": "MCP_TRANSPORT_TYPE=http node dist/index.js"
+    "test": "bun run vitest run",
+    "start:stdio": "MCP_TRANSPORT_TYPE=stdio bun ./dist/index.js",
+    "start:http": "MCP_TRANSPORT_TYPE=http bun ./dist/index.js"
   },
   "keywords": [
     "mcp",
@@ -55,7 +54,23 @@
     "type": "git",
     "url": "git+https://github.com/cyanheads/orcid-mcp-server.git"
   },
+  "bugs": {
+    "url": "https://github.com/cyanheads/orcid-mcp-server/issues"
+  },
+  "homepage": "https://github.com/cyanheads/orcid-mcp-server#readme",
+  "author": "cyanheads <casey@caseyjhand.com> (https://github.com/cyanheads/orcid-mcp-server#readme)",
+  "funding": [
+    {
+      "type": "github",
+      "url": "https://github.com/sponsors/cyanheads"
+    },
+    {
+      "type": "buy_me_a_coffee",
+      "url": "https://www.buymeacoffee.com/cyanheads"
+    }
+  ],
   "license": "Apache-2.0",
+  "packageManager": "bun@1.3.2",
   "engines": {
     "bun": ">=1.3.0",
     "node": ">=24.0.0"
