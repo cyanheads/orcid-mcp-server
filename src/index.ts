@@ -1,21 +1,37 @@
 #!/usr/bin/env node
 /**
- * @fileoverview orcid-mcp-server MCP server entry point.
+ * @fileoverview orcid-mcp-server MCP server entry point. Provides access to the
+ * ORCID researcher registry: search, profiles, works, affiliations, funding, and peer reviews.
  * @module index
  */
 
 import { createApp } from '@cyanheads/mcp-ts-core';
-import { echoPrompt } from './mcp-server/prompts/definitions/echo.prompt.js';
-import { echoResource } from './mcp-server/resources/definitions/echo.resource.js';
-import { echoAppUiResource } from './mcp-server/resources/definitions/echo-app-ui.app-resource.js';
-import { echoTool } from './mcp-server/tools/definitions/echo.tool.js';
-import { echoAppTool } from './mcp-server/tools/definitions/echo-app.app-tool.js';
+import { researcherProfileResource } from './mcp-server/resources/definitions/researcher-profile.resource.js';
+import { researcherWorksResource } from './mcp-server/resources/definitions/researcher-works.resource.js';
+import { orcidGetAffiliations } from './mcp-server/tools/definitions/get-affiliations.tool.js';
+import { orcidGetFunding } from './mcp-server/tools/definitions/get-funding.tool.js';
+import { orcidGetPeerReviews } from './mcp-server/tools/definitions/get-peer-reviews.tool.js';
+import { orcidGetProfile } from './mcp-server/tools/definitions/get-profile.tool.js';
+import { orcidGetWorks } from './mcp-server/tools/definitions/get-works.tool.js';
+import { orcidResolveResearcher } from './mcp-server/tools/definitions/resolve-researcher.tool.js';
+import { orcidSearchResearchers } from './mcp-server/tools/definitions/search-researchers.tool.js';
+import { initOrcidService } from './services/orcid/orcid-service.js';
 
 await createApp({
-  tools: [echoTool, echoAppTool],
-  resources: [echoResource, echoAppUiResource],
-  prompts: [echoPrompt],
-  // instructions: 'Server-level orientation forwarded to the model on every initialize.\n' +
-  //   '- Use shortcut `X` for the most common case\n' +
-  //   '- Tools require auth via the `inventory:read` scope',
+  tools: [
+    orcidGetProfile,
+    orcidSearchResearchers,
+    orcidGetWorks,
+    orcidGetAffiliations,
+    orcidGetFunding,
+    orcidGetPeerReviews,
+    orcidResolveResearcher,
+  ],
+  resources: [researcherProfileResource, researcherWorksResource],
+  prompts: [],
+  setup(core) {
+    initOrcidService(core.config, core.storage);
+  },
+  instructions:
+    'ORCID researcher registry server. Use orcid_search_researchers for exact field lookups (name + institution + DOI/PMID). Use orcid_resolve_researcher when the input is an ambiguous author name needing ranked disambiguation. Use orcid_get_profile → orcid_get_works → orcid_get_affiliations to build a researcher dossier. DOIs and PMIDs from orcid_get_works are ready for chaining to Crossref or PubMed servers.',
 });
