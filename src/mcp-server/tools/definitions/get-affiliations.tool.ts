@@ -5,12 +5,13 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import {
   type AffiliationType,
   getOrcidService,
   normalizeOrcidId,
 } from '@/services/orcid/orcid-service.js';
+import type { Affiliation } from '@/services/orcid/types.js';
 
 const AFFILIATION_TYPES = [
   'employment',
@@ -26,13 +27,16 @@ const AFFILIATION_TYPES = [
 export const orcidGetAffiliations = tool('orcid_get_affiliations', {
   title: 'Get ORCID Researcher Affiliations',
   description:
-    'Fetch affiliation records for an ORCID researcher. The `types` parameter controls which affiliation sections to return: employment, education, invited-positions, distinctions, memberships, qualifications, services, or all. Default is employment and education. Returns organization names, disambiguated organization identifiers (ROR/GRID/Ringgold), departments, roles, and date ranges. Uses a single /activities API call regardless of how many types are requested — no N+1 overhead. Affiliation data is self-reported; absence does not mean no affiliation.',
+    'Fetch affiliation records for an ORCID researcher. The `types` parameter controls which affiliation sections to return: employment, education, invited-positions, distinctions, memberships, qualifications, services, or all. Default is employment and education. Returns organization names, disambiguated organization identifiers (ROR/GRID/Ringgold), departments, roles, and date ranges. Affiliation data is self-reported; absence does not mean no affiliation.',
   annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
 
   input: z.object({
     orcid_id: z
       .string()
-      .min(1)
+      .regex(
+        /^(https?:\/\/orcid\.org\/)?\d{4}-\d{4}-\d{4}-\d{3}[\dX]$/,
+        'Must be a valid ORCID iD (e.g. 0000-0001-2345-6789) or full ORCID URI.',
+      )
       .describe(
         'ORCID iD — bare format (0000-0001-2345-6789) or full URI (https://orcid.org/0000-0001-2345-6789).',
       ),
@@ -119,11 +123,22 @@ export const orcidGetAffiliations = tool('orcid_get_affiliations', {
     const service = getOrcidService();
     ctx.log.info('orcid_get_affiliations', { orcidId: input.orcid_id, types: input.types });
 
-    const affiliations = await service.getAffiliations(
-      input.orcid_id,
-      input.types as AffiliationType[],
-      ctx,
-    );
+    let affiliations: Affiliation[];
+    try {
+      affiliations = await service.getAffiliations(
+        input.orcid_id,
+        input.types as AffiliationType[],
+        ctx,
+      );
+    } catch (err) {
+      if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
+        throw ctx.fail(
+          'profile_not_found',
+          `ORCID iD ${normalizeOrcidId(input.orcid_id)} not found`,
+        );
+      }
+      throw err;
+    }
     const bareId = normalizeOrcidId(input.orcid_id);
 
     ctx.log.info('orcid_get_affiliations completed', {

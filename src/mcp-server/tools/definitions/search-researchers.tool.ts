@@ -53,45 +53,34 @@ function buildSolrQuery(input: {
 export const orcidSearchResearchers = tool('orcid_search_researchers', {
   title: 'Search ORCID Researchers',
   description:
-    'Search the ORCID registry using structured field parameters or raw Solr syntax. All provided structured params are ANDed together. The `query` field appends raw Solr syntax to the generated clause. Returns ORCID iDs with inline name and institution data via expanded-search — no follow-up profile fetches needed for basic disambiguation. For ranked disambiguation of an ambiguous author name, use orcid_resolve_researcher instead. The ORCID Public API caps results at 10,000 — use pagination for large result sets.',
+    'Search the ORCID registry using structured field parameters or raw Solr syntax. All provided structured params are ANDed together. The `query` field appends raw Solr syntax to the generated clause. Returns ORCID iDs with inline name and institution data — no follow-up profile fetches needed for basic disambiguation. For ranked disambiguation of an ambiguous author name, use orcid_resolve_researcher instead. The ORCID Public API caps results at 10,000 — use pagination for large result sets.',
   annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
-    given_name: z
-      .string()
-      .optional()
-      .describe('Given (first) name to search. Maps to Solr field given-names.'),
-    family_name: z
-      .string()
-      .optional()
-      .describe('Family (last) name to search. Maps to Solr field family-name.'),
-    affiliation: z
-      .string()
-      .optional()
-      .describe(
-        'Organization name to filter by. Maps to Solr field affiliation-org-name. Quoted phrase match.',
-      ),
+    given_name: z.string().optional().describe("Researcher's given (first) name."),
+    family_name: z.string().optional().describe("Researcher's family (last) name."),
+    affiliation: z.string().optional().describe('Organization name to filter by. Phrase match.'),
     keyword: z
       .string()
       .optional()
-      .describe('Keyword to search in researcher keyword fields. Quoted phrase match.'),
+      .describe("Keyword to search in the researcher's keyword fields. Phrase match."),
     ror_id: z
       .string()
       .optional()
       .describe(
-        'ROR organization ID to filter by (full URL, e.g. https://ror.org/00f54p054). Maps to Solr field ror-org-id.',
+        'ROR organization ID to filter by (full URL, e.g. https://ror.org/00f54p054). Returns researchers affiliated with this organization.',
       ),
     doi: z
       .string()
       .optional()
       .describe(
-        'DOI to anchor the search. Returns researchers who have linked this DOI to their ORCID record. Maps to Solr field doi-self.',
+        'DOI to anchor the search. Returns researchers who have linked this DOI to their ORCID record.',
       ),
     pmid: z
       .string()
       .optional()
       .describe(
-        'PubMed ID to anchor the search. Returns researchers who have linked this PMID to their ORCID record. Maps to Solr field pmid-self.',
+        'PubMed ID to anchor the search. Returns researchers who have linked this PMID to their ORCID record.',
       ),
     query: z
       .string()

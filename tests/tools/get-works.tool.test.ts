@@ -3,6 +3,7 @@
  * @module tests/tools/get-works.tool.test
  */
 
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetWorks } from '@/mcp-server/tools/definitions/get-works.tool.js';
@@ -91,12 +92,37 @@ describe('orcidGetWorks', () => {
     expect(result.works[0].externalIds).toEqual([]);
   });
 
-  it('propagates service errors', async () => {
+  it('propagates non-404 service errors', async () => {
     mockGetWorks.mockRejectedValueOnce(new Error('Upstream timeout'));
 
     const ctx = createMockContext();
     const input = orcidGetWorks.input.parse({ orcid_id: '0000-0001-9522-8779' });
     await expect(orcidGetWorks.handler(input, ctx)).rejects.toThrow('Upstream timeout');
+  });
+
+  it('rejects malformed ORCID iD at input validation', () => {
+    expect(() => orcidGetWorks.input.parse({ orcid_id: 'not-a-valid-orcid' })).toThrow();
+    expect(() => orcidGetWorks.input.parse({ orcid_id: '' })).toThrow();
+  });
+
+  it('accepts bare and URI forms of a valid ORCID iD', () => {
+    expect(() => orcidGetWorks.input.parse({ orcid_id: '0000-0001-9522-8779' })).not.toThrow();
+    expect(() =>
+      orcidGetWorks.input.parse({ orcid_id: 'https://orcid.org/0000-0001-9522-8779' }),
+    ).not.toThrow();
+  });
+
+  it('throws profile_not_found McpError on 404', async () => {
+    mockGetWorks.mockRejectedValueOnce(
+      new McpError(JsonRpcErrorCode.NotFound, 'ORCID returned HTTP 404 Not Found.'),
+    );
+
+    const ctx = createMockContext({ errors: orcidGetWorks.errors });
+    const input = orcidGetWorks.input.parse({ orcid_id: '0000-0000-0000-0000' });
+    const error = await orcidGetWorks.handler(input, ctx).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(McpError);
+    expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
+    expect((error as McpError).data?.reason).toBe('profile_not_found');
   });
 
   it('formats works with titles, types, dates, and external IDs', () => {

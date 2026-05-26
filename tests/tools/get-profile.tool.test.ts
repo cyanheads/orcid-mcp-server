@@ -3,6 +3,7 @@
  * @module tests/tools/get-profile.tool.test
  */
 
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetProfile } from '@/mcp-server/tools/definitions/get-profile.tool.js';
@@ -92,12 +93,40 @@ describe('orcidGetProfile', () => {
     expect(result.externalIdentifiers).toEqual([]);
   });
 
-  it('propagates service errors', async () => {
+  it('propagates non-404 service errors', async () => {
     mockGetPerson.mockRejectedValueOnce(new Error('Network error'));
 
     const ctx = createMockContext();
     const input = orcidGetProfile.input.parse({ orcid_id: '0000-0001-9522-8779' });
     await expect(orcidGetProfile.handler(input, ctx)).rejects.toThrow('Network error');
+  });
+
+  it('rejects malformed ORCID iD at input validation', () => {
+    expect(() => orcidGetProfile.input.parse({ orcid_id: 'not-a-valid-orcid' })).toThrow();
+    expect(() => orcidGetProfile.input.parse({ orcid_id: 'XXXX-0000-0000-0000' })).toThrow();
+    expect(() => orcidGetProfile.input.parse({ orcid_id: '' })).toThrow();
+  });
+
+  it('accepts both bare and URI forms of a valid ORCID iD', () => {
+    expect(() => orcidGetProfile.input.parse({ orcid_id: '0000-0001-9522-8779' })).not.toThrow();
+    expect(() =>
+      orcidGetProfile.input.parse({ orcid_id: 'https://orcid.org/0000-0001-9522-8779' }),
+    ).not.toThrow();
+    // X checksum digit
+    expect(() => orcidGetProfile.input.parse({ orcid_id: '0000-0001-5109-344X' })).not.toThrow();
+  });
+
+  it('throws profile_not_found McpError on 404', async () => {
+    mockGetPerson.mockRejectedValueOnce(
+      new McpError(JsonRpcErrorCode.NotFound, 'ORCID returned HTTP 404 Not Found.'),
+    );
+
+    const ctx = createMockContext({ errors: orcidGetProfile.errors });
+    const input = orcidGetProfile.input.parse({ orcid_id: '0000-0000-0000-0000' });
+    const error = await orcidGetProfile.handler(input, ctx).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(McpError);
+    expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
+    expect((error as McpError).data?.reason).toBe('profile_not_found');
   });
 
   it('formats profile with ORCID ID and all populated fields', () => {

@@ -16,6 +16,10 @@ export const researcherWorksResource = resource('orcid://researcher/{orcid_id}/w
   params: z.object({
     orcid_id: z
       .string()
+      .regex(
+        /^(https?:\/\/orcid\.org\/)?\d{4}-\d{4}-\d{4}-\d{3}[\dX]$/,
+        'Must be a valid ORCID iD (e.g. 0000-0001-2345-6789) or full ORCID URI.',
+      )
       .describe(
         'ORCID iD — bare format (0000-0001-2345-6789) or full URI (https://orcid.org/0000-0001-2345-6789).',
       ),

@@ -3,6 +3,7 @@
  * @module tests/tools/get-affiliations.tool.test
  */
 
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetAffiliations } from '@/mcp-server/tools/definitions/get-affiliations.tool.js';
@@ -106,12 +107,39 @@ describe('orcidGetAffiliations', () => {
     expect(result.affiliations[0].role).toBeUndefined();
   });
 
-  it('propagates service errors', async () => {
+  it('propagates non-404 service errors', async () => {
     mockGetAffiliations.mockRejectedValueOnce(new Error('API error'));
 
     const ctx = createMockContext();
     const input = orcidGetAffiliations.input.parse({ orcid_id: '0000-0001-9522-8779' });
     await expect(orcidGetAffiliations.handler(input, ctx)).rejects.toThrow('API error');
+  });
+
+  it('rejects malformed ORCID iD at input validation', () => {
+    expect(() => orcidGetAffiliations.input.parse({ orcid_id: 'not-a-valid-orcid' })).toThrow();
+    expect(() => orcidGetAffiliations.input.parse({ orcid_id: '' })).toThrow();
+  });
+
+  it('accepts bare and URI forms of a valid ORCID iD', () => {
+    expect(() =>
+      orcidGetAffiliations.input.parse({ orcid_id: '0000-0001-9522-8779' }),
+    ).not.toThrow();
+    expect(() =>
+      orcidGetAffiliations.input.parse({ orcid_id: 'https://orcid.org/0000-0001-9522-8779' }),
+    ).not.toThrow();
+  });
+
+  it('throws profile_not_found McpError on 404', async () => {
+    mockGetAffiliations.mockRejectedValueOnce(
+      new McpError(JsonRpcErrorCode.NotFound, 'ORCID returned HTTP 404 Not Found.'),
+    );
+
+    const ctx = createMockContext({ errors: orcidGetAffiliations.errors });
+    const input = orcidGetAffiliations.input.parse({ orcid_id: '0000-0000-0000-0000' });
+    const error = await orcidGetAffiliations.handler(input, ctx).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(McpError);
+    expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
+    expect((error as McpError).data?.reason).toBe('profile_not_found');
   });
 
   it('formats affiliations grouped by type with org details', () => {

@@ -3,6 +3,7 @@
  * @module tests/tools/get-peer-reviews.tool.test
  */
 
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetPeerReviews } from '@/mcp-server/tools/definitions/get-peer-reviews.tool.js';
@@ -91,12 +92,39 @@ describe('orcidGetPeerReviews', () => {
     expect(result.peerReviews[0].groupIssn).toBeUndefined();
   });
 
-  it('propagates service errors', async () => {
+  it('propagates non-404 service errors', async () => {
     mockGetPeerReviews.mockRejectedValueOnce(new Error('Rate limited'));
 
     const ctx = createMockContext();
     const input = orcidGetPeerReviews.input.parse({ orcid_id: '0000-0001-9522-8779' });
     await expect(orcidGetPeerReviews.handler(input, ctx)).rejects.toThrow('Rate limited');
+  });
+
+  it('rejects malformed ORCID iD at input validation', () => {
+    expect(() => orcidGetPeerReviews.input.parse({ orcid_id: 'not-a-valid-orcid' })).toThrow();
+    expect(() => orcidGetPeerReviews.input.parse({ orcid_id: '' })).toThrow();
+  });
+
+  it('accepts bare and URI forms of a valid ORCID iD', () => {
+    expect(() =>
+      orcidGetPeerReviews.input.parse({ orcid_id: '0000-0001-9522-8779' }),
+    ).not.toThrow();
+    expect(() =>
+      orcidGetPeerReviews.input.parse({ orcid_id: 'https://orcid.org/0000-0001-9522-8779' }),
+    ).not.toThrow();
+  });
+
+  it('throws profile_not_found McpError on 404', async () => {
+    mockGetPeerReviews.mockRejectedValueOnce(
+      new McpError(JsonRpcErrorCode.NotFound, 'ORCID returned HTTP 404 Not Found.'),
+    );
+
+    const ctx = createMockContext({ errors: orcidGetPeerReviews.errors });
+    const input = orcidGetPeerReviews.input.parse({ orcid_id: '0000-0000-0000-0000' });
+    const error = await orcidGetPeerReviews.handler(input, ctx).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(McpError);
+    expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
+    expect((error as McpError).data?.reason).toBe('profile_not_found');
   });
 
   it('formats peer reviews with all key fields', () => {
