@@ -34,4 +34,5 @@ await createApp({
   },
   instructions:
     'ORCID researcher registry server. Use orcid_search_researchers for exact field lookups (name + institution + DOI/PMID). Use orcid_resolve_researcher when the input is an ambiguous author name needing ranked disambiguation. Use orcid_get_profile → orcid_get_works → orcid_get_affiliations to build a researcher dossier. DOIs and PMIDs from orcid_get_works are ready for chaining to Crossref or PubMed servers.',
+  landing: { requireAuth: false },
 });

@@ -1,0 +1,25 @@
+{
+  "name": "@cyanheads/orcid-mcp-server",
+  "version": "0.1.5",
+  "description": "Search and retrieve researcher profiles, works, affiliations, funding, and peer review records from the ORCID registry via MCP. STDIO or Streamable HTTP.",
+  "author": {
+    "name": "cyanheads",
+    "email": "casey@caseyjhand.com",
+    "url": "https://github.com/cyanheads"
+  },
+  "homepage": "https://github.com/cyanheads/orcid-mcp-server#readme",
+  "repository": "https://github.com/cyanheads/orcid-mcp-server",
+  "license": "Apache-2.0",
+  "keywords": ["mcp", "mcp-server", "model-context-protocol", "orcid", "researcher-identity", "scholarly", "academic"],
+  "mcpServers": "./.codex-plugin/mcp.json",
+  "interface": {
+    "displayName": "@cyanheads/orcid-mcp-server",
+    "shortDescription": "Search and retrieve researcher profiles, works, affiliations, funding, and peer review records from the ORCID registry.",
+    "longDescription": "MCP server for the ORCID researcher registry. Search researchers by name, institution, DOI, or PMID. Retrieve full profiles, publication works, affiliations, funding records, and peer review activity. Supports STDIO and Streamable HTTP transport.",
+    "developerName": "cyanheads",
+    "category": "research",
+    "capabilities": ["Read"],
+    "websiteURL": "https://github.com/cyanheads/orcid-mcp-server",
+    "defaultPrompt": []
+  }
+}

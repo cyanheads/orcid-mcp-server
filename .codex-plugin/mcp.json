@@ -1,0 +1,9 @@
+{
+  "@cyanheads/orcid-mcp-server": {
+    "command": "npx",
+    "args": ["-y", "@cyanheads/orcid-mcp-server"],
+    "env": {
+      "MCP_TRANSPORT_TYPE": "stdio"
+    }
+  }
+}
