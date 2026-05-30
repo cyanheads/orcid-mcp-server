@@ -6,7 +6,6 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getOrcidService } from '@/services/orcid/orcid-service.js';
 import type { ExpandedSearchResult } from '@/services/orcid/types.js';
 
@@ -136,6 +135,11 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
           .describe('Disambiguation candidate with transparency signals.'),
       )
       .describe('Ranked candidates, ordered by name match quality then institution overlap.'),
+  }),
+
+  // Agent-facing context: the queries used, total match count, and empty-result guidance.
+  // Reaches both structuredContent and content[] without a format() entry.
+  enrichment: {
     queryUsed: z.string().describe('Solr query sent to ORCID for the primary search.'),
     relaxedQuery: z
       .string()
@@ -150,17 +154,13 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
       .describe(
         'Recovery hint when no candidates are found or when the anchor query failed to match.',
       ),
-  }),
+  },
 
-  errors: [
-    {
-      reason: 'no_candidates',
-      code: JsonRpcErrorCode.NotFound,
-      when: 'No ORCID records matched even the relaxed query for this name.',
-      recovery:
-        'Try a different name spelling, use orcid_search_researchers with broader parameters, or verify the DOI/PMID is correct.',
-    },
-  ],
+  enrichmentTrailer: {
+    queryUsed: { label: 'Query Used' },
+    relaxedQuery: { label: 'Relaxed Query' },
+    totalFound: { label: 'Total Found' },
+  },
 
   async handler(input, ctx) {
     const service = getOrcidService();
@@ -242,38 +242,26 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
       anchorType,
     }));
 
-    let notice: string | undefined;
+    ctx.enrich({ queryUsed: primaryQuery, totalFound: finalResponse.numFound });
+    if (relaxedQuery) ctx.enrich({ relaxedQuery });
+
     if (candidates.length === 0) {
       if (anchorType !== 'none') {
-        notice = `No ORCID records found matching "${input.name}" with the provided ${anchorType.toUpperCase()} anchor. Verify the ${anchorType.toUpperCase()} is correct or try without the anchor using orcid_search_researchers.`;
+        ctx.enrich.notice(
+          `No ORCID records found matching "${input.name}" with the provided ${anchorType.toUpperCase()} anchor. Verify the ${anchorType.toUpperCase()} is correct or try without the anchor using orcid_search_researchers.`,
+        );
       } else {
-        notice = `No ORCID records found matching "${input.name}". Try a different spelling or use orcid_search_researchers with a broader query.`;
+        ctx.enrich.notice(
+          `No ORCID records found matching "${input.name}". Try a different spelling or use orcid_search_researchers with a broader query.`,
+        );
       }
     }
 
-    return {
-      candidates,
-      queryUsed: primaryQuery,
-      ...(relaxedQuery && { relaxedQuery }),
-      totalFound: finalResponse.numFound,
-      ...(notice && { notice }),
-    };
+    return { candidates };
   },
 
   format: (result) => {
-    const lines: string[] = [
-      `## ORCID Disambiguation Results`,
-      `**Query:** \`${result.queryUsed}\``,
-      `**Total Matched:** ${result.totalFound}`,
-    ];
-
-    if (result.relaxedQuery) {
-      lines.push(`**Relaxed Query:** \`${result.relaxedQuery}\``);
-    }
-
-    if (result.notice) {
-      lines.push('', `> ${result.notice}`);
-    }
+    const lines: string[] = [`## ORCID Disambiguation Results`];
 
     if (result.candidates.length === 0) {
       lines.push('', 'No candidates found.');

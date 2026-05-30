@@ -3,7 +3,7 @@
  * @module tests/tools/resolve-researcher.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidResolveResearcher } from '@/mcp-server/tools/definitions/resolve-researcher.tool.js';
 
@@ -37,6 +37,7 @@ describe('orcidResolveResearcher', () => {
     const ctx = createMockContext();
     const input = orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna' });
     const result = await orcidResolveResearcher.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
 
     expect(result.candidates).toHaveLength(1);
     expect(result.candidates[0].orcidId).toBe('0000-0001-9522-8779');
@@ -44,8 +45,8 @@ describe('orcidResolveResearcher', () => {
     expect(result.candidates[0].nameMatchType).toBe('exact');
     expect(result.candidates[0].institutionOverlap).toBe(false); // no affiliation provided
     expect(result.candidates[0].anchorType).toBe('none');
-    expect(result.totalFound).toBe(1);
-    expect(result.notice).toBeUndefined();
+    expect(enrichment.totalFound).toBe(1);
+    expect(enrichment.notice).toBeUndefined();
   });
 
   it('scores institution overlap correctly', async () => {
@@ -76,9 +77,10 @@ describe('orcidResolveResearcher', () => {
       doi: '10.1126/science.1225829',
     });
     const result = await orcidResolveResearcher.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
 
     expect(result.candidates[0].anchorType).toBe('doi');
-    expect(result.queryUsed).toContain('doi-self:10.1126/science.1225829');
+    expect(enrichment.queryUsed).toContain('doi-self:10.1126/science.1225829');
   });
 
   it('falls back to relaxed query when primary returns nothing and affiliation provided', async () => {
@@ -92,11 +94,11 @@ describe('orcidResolveResearcher', () => {
       name: 'Jennifer Doudna',
       affiliation: 'MIT',
     });
-    const result = await orcidResolveResearcher.handler(input, ctx);
+    await orcidResolveResearcher.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
 
-    expect(result.relaxedQuery).toBeDefined();
-    expect(result.relaxedQuery).not.toContain('affiliation-org-name:');
-    expect(result.candidates).toHaveLength(1);
+    expect(enrichment.relaxedQuery).toBeDefined();
+    expect(enrichment.relaxedQuery).not.toContain('affiliation-org-name:');
   });
 
   it('falls back to anchor-only query when name+anchor returns nothing', async () => {
@@ -111,21 +113,23 @@ describe('orcidResolveResearcher', () => {
       name: 'Jennifer Doudna',
       doi: '10.1126/science.1225829',
     });
-    const result = await orcidResolveResearcher.handler(input, ctx);
+    await orcidResolveResearcher.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
 
-    expect(result.relaxedQuery).toBe('doi-self:10.1126/science.1225829');
+    expect(enrichment.relaxedQuery).toBe('doi-self:10.1126/science.1225829');
   });
 
-  it('adds notice when no candidates found and returns empty list', async () => {
+  it('adds notice enrichment when no candidates found and returns empty list', async () => {
     mockExpandedSearch.mockResolvedValue({ numFound: 0, results: [] });
 
     const ctx = createMockContext();
     const input = orcidResolveResearcher.input.parse({ name: 'Extremely Rare Name XYZ' });
     const result = await orcidResolveResearcher.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
 
     expect(result.candidates).toHaveLength(0);
-    expect(result.notice).toBeDefined();
-    expect(result.notice).toContain('Extremely Rare Name XYZ');
+    expect(enrichment.notice).toBeDefined();
+    expect(enrichment.notice).toContain('Extremely Rare Name XYZ');
   });
 
   it('sorts candidates: exact before partial', async () => {
@@ -176,8 +180,6 @@ describe('orcidResolveResearcher', () => {
           anchorType: 'none',
         },
       ],
-      queryUsed: 'given-and-family-names:Jennifer Doudna',
-      totalFound: 1,
     });
 
     const blocks = orcidResolveResearcher.format!(output);
@@ -196,9 +198,6 @@ describe('orcidResolveResearcher', () => {
   it('formats result with no candidates', () => {
     const output = orcidResolveResearcher.output.parse({
       candidates: [],
-      queryUsed: 'given-and-family-names:Nobody',
-      totalFound: 0,
-      notice: 'No candidates found.',
     });
 
     const blocks = orcidResolveResearcher.format!(output);

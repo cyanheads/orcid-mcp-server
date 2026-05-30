@@ -63,13 +63,18 @@ export const orcidGetWorks = tool('orcid_get_works', {
           .describe('Work summary record.'),
       )
       .describe('Works associated with this ORCID iD.'),
+  }),
+
+  // Agent-facing context: empty-result notice surfaces in structuredContent and content[]
+  // without occupying the domain return.
+  enrichment: {
     notice: z
       .string()
       .optional()
       .describe(
         'Note when the works list is empty — may indicate no self-reported works or private visibility settings.',
       ),
-  }),
+  },
 
   errors: [
     {
@@ -101,17 +106,17 @@ export const orcidGetWorks = tool('orcid_get_works', {
 
     ctx.log.info('orcid_get_works completed', { orcidId: bareId, workCount: works.length });
 
-    const notice =
-      works.length === 0
-        ? 'No works found. The researcher may not have linked works to their ORCID record, or works may be set to private visibility.'
-        : undefined;
+    if (works.length === 0) {
+      ctx.enrich.notice(
+        'No works found. The researcher may not have linked works to their ORCID record, or works may be set to private visibility.',
+      );
+    }
 
     return {
       orcidId: bareId,
       orcidUri: `https://orcid.org/${bareId}`,
       workCount: works.length,
       works,
-      ...(notice && { notice }),
     };
   },
 
@@ -121,10 +126,6 @@ export const orcidGetWorks = tool('orcid_get_works', {
       `**URI:** ${result.orcidUri}`,
       `**Total Works:** ${result.workCount}`,
     ];
-
-    if (result.notice) {
-      lines.push('', `> ${result.notice}`);
-    }
 
     if (result.works.length === 0) {
       return [{ type: 'text', text: lines.join('\n') }];

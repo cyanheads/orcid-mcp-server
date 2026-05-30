@@ -101,13 +101,18 @@ export const orcidGetAffiliations = tool('orcid_get_affiliations', {
     requestedTypes: z
       .array(z.string().describe('Affiliation type.'))
       .describe('Affiliation types that were requested.'),
+  }),
+
+  // Agent-facing context: empty-result notice surfaces in structuredContent and content[]
+  // without occupying the domain return.
+  enrichment: {
     notice: z
       .string()
       .optional()
       .describe(
         'Note when no affiliations were found — may indicate private visibility or no self-reported affiliations.',
       ),
-  }),
+  },
 
   errors: [
     {
@@ -146,10 +151,11 @@ export const orcidGetAffiliations = tool('orcid_get_affiliations', {
       affiliationCount: affiliations.length,
     });
 
-    const notice =
-      affiliations.length === 0
-        ? `No affiliations found for the requested types (${input.types.join(', ')}). These may be set to private or not self-reported.`
-        : undefined;
+    if (affiliations.length === 0) {
+      ctx.enrich.notice(
+        `No affiliations found for the requested types (${input.types.join(', ')}). These may be set to private or not self-reported.`,
+      );
+    }
 
     return {
       orcidId: bareId,
@@ -157,7 +163,6 @@ export const orcidGetAffiliations = tool('orcid_get_affiliations', {
       affiliationCount: affiliations.length,
       affiliations,
       requestedTypes: input.types,
-      ...(notice && { notice }),
     };
   },
 
@@ -168,10 +173,6 @@ export const orcidGetAffiliations = tool('orcid_get_affiliations', {
       `**Types Requested:** ${result.requestedTypes.join(', ')}`,
       `**Total Affiliations:** ${result.affiliationCount}`,
     ];
-
-    if (result.notice) {
-      lines.push('', `> ${result.notice}`);
-    }
 
     if (result.affiliations.length === 0) {
       return [{ type: 'text', text: lines.join('\n') }];

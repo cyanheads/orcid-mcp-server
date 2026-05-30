@@ -4,7 +4,7 @@
  */
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetWorks } from '@/mcp-server/tools/definitions/get-works.tool.js';
 
@@ -53,7 +53,7 @@ describe('orcidGetWorks', () => {
     expect(result.works).toHaveLength(2);
     expect(result.works[0].title).toBe('CRISPR-Cas9 Mechanism');
     expect(result.works[0].externalIds[0].type).toBe('doi');
-    expect(result.notice).toBeUndefined();
+    expect(getEnrichment(ctx).notice).toBeUndefined();
   });
 
   it('strips ORCID URI prefix', async () => {
@@ -67,17 +67,18 @@ describe('orcidGetWorks', () => {
     expect(result.orcidId).toBe('0000-0001-9522-8779');
   });
 
-  it('adds notice when works list is empty', async () => {
+  it('adds notice enrichment when works list is empty', async () => {
     mockGetWorks.mockResolvedValueOnce([]);
 
     const ctx = createMockContext();
     const input = orcidGetWorks.input.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await orcidGetWorks.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
 
     expect(result.workCount).toBe(0);
     expect(result.works).toEqual([]);
-    expect(result.notice).toBeDefined();
-    expect(result.notice).toContain('No works found');
+    expect(enrichment.notice).toBeDefined();
+    expect(enrichment.notice).toContain('No works found');
   });
 
   it('handles a sparse work entry (no title, no date)', async () => {
@@ -147,19 +148,17 @@ describe('orcidGetWorks', () => {
     expect(text).toContain('**Total Works:** 2');
   });
 
-  it('formats empty works list with notice', () => {
+  it('formats empty works list', () => {
     const output = orcidGetWorks.output.parse({
       orcidId: '0000-0002-1825-0097',
       orcidUri: 'https://orcid.org/0000-0002-1825-0097',
       workCount: 0,
       works: [],
-      notice: 'No works found.',
     });
 
     const blocks = orcidGetWorks.format!(output);
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('**Total Works:** 0');
-    expect(text).toContain('No works found');
   });
 
   it('formats untitled work as (untitled)', () => {

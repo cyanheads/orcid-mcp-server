@@ -4,7 +4,7 @@
  */
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetAffiliations } from '@/mcp-server/tools/definitions/get-affiliations.tool.js';
 
@@ -60,7 +60,7 @@ describe('orcidGetAffiliations', () => {
     expect(emp.organization?.disambiguatedId).toBe('https://ror.org/01an7q238');
     expect(emp.role).toBe('Professor');
     expect(emp.startDate).toBe('2002');
-    expect(result.notice).toBeUndefined();
+    expect(getEnrichment(ctx).notice).toBeUndefined();
   });
 
   it('passes requested types to the service', async () => {
@@ -77,7 +77,7 @@ describe('orcidGetAffiliations', () => {
     expect(types).toEqual(['all']);
   });
 
-  it('adds notice when no affiliations found', async () => {
+  it('adds notice enrichment when no affiliations found', async () => {
     mockGetAffiliations.mockResolvedValueOnce([]);
 
     const ctx = createMockContext();
@@ -86,10 +86,11 @@ describe('orcidGetAffiliations', () => {
       types: ['employment'],
     });
     const result = await orcidGetAffiliations.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
 
     expect(result.affiliationCount).toBe(0);
-    expect(result.notice).toBeDefined();
-    expect(result.notice).toContain('employment');
+    expect(enrichment.notice).toBeDefined();
+    expect(enrichment.notice).toContain('employment');
   });
 
   it('handles sparse affiliation with no organization details', async () => {
@@ -166,19 +167,17 @@ describe('orcidGetAffiliations', () => {
     expect(text).toContain('**Total Affiliations:** 2');
   });
 
-  it('formats empty affiliations with notice', () => {
+  it('formats empty affiliations', () => {
     const output = orcidGetAffiliations.output.parse({
       orcidId: '0000-0002-1825-0097',
       orcidUri: 'https://orcid.org/0000-0002-1825-0097',
       affiliationCount: 0,
       affiliations: [],
       requestedTypes: ['employment'],
-      notice: 'No affiliations found.',
     });
 
     const blocks = orcidGetAffiliations.format!(output);
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('**Total Affiliations:** 0');
-    expect(text).toContain('No affiliations found');
   });
 });

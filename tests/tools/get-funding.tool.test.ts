@@ -4,7 +4,7 @@
  */
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetFunding } from '@/mcp-server/tools/definitions/get-funding.tool.js';
 
@@ -56,7 +56,7 @@ describe('orcidGetFunding', () => {
     expect(f.grantNumbers).toEqual(['R01GM123456', 'R01GM789012']);
     expect(f.startDate).toBe('2015');
     expect(f.endDate).toBe('2020');
-    expect(result.notice).toBeUndefined();
+    expect(getEnrichment(ctx).notice).toBeUndefined();
   });
 
   it('strips ORCID URI prefix', async () => {
@@ -70,16 +70,17 @@ describe('orcidGetFunding', () => {
     expect(result.orcidId).toBe('0000-0001-9522-8779');
   });
 
-  it('adds notice when no funding records found', async () => {
+  it('adds notice enrichment when no funding records found', async () => {
     mockGetFundings.mockResolvedValueOnce([]);
 
     const ctx = createMockContext();
     const input = orcidGetFunding.input.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await orcidGetFunding.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
 
     expect(result.fundingCount).toBe(0);
-    expect(result.notice).toBeDefined();
-    expect(result.notice).toContain('self-reported');
+    expect(enrichment.notice).toBeDefined();
+    expect(enrichment.notice).toContain('self-reported');
   });
 
   it('handles sparse funding record (no funder, no dates)', async () => {
@@ -151,19 +152,17 @@ describe('orcidGetFunding', () => {
     expect(text).toContain('**Total Funding Records:** 1');
   });
 
-  it('formats empty funding with notice', () => {
+  it('formats empty funding', () => {
     const output = orcidGetFunding.output.parse({
       orcidId: '0000-0002-1825-0097',
       orcidUri: 'https://orcid.org/0000-0002-1825-0097',
       fundingCount: 0,
       funding: [],
-      notice: 'No funding records found.',
     });
 
     const blocks = orcidGetFunding.format!(output);
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('**Total Funding Records:** 0');
-    expect(text).toContain('No funding records found');
   });
 
   it('formats untitled funding record as (untitled funding)', () => {

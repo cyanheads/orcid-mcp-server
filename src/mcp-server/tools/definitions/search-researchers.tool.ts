@@ -5,7 +5,6 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getOrcidService } from '@/services/orcid/orcid-service.js';
 
 /** Build a Solr query string from structured search parameters. */
@@ -123,27 +122,27 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
           .describe('Expanded search result for one researcher.'),
       )
       .describe('Matching researchers with inline name and institution data.'),
-    numFound: z.number().describe('Total number of matching records in ORCID (before pagination).'),
     rows: z.number().describe('Number of results returned in this response.'),
     start: z.number().describe('Pagination offset used for this response.'),
+  }),
+
+  // Agent-facing context: the query the API received, total match count, and empty-result
+  // guidance. Reaches both structuredContent and content[] without a format() entry.
+  enrichment: {
     effectiveQuery: z.string().describe('Solr query sent to the ORCID API.'),
+    numFound: z.number().describe('Total number of matching records in ORCID (before pagination).'),
     notice: z
       .string()
       .optional()
       .describe(
         'Recovery hint when results are empty or pagination overshoots the total. Absent on successful pages.',
       ),
-  }),
+  },
 
-  errors: [
-    {
-      reason: 'no_results',
-      code: JsonRpcErrorCode.NotFound,
-      when: 'No ORCID records matched the search query.',
-      recovery:
-        'Broaden the query — try fewer constraints, check spelling, or use the query field with Solr syntax.',
-    },
-  ],
+  enrichmentTrailer: {
+    effectiveQuery: { label: 'Effective Query' },
+    numFound: { label: 'Total Found' },
+  },
 
   async handler(input, ctx) {
     const service = getOrcidService();
@@ -165,16 +164,20 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
       returned: response.results.length,
     });
 
-    let notice: string | undefined;
+    ctx.enrich({ effectiveQuery, numFound: response.numFound });
+
     if (response.numFound === 0) {
-      notice =
-        'No results found. Try fewer constraints, verify spelling, or use the query field with Solr syntax.';
+      ctx.enrich.notice(
+        'No results found. Try fewer constraints, verify spelling, or use the query field with Solr syntax.',
+      );
     } else if (
       response.results.length === 0 &&
       input.start > 0 &&
       input.start >= response.numFound
     ) {
-      notice = `Offset ${input.start} exceeds numFound (${response.numFound}). Reduce start to page through results.`;
+      ctx.enrich.notice(
+        `Offset ${input.start} exceeds numFound (${response.numFound}). Reduce start to page through results.`,
+      );
     }
 
     return {
@@ -187,24 +190,16 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
         otherNames: r.otherNames,
         institutionNames: r.institutionNames,
       })),
-      numFound: response.numFound,
       rows: response.results.length,
       start: input.start,
-      effectiveQuery,
-      ...(notice && { notice }),
     };
   },
 
   format: (result) => {
     const lines: string[] = [
       `## ORCID Search Results`,
-      `**Query:** \`${result.effectiveQuery}\``,
-      `**Total Found:** ${result.numFound} | **Returned:** ${result.rows} | **Offset:** ${result.start}`,
+      `**Returned:** ${result.rows} | **Offset:** ${result.start}`,
     ];
-
-    if (result.notice) {
-      lines.push('', `> ${result.notice}`);
-    }
 
     if (result.results.length === 0) {
       lines.push('', 'No results.');

@@ -3,7 +3,7 @@
  * @module tests/tools/search-researchers.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidSearchResearchers } from '@/mcp-server/tools/definitions/search-researchers.tool.js';
 
@@ -51,18 +51,19 @@ describe('orcidSearchResearchers', () => {
       start: 0,
     });
     const result = await orcidSearchResearchers.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
 
-    expect(result.numFound).toBe(2);
+    expect(enrichment.numFound).toBe(2);
     expect(result.rows).toBe(2);
     expect(result.start).toBe(0);
-    expect(result.effectiveQuery).toBe('family-name:Doudna');
+    expect(enrichment.effectiveQuery).toBe('family-name:Doudna');
     expect(result.results).toHaveLength(2);
     expect(result.results[0].orcidId).toBe('0000-0001-9522-8779');
     expect(result.results[0].orcidUri).toBe('https://orcid.org/0000-0001-9522-8779');
     expect(result.results[0].givenNames).toBe('Jennifer');
     expect(result.results[0].familyNames).toBe('Doudna');
     expect(result.results[0].institutionNames).toEqual(['UC Berkeley']);
-    expect(result.notice).toBeUndefined();
+    expect(enrichment.notice).toBeUndefined();
   });
 
   it('builds an ANDed query from multiple structured params', async () => {
@@ -84,36 +85,39 @@ describe('orcidSearchResearchers', () => {
     expect(callParams.q).toContain('keyword:"CRISPR"');
   });
 
-  it('returns wildcard query when no params provided', async () => {
+  it('enriches with wildcard query when no params provided', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 100, results: [] });
 
     const ctx = createMockContext();
     const input = orcidSearchResearchers.input.parse({});
-    const result = await orcidSearchResearchers.handler(input, ctx);
+    await orcidSearchResearchers.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
 
-    expect(result.effectiveQuery).toBe('*:*');
+    expect(enrichment.effectiveQuery).toBe('*:*');
   });
 
-  it('adds notice when no results found', async () => {
+  it('adds notice enrichment when no results found', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
     const ctx = createMockContext();
     const input = orcidSearchResearchers.input.parse({ family_name: 'XyzNoMatch' });
-    const result = await orcidSearchResearchers.handler(input, ctx);
+    await orcidSearchResearchers.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
 
-    expect(result.notice).toBeDefined();
-    expect(result.notice).toContain('No results found');
+    expect(enrichment.notice).toBeDefined();
+    expect(enrichment.notice).toContain('No results found');
   });
 
-  it('adds notice when pagination overshoots numFound', async () => {
+  it('adds notice enrichment when pagination overshoots numFound', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 5, results: [] });
 
     const ctx = createMockContext();
     const input = orcidSearchResearchers.input.parse({ family_name: 'Smith', start: 100 });
-    const result = await orcidSearchResearchers.handler(input, ctx);
+    await orcidSearchResearchers.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
 
-    expect(result.notice).toBeDefined();
-    expect(result.notice).toContain('Offset 100 exceeds numFound');
+    expect(enrichment.notice).toBeDefined();
+    expect(enrichment.notice).toContain('Offset 100 exceeds numFound');
   });
 
   it('propagates service errors', async () => {
@@ -136,10 +140,8 @@ describe('orcidSearchResearchers', () => {
           institutionNames: ['UC Berkeley'],
         },
       ],
-      numFound: 1,
       rows: 1,
       start: 0,
-      effectiveQuery: 'family-name:Doudna',
     });
 
     const blocks = orcidSearchResearchers.format!(output);
@@ -150,22 +152,17 @@ describe('orcidSearchResearchers', () => {
     expect(text).toContain('https://orcid.org/0000-0001-9522-8779');
     expect(text).toContain('Jennifer Doudna');
     expect(text).toContain('UC Berkeley');
-    expect(text).toContain('family-name:Doudna');
   });
 
-  it('formats empty results with notice', () => {
+  it('formats empty results', () => {
     const output = orcidSearchResearchers.output.parse({
       results: [],
-      numFound: 0,
       rows: 0,
       start: 0,
-      effectiveQuery: '*:*',
-      notice: 'No results found. Try fewer constraints.',
     });
 
     const blocks = orcidSearchResearchers.format!(output);
     const text = (blocks[0] as { text: string }).text;
-    expect(text).toContain('No results found');
-    expect(text).toContain('*:*');
+    expect(text).toContain('No results');
   });
 });

@@ -4,7 +4,7 @@
  */
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetPeerReviews } from '@/mcp-server/tools/definitions/get-peer-reviews.tool.js';
 
@@ -54,7 +54,7 @@ describe('orcidGetPeerReviews', () => {
     expect(r.conveningOrganization?.name).toBe('Science');
     expect(r.reviewUrl).toBe('https://publons.com/review/123');
     expect(r.groupIssn).toBe('0036-8075');
-    expect(result.notice).toBeUndefined();
+    expect(getEnrichment(ctx).notice).toBeUndefined();
   });
 
   it('strips ORCID URI prefix', async () => {
@@ -68,16 +68,17 @@ describe('orcidGetPeerReviews', () => {
     expect(result.orcidId).toBe('0000-0001-9522-8779');
   });
 
-  it('adds notice when no peer reviews found', async () => {
+  it('adds notice enrichment when no peer reviews found', async () => {
     mockGetPeerReviews.mockResolvedValueOnce([]);
 
     const ctx = createMockContext();
     const input = orcidGetPeerReviews.input.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await orcidGetPeerReviews.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
 
     expect(result.reviewCount).toBe(0);
-    expect(result.notice).toBeDefined();
-    expect(result.notice).toContain('No peer review records found');
+    expect(enrichment.notice).toBeDefined();
+    expect(enrichment.notice).toContain('No peer review records found');
   });
 
   it('handles sparse review with no optional fields', async () => {
@@ -150,19 +151,17 @@ describe('orcidGetPeerReviews', () => {
     expect(text).toContain('**Total Reviews:** 1');
   });
 
-  it('formats empty peer reviews with notice', () => {
+  it('formats empty peer reviews', () => {
     const output = orcidGetPeerReviews.output.parse({
       orcidId: '0000-0002-1825-0097',
       orcidUri: 'https://orcid.org/0000-0002-1825-0097',
       reviewCount: 0,
       peerReviews: [],
-      notice: 'No peer review records found.',
     });
 
     const blocks = orcidGetPeerReviews.format!(output);
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('**Total Reviews:** 0');
-    expect(text).toContain('No peer review records found');
   });
 
   it('formats review with unknown organization as "Unknown organization"', () => {

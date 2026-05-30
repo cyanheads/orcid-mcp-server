@@ -77,13 +77,18 @@ export const orcidGetPeerReviews = tool('orcid_get_peer_reviews', {
           .describe('Peer review record.'),
       )
       .describe('Peer review records for this ORCID iD.'),
+  }),
+
+  // Agent-facing context: empty-result notice surfaces in structuredContent and content[]
+  // without occupying the domain return.
+  enrichment: {
     notice: z
       .string()
       .optional()
       .describe(
         'Note when no peer reviews are found — coverage varies by researcher and publisher participation.',
       ),
-  }),
+  },
 
   errors: [
     {
@@ -118,17 +123,17 @@ export const orcidGetPeerReviews = tool('orcid_get_peer_reviews', {
       reviewCount: reviews.length,
     });
 
-    const notice =
-      reviews.length === 0
-        ? 'No peer review records found. Coverage depends on researcher self-reporting and publisher participation in ORCID peer review import.'
-        : undefined;
+    if (reviews.length === 0) {
+      ctx.enrich.notice(
+        'No peer review records found. Coverage depends on researcher self-reporting and publisher participation in ORCID peer review import.',
+      );
+    }
 
     return {
       orcidId: bareId,
       orcidUri: `https://orcid.org/${bareId}`,
       reviewCount: reviews.length,
       peerReviews: reviews,
-      ...(notice && { notice }),
     };
   },
 
@@ -138,10 +143,6 @@ export const orcidGetPeerReviews = tool('orcid_get_peer_reviews', {
       `**URI:** ${result.orcidUri}`,
       `**Total Reviews:** ${result.reviewCount}`,
     ];
-
-    if (result.notice) {
-      lines.push('', `> ${result.notice}`);
-    }
 
     if (result.peerReviews.length === 0) {
       return [{ type: 'text', text: lines.join('\n') }];

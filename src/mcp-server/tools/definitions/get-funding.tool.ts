@@ -74,13 +74,18 @@ export const orcidGetFunding = tool('orcid_get_funding', {
           .describe('Funding record.'),
       )
       .describe('Funding records associated with this ORCID iD.'),
+  }),
+
+  // Agent-facing context: empty-result notice surfaces in structuredContent and content[]
+  // without occupying the domain return.
+  enrichment: {
     notice: z
       .string()
       .optional()
       .describe(
         'Note when no funding is found — absence of records does not mean absence of funding.',
       ),
-  }),
+  },
 
   errors: [
     {
@@ -112,17 +117,17 @@ export const orcidGetFunding = tool('orcid_get_funding', {
 
     ctx.log.info('orcid_get_funding completed', { orcidId: bareId, fundingCount: records.length });
 
-    const notice =
-      records.length === 0
-        ? 'No funding records found. ORCID funding data is self-reported and most researchers do not enter funding details. Absence does not imply no funding.'
-        : undefined;
+    if (records.length === 0) {
+      ctx.enrich.notice(
+        'No funding records found. ORCID funding data is self-reported and most researchers do not enter funding details. Absence does not imply no funding.',
+      );
+    }
 
     return {
       orcidId: bareId,
       orcidUri: `https://orcid.org/${bareId}`,
       fundingCount: records.length,
       funding: records,
-      ...(notice && { notice }),
     };
   },
 
@@ -132,10 +137,6 @@ export const orcidGetFunding = tool('orcid_get_funding', {
       `**URI:** ${result.orcidUri}`,
       `**Total Funding Records:** ${result.fundingCount}`,
     ];
-
-    if (result.notice) {
-      lines.push('', `> ${result.notice}`);
-    }
 
     if (result.funding.length === 0) {
       return [{ type: 'text', text: lines.join('\n') }];
