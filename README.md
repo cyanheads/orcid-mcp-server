@@ -1,7 +1,7 @@
 <div align="center">
   <h1>@cyanheads/orcid-mcp-server</h1>
   <p><b>Search and retrieve researcher profiles, works, affiliations, funding, and peer review records from the ORCID registry via MCP. STDIO or Streamable HTTP.</b>
-  <div>7 Tools • 2 Resources</div>
+  <div>9 Tools • 2 Resources</div>
   </p>
 </div>
 
