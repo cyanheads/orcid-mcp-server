@@ -5,6 +5,7 @@
  */
 
 import { resource, z } from '@cyanheads/mcp-ts-core';
+import { JsonRpcErrorCode, McpError, notFound } from '@cyanheads/mcp-ts-core/errors';
 import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
 
 export const researcherWorksResource = resource('orcid://researcher/{orcid_id}/works', {
@@ -59,7 +60,19 @@ export const researcherWorksResource = resource('orcid://researcher/{orcid_id}/w
 
     ctx.log.debug('orcid-researcher-works resource', { orcidId: bareId });
 
-    const works = await service.getWorks(params.orcid_id, ctx);
+    let works: Awaited<ReturnType<typeof service.getWorks>>;
+    try {
+      works = await service.getWorks(params.orcid_id, ctx);
+    } catch (err) {
+      if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
+        throw notFound(
+          `No works record found for ORCID iD ${bareId}. The record may not exist or may be fully private.`,
+          { orcidId: bareId },
+          { cause: err },
+        );
+      }
+      throw err;
+    }
 
     return {
       orcidId: bareId,
