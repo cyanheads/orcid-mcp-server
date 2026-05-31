@@ -22,7 +22,7 @@ const ExternalIdSchema = z
 export const orcidGetWorks = tool('orcid_get_works', {
   title: 'Get ORCID Researcher Works',
   description:
-    'Retrieve works associated with an ORCID iD — publications, datasets, software, preprints, and more. Returns work summaries with titles, types, publication dates, journal names, and all external identifiers (DOIs, PMIDs, arXiv IDs, ISBNs). External IDs are ready for chaining to Crossref, PubMed, or arXiv servers. The /works endpoint returns summaries only — pass DOIs to Crossref or PMIDs to PubMed to retrieve full metadata or abstracts. Works are self-reported; a researcher may not have linked all their publications.',
+    'Retrieve works associated with an ORCID iD — publications, datasets, software, preprints, and more. Returns work summaries with put-codes, titles, types, publication dates, journal names, and all external identifiers (DOIs, PMIDs, arXiv IDs, ISBNs). Pass the put_code from each work to orcid_get_work_detail to retrieve the full record including abstract and contributors. External IDs are ready for chaining to Crossref, PubMed, or arXiv servers. Works are self-reported; a researcher may not have linked all their publications.',
   annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
 
   input: z.object({
@@ -45,6 +45,12 @@ export const orcidGetWorks = tool('orcid_get_works', {
       .array(
         z
           .object({
+            putCode: z
+              .number()
+              .optional()
+              .describe(
+                'Work put-code — pass to orcid_get_work_detail to fetch the full record including abstract and contributors.',
+              ),
             title: z.string().optional().describe('Work title.'),
             workType: z
               .string()
@@ -134,6 +140,7 @@ export const orcidGetWorks = tool('orcid_get_works', {
     lines.push('');
     for (const w of result.works) {
       lines.push(`### ${w.title ?? '(untitled)'}`);
+      if (w.putCode != null) lines.push(`**Put-code:** ${w.putCode}`);
       if (w.workType) lines.push(`**Type:** ${w.workType}`);
       if (w.publicationDate) lines.push(`**Date:** ${w.publicationDate}`);
       if (w.journalTitle) lines.push(`**Journal:** ${w.journalTitle}`);

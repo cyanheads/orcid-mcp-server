@@ -21,6 +21,8 @@ import {
   normalizeFundings,
   normalizePeerReviews,
   normalizePerson,
+  normalizeResearchResources,
+  normalizeWorkDetail,
   normalizeWorks,
 } from './normalizers.js';
 import type {
@@ -33,8 +35,12 @@ import type {
   RawFundingsResponse,
   RawPeerReviewsResponse,
   RawPerson,
+  RawResearchResourcesResponse,
+  RawWorkDetail,
   RawWorksResponse,
+  ResearchResource,
   Work,
+  WorkDetail,
 } from './types.js';
 
 /** Strip https://orcid.org/ prefix to get the bare 0000-XXXX-XXXX-XXXX form. */
@@ -193,6 +199,30 @@ export class OrcidService {
     ctx.log.debug('ORCID getPeerReviews', { orcidId: id });
     const raw = await this.fetchJson<RawPeerReviewsResponse>(url, ctx);
     return normalizePeerReviews(raw);
+  }
+
+  /**
+   * Fetch the full detail for a single work by its put-code.
+   * Returns abstract, all contributors with roles, full external IDs, and citation.
+   */
+  async getWorkDetail(orcidId: string, putCode: number, ctx: Context): Promise<WorkDetail> {
+    const id = normalizeOrcidId(orcidId);
+    const url = `${this.baseUrl}/${id}/work/${putCode}`;
+    ctx.log.debug('ORCID getWorkDetail', { orcidId: id, putCode });
+    const raw = await this.fetchJson<RawWorkDetail>(url, ctx);
+    return normalizeWorkDetail(raw);
+  }
+
+  /**
+   * Fetch research resources (equipment, facilities, compute allocations, etc.)
+   * associated with an ORCID iD.
+   */
+  async getResearchResources(orcidId: string, ctx: Context): Promise<ResearchResource[]> {
+    const id = normalizeOrcidId(orcidId);
+    const url = `${this.baseUrl}/${id}/research-resources`;
+    ctx.log.debug('ORCID getResearchResources', { orcidId: id });
+    const raw = await this.fetchJson<RawResearchResourcesResponse>(url, ctx);
+    return normalizeResearchResources(raw);
   }
 }
 

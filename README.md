@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.1.6-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/orcid-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/orcid-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/orcid-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.2-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.2.0-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/orcid-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/orcid-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/orcid-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.2-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -29,16 +29,18 @@
 
 ## Tools
 
-Seven tools organized around three workflows — author disambiguation, researcher profiling, and cross-server identifier chaining:
+Nine tools organized around three workflows — author disambiguation, researcher profiling, and cross-server identifier chaining:
 
 | Tool | Description |
 |:-----|:------------|
 | `orcid_search_researchers` | Search the ORCID registry using structured field params (name, affiliation, keyword, ROR ID, DOI, PMID). All params are ANDed into a Solr query against the expanded-search endpoint, returning ORCID iDs with inline name and institution data. |
 | `orcid_get_profile` | Fetch a researcher's public profile: name, biography, keywords, researcher URLs, and external identifiers (Scopus Author ID, ResearcherID, Loop, etc.). |
-| `orcid_get_works` | Retrieve works (publications, datasets, software, preprints) for a researcher. Returns titles, types, publication dates, journal names, and all external identifiers — DOIs, PMIDs, arXiv IDs — ready for chaining to Crossref, PubMed, or arXiv servers. |
+| `orcid_get_works` | Retrieve works (publications, datasets, software, preprints) for a researcher. Returns summaries with put-codes, titles, types, dates, journal names, and external identifiers. Pass put-codes to `orcid_get_work_detail` for abstracts and full contributor lists. |
+| `orcid_get_work_detail` | Fetch the full detail record for a single work by its put-code (from `orcid_get_works`). Returns the abstract, all contributors with CRediT roles, complete external IDs, citation metadata, journal title, and URL. |
 | `orcid_get_affiliations` | Fetch affiliation records for a researcher. Accepts a `types` list to filter which sections to return: `employment`, `education`, `invited-positions`, `distinctions`, `memberships`, `qualifications`, `services`, or `all`. |
 | `orcid_get_funding` | Fetch funding records: grants, contracts, awards, and salary awards, with funder names, grant numbers, and funding periods. |
 | `orcid_get_peer_reviews` | Fetch peer review activity: convening organizations, reviewer role, review type, completion dates, and ISSN-keyed group identifiers. |
+| `orcid_get_research_resources` | List research resources associated with a researcher — compute allocations, equipment access, lab facilities, and data resources. Sparsely populated; most researchers have no entries. |
 | `orcid_resolve_researcher` | Disambiguate an ambiguous author name to a verified ORCID iD. Returns a ranked list of up to 5 candidates with transparent signals: name match type, institution overlap, and whether a DOI or PMID anchor was used. |
 
 ### `orcid_search_researchers`
@@ -75,6 +77,16 @@ Retrieve the works list for a researcher.
 
 ---
 
+### `orcid_get_work_detail`
+
+Fetch the full detail record for a single work by its put-code.
+
+- Put-codes come from `orcid_get_works` — each work summary now carries its `put_code`
+- Returns the abstract, all contributors with CRediT roles, the complete external ID list, citation metadata (BibTeX or other formats when deposited), journal title, and URL
+- The works list is intentionally lightweight; use this when you need the abstract or contributor list without a round-trip to Crossref or PubMed
+
+---
+
 ### `orcid_get_affiliations`
 
 Fetch affiliation records by type, using a single `/activities` call filtered client-side.
@@ -102,6 +114,17 @@ Fetch peer review activity for a researcher.
 
 - Returns convening organizations (journals/publishers), reviewer role (`reviewer`, `editor`, `chair`, etc.), review type, completion dates, and ISSN-keyed group identifiers
 - Useful for assessing editorial activity and journal affiliations
+
+---
+
+### `orcid_get_research_resources`
+
+List research resources associated with a researcher.
+
+- Covers compute allocations, equipment access, lab facilities, data resources, and clinical study registrations
+- A newer ORCID section that is sparsely populated — most researchers have no entries, and absence does not imply none exist
+- Entries are typically deposited by resource-allocation systems (e.g. ACCESS, XSEDE) rather than self-reported
+- Returns resource title, hosting organization (with disambiguated org ID), external identifiers (often a portal URI), and access period
 
 ---
 

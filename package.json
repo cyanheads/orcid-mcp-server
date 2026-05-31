@@ -1,6 +1,6 @@
 {
   "name": "@cyanheads/orcid-mcp-server",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "mcpName": "io.github.cyanheads/orcid-mcp-server",
   "description": "Search and retrieve researcher profiles, works, affiliations, funding, and peer review records from the ORCID registry via MCP. STDIO or Streamable HTTP.",
   "type": "module",

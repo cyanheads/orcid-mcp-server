@@ -137,8 +137,8 @@ export type RawWorkSummary = {
   };
   'work-type'?: string;
   'publication-date'?: OrcidDate;
-  'journal-title'?: { value?: string };
-  url?: { value?: string };
+  'journal-title'?: { value?: string } | null;
+  url?: { value?: string } | null;
   'external-ids'?: {
     'external-id'?: RawWorkExternalId[];
   };
@@ -160,6 +160,47 @@ export type RawWorksGroup = {
 export type RawWorksResponse = {
   group?: RawWorksGroup[];
   'last-modified-date'?: { value?: number };
+};
+
+/** Full work detail as returned by /work/{putCode}. */
+export type RawWorkDetail = {
+  'put-code'?: number;
+  path?: string;
+  title?: {
+    title?: { value?: string } | null;
+    subtitle?: { value?: string } | null;
+    'translated-title'?: { value?: string } | null;
+  };
+  'journal-title'?: { value?: string } | null;
+  /** Abstract or short description — stored in short-description by ORCID. */
+  'short-description'?: string | null;
+  citation?: {
+    'citation-type'?: string | null;
+    'citation-value'?: string | null;
+  } | null;
+  type?: string | null;
+  'publication-date'?: OrcidDate | null;
+  'external-ids'?: {
+    'external-id'?: RawWorkExternalId[];
+  } | null;
+  url?: { value?: string } | null;
+  contributors?: {
+    contributor?: RawWorkContributor[];
+  } | null;
+  'language-code'?: string | null;
+  country?: { value?: string } | null;
+  visibility?: string | null;
+};
+
+/** Contributor entry from a full work detail record. */
+export type RawWorkContributor = {
+  'contributor-orcid'?: { path?: string } | null;
+  'credit-name'?: { value?: string } | null;
+  'contributor-email'?: string | null;
+  'contributor-attributes'?: {
+    'contributor-sequence'?: string | null;
+    'contributor-role'?: string | null;
+  } | null;
 };
 
 /** Funding summary. */
@@ -228,6 +269,46 @@ export type RawExpandedSearchResponse = {
   'num-found'?: number;
 };
 
+/** Research resource summary as returned by /research-resources. */
+export type RawResearchResourceSummary = {
+  'put-code'?: number;
+  path?: string;
+  visibility?: string | null;
+  'display-index'?: string | null;
+  'created-date'?: { value?: number } | null;
+  'last-modified-date'?: { value?: number } | null;
+  proposal?: {
+    title?: {
+      title?: { value?: string } | null;
+    } | null;
+    hosts?: {
+      organization?: RawOrganization[];
+    } | null;
+    'external-ids'?: {
+      'external-id'?: RawWorkExternalId[];
+    } | null;
+    'start-date'?: OrcidDate | null;
+    'end-date'?: OrcidDate | null;
+    url?: { value?: string } | null;
+  } | null;
+};
+
+/** Research resource group (grouped by external ID). */
+export type RawResearchResourceGroup = {
+  'last-modified-date'?: { value?: number } | null;
+  'external-ids'?: {
+    'external-id'?: RawWorkExternalId[];
+  } | null;
+  'research-resource-summary'?: RawResearchResourceSummary[];
+};
+
+/** Top-level research-resources response. */
+export type RawResearchResourcesResponse = {
+  'last-modified-date'?: { value?: number } | null;
+  group?: RawResearchResourceGroup[];
+  path?: string;
+};
+
 // ---------------------------------------------------------------------------
 // Normalized domain types — camelCase, optional fields preserved
 // ---------------------------------------------------------------------------
@@ -265,12 +346,37 @@ export type Affiliation = {
 
 /** Normalized work record. */
 export type Work = {
+  putCode?: number;
   title?: string;
   workType?: string;
   publicationDate?: NormalizedDate;
   journalTitle?: string;
   url?: string;
   externalIds: ExternalIdentifier[];
+};
+
+/** Normalized contributor from a full work detail. */
+export type WorkContributor = {
+  name?: string;
+  orcidId?: string;
+  role?: string;
+  sequence?: string;
+};
+
+/** Normalized full work detail record. */
+export type WorkDetail = {
+  putCode: number;
+  title?: string;
+  subtitle?: string;
+  workType?: string;
+  publicationDate?: NormalizedDate;
+  journalTitle?: string;
+  abstract?: string;
+  citation?: { type: string; value: string };
+  url?: string;
+  externalIds: ExternalIdentifier[];
+  contributors: WorkContributor[];
+  languageCode?: string;
 };
 
 /** Normalized funding record. */
@@ -309,4 +415,15 @@ export type ExpandedSearchResult = {
 export type ExpandedSearchResponse = {
   results: ExpandedSearchResult[];
   numFound: number;
+};
+
+/** Normalized research resource record. */
+export type ResearchResource = {
+  putCode: number;
+  title?: string;
+  hostOrganization?: Organization;
+  externalIds: ExternalIdentifier[];
+  startDate?: NormalizedDate;
+  endDate?: NormalizedDate;
+  url?: string;
 };

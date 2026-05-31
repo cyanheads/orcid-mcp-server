@@ -27,11 +27,18 @@ import type {
   RawPeerReviewGroup,
   RawPeerReviewsResponse,
   RawPerson,
+  RawResearchResourceGroup,
+  RawResearchResourcesResponse,
+  RawWorkContributor,
+  RawWorkDetail,
   RawWorkExternalId,
   RawWorkSummary,
   RawWorksGroup,
   RawWorksResponse,
+  ResearchResource,
   Work,
+  WorkContributor,
+  WorkDetail,
 } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -180,6 +187,7 @@ export function normalizePerson(raw: RawPerson): NormalizedPerson {
 function normalizeWorkSummary(raw: RawWorkSummary): Work {
   const externalIds = normalizeExternalIds(raw['external-ids']?.['external-id']);
   const work: Work = { externalIds };
+  if (raw['put-code'] != null) work.putCode = raw['put-code'];
   const title = raw.title?.title?.value;
   if (title) work.title = title;
   if (raw['work-type']) work.workType = raw['work-type'];
@@ -300,4 +308,69 @@ export function normalizeExpandedSearch(raw: RawExpandedSearchResponse): Expande
     },
   );
   return { results, numFound: raw['num-found'] ?? 0 };
+}
+
+function normalizeContributor(raw: RawWorkContributor): WorkContributor {
+  const contributor: WorkContributor = {};
+  const name = raw['credit-name']?.value;
+  if (name) contributor.name = name;
+  const orcidPath = raw['contributor-orcid']?.path;
+  if (orcidPath) contributor.orcidId = orcidPath;
+  const role = raw['contributor-attributes']?.['contributor-role'];
+  if (role) contributor.role = role;
+  const sequence = raw['contributor-attributes']?.['contributor-sequence'];
+  if (sequence) contributor.sequence = sequence;
+  return contributor;
+}
+
+export function normalizeWorkDetail(raw: RawWorkDetail): WorkDetail {
+  const externalIds = normalizeExternalIds(raw['external-ids']?.['external-id']);
+  const contributors = (raw.contributors?.contributor ?? []).map(normalizeContributor);
+  const detail: WorkDetail = {
+    putCode: raw['put-code'] ?? 0,
+    externalIds,
+    contributors,
+  };
+  const titleVal = raw.title?.title?.value;
+  if (titleVal) detail.title = titleVal;
+  const subtitleVal = raw.title?.subtitle?.value;
+  if (subtitleVal) detail.subtitle = subtitleVal;
+  if (raw.type) detail.workType = raw.type;
+  const pubDate = normalizeDate(raw['publication-date'] ?? undefined);
+  if (pubDate) detail.publicationDate = pubDate;
+  const journalTitle = raw['journal-title']?.value;
+  if (journalTitle) detail.journalTitle = journalTitle;
+  const abstract = raw['short-description']?.trim() || undefined;
+  if (abstract) detail.abstract = abstract;
+  const citationType = raw.citation?.['citation-type'];
+  const citationValue = raw.citation?.['citation-value'];
+  if (citationType && citationValue) detail.citation = { type: citationType, value: citationValue };
+  const urlVal = raw.url?.value;
+  if (urlVal) detail.url = urlVal;
+  if (raw['language-code']) detail.languageCode = raw['language-code'];
+  return detail;
+}
+
+export function normalizeResearchResources(raw: RawResearchResourcesResponse): ResearchResource[] {
+  return (raw.group ?? []).flatMap((g: RawResearchResourceGroup) =>
+    (g['research-resource-summary'] ?? []).flatMap((s): ResearchResource[] => {
+      const putCode = s['put-code'];
+      if (!putCode) return [];
+      const resource: ResearchResource = { putCode, externalIds: [] };
+      const titleVal = s.proposal?.title?.title?.value;
+      if (titleVal) resource.title = titleVal;
+      const firstOrg = s.proposal?.hosts?.organization?.[0];
+      const hostOrg = normalizeOrg(firstOrg);
+      if (hostOrg) resource.hostOrganization = hostOrg;
+      const rawIds = s.proposal?.['external-ids']?.['external-id'];
+      resource.externalIds = normalizeExternalIds(rawIds);
+      const startDate = normalizeDate(s.proposal?.['start-date'] ?? undefined);
+      if (startDate) resource.startDate = startDate;
+      const endDate = normalizeDate(s.proposal?.['end-date'] ?? undefined);
+      if (endDate) resource.endDate = endDate;
+      const urlVal = s.proposal?.url?.value;
+      if (urlVal) resource.url = urlVal;
+      return [resource];
+    }),
+  );
 }

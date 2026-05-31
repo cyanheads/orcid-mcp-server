@@ -1,6 +1,6 @@
 # orcid-mcp-server - Directory Structure
 
-Generated on: 2026-05-29 05:37:28
+Generated on: 2026-05-31 02:13:55
 
 ```text
 orcid-mcp-server/
@@ -21,6 +21,7 @@ orcid-mcp-server/
 │   └── settings.json
 ├── changelog/
 │   ├── 0.1.x/
+│   ├── 0.2.x/
 │   └── template.md
 ├── docs/
 │   ├── design.md
@@ -125,6 +126,8 @@ orcid-mcp-server/
 │   │           ├── get-funding.tool.ts
 │   │           ├── get-peer-reviews.tool.ts
 │   │           ├── get-profile.tool.ts
+│   │           ├── get-research-resources.tool.ts
+│   │           ├── get-work-detail.tool.ts
 │   │           ├── get-works.tool.ts
 │   │           ├── resolve-researcher.tool.ts
 │   │           └── search-researchers.tool.ts
@@ -137,18 +140,25 @@ orcid-mcp-server/
 ├── tests/
 │   ├── resources/
 │   │   ├── researcher-profile.resource.test.ts
-│   │   └── researcher-works.resource.test.ts
+│   │   ├── researcher-works.resource.test.ts
+│   │   └── resources-extended.test.ts
 │   ├── services/
 │   │   └── orcid/
+│   │       ├── normalizers-extended.test.ts
 │   │       └── normalizers.test.ts
 │   └── tools/
 │       ├── get-affiliations.tool.test.ts
 │       ├── get-funding.tool.test.ts
 │       ├── get-peer-reviews.tool.test.ts
 │       ├── get-profile.tool.test.ts
+│       ├── get-research-resources.tool.test.ts
+│       ├── get-work-detail.tool.test.ts
 │       ├── get-works.tool.test.ts
+│       ├── resolve-researcher-extended.tool.test.ts
 │       ├── resolve-researcher.tool.test.ts
-│       └── search-researchers.tool.test.ts
+│       ├── search-researchers-extended.tool.test.ts
+│       ├── search-researchers.tool.test.ts
+│       └── security.tool.test.ts
 ├── .dockerignore
 ├── .env.example
 ├── .gitignore

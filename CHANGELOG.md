@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.0](changelog/0.2.x/0.2.0.md) — 2026-05-30
+
+Work detail fetch, research resources tool, notFound guard for missing ORCID iDs, Solr quote fixes for name searches
+
 ## [0.1.6](changelog/0.1.x/0.1.6.md) — 2026-05-30
 
 Enrichment adoption: query echoes, result totals, empty-result guidance in typed enrichment block; dead error contracts removed (no_results, no_candidates)
