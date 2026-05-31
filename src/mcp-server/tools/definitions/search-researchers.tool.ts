@@ -21,10 +21,10 @@ function buildSolrQuery(input: {
   const clauses: string[] = [];
 
   if (input.given_name?.trim()) {
-    clauses.push(`given-names:${input.given_name.trim()}`);
+    clauses.push(`given-names:"${input.given_name.trim()}"`);
   }
   if (input.family_name?.trim()) {
-    clauses.push(`family-name:${input.family_name.trim()}`);
+    clauses.push(`family-name:"${input.family_name.trim()}"`);
   }
   if (input.affiliation?.trim()) {
     clauses.push(`affiliation-org-name:"${input.affiliation.trim()}"`);

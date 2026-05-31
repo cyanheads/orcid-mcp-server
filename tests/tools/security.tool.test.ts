@@ -38,7 +38,7 @@ describe('security: injection attempts are forwarded as query strings, not execu
     vi.clearAllMocks();
   });
 
-  it('search_researchers: Solr injection in family_name is passed through as a literal string', async () => {
+  it('search_researchers: Solr injection in family_name is phrase-quoted, not structurally expanded', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
     const ctx = createMockContext();
@@ -48,9 +48,9 @@ describe('security: injection attempts are forwarded as query strings, not execu
     await orcidSearchResearchers.handler(input, ctx);
 
     const [callParams] = mockExpandedSearch.mock.calls[0];
-    // The injection is embedded in the field clause — it reaches the service as a string,
-    // not as a structural query modification from our side.
-    expect(callParams.q).toContain('family-name:Smith OR 1=1');
+    // The injection is phrase-quoted in the field clause — the OR token is not a
+    // structural boolean operator from our side; it is part of the quoted literal.
+    expect(callParams.q).toContain('family-name:"Smith OR 1=1"');
   });
 
   it('search_researchers: raw query field with boolean injection is forwarded unchanged', async () => {

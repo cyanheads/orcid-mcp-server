@@ -56,7 +56,7 @@ describe('orcidSearchResearchers', () => {
     expect(enrichment.numFound).toBe(2);
     expect(result.rows).toBe(2);
     expect(result.start).toBe(0);
-    expect(enrichment.effectiveQuery).toBe('family-name:Doudna');
+    expect(enrichment.effectiveQuery).toBe('family-name:"Doudna"');
     expect(result.results).toHaveLength(2);
     expect(result.results[0].orcidId).toBe('0000-0001-9522-8779');
     expect(result.results[0].orcidUri).toBe('https://orcid.org/0000-0001-9522-8779');
@@ -79,8 +79,8 @@ describe('orcidSearchResearchers', () => {
     await orcidSearchResearchers.handler(input, ctx);
 
     const [callParams] = mockExpandedSearch.mock.calls[0];
-    expect(callParams.q).toContain('given-names:Jennifer');
-    expect(callParams.q).toContain('family-name:Doudna');
+    expect(callParams.q).toContain('given-names:"Jennifer"');
+    expect(callParams.q).toContain('family-name:"Doudna"');
     expect(callParams.q).toContain('affiliation-org-name:"UC Berkeley"');
     expect(callParams.q).toContain('keyword:"CRISPR"');
   });

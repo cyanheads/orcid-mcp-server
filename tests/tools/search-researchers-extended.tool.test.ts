@@ -69,9 +69,31 @@ describe('orcidSearchResearchers — Solr clause building', () => {
     await orcidSearchResearchers.handler(input, ctx);
 
     const [callParams] = mockExpandedSearch.mock.calls[0];
-    expect(callParams.q).toContain('family-name:Doudna');
+    expect(callParams.q).toContain('family-name:"Doudna"');
     expect(callParams.q).toContain('AND');
     expect(callParams.q).toContain('email:*berkeley.edu');
+  });
+
+  it('phrase-quotes given_name so multi-word names phrase-match (#9)', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+
+    const ctx = createMockContext();
+    const input = orcidSearchResearchers.input.parse({ given_name: 'Mary Ann' });
+    await orcidSearchResearchers.handler(input, ctx);
+
+    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(callParams.q).toBe('given-names:"Mary Ann"');
+  });
+
+  it('phrase-quotes family_name so compound surnames phrase-match (#9)', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+
+    const ctx = createMockContext();
+    const input = orcidSearchResearchers.input.parse({ family_name: 'Van Damme' });
+    await orcidSearchResearchers.handler(input, ctx);
+
+    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(callParams.q).toBe('family-name:"Van Damme"');
   });
 
   it('uses *:* when only whitespace-only params are provided', async () => {
