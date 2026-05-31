@@ -175,7 +175,7 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
 
     // Build primary query: name + optional anchor + optional affiliation
     const primaryClauses: string[] = [];
-    primaryClauses.push(`given-and-family-names:${input.name.trim()}`);
+    primaryClauses.push(`given-and-family-names:"${input.name.trim()}"`);
     if (input.doi?.trim()) primaryClauses.push(`doi-self:${input.doi.trim()}`);
     if (input.pmid?.trim()) primaryClauses.push(`pmid-self:${input.pmid.trim()}`);
     if (input.affiliation?.trim()) {

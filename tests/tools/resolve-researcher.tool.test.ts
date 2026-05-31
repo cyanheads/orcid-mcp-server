@@ -158,6 +158,30 @@ describe('orcidResolveResearcher', () => {
     expect(result.candidates[1].nameMatchType).toBe('partial');
   });
 
+  it('phrase-quotes the full name in the primary Solr clause (#4)', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 1, results: [doudnaResult] });
+
+    const ctx = createMockContext();
+    const input = orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna' });
+    await orcidResolveResearcher.handler(input, ctx);
+
+    const [callParams] = mockExpandedSearch.mock.calls[0];
+    // Name must be phrase-quoted so Solr matches the full name, not individual tokens
+    expect(callParams.q).toContain('given-and-family-names:"Jennifer Doudna"');
+    expect(callParams.q).not.toContain('given-and-family-names:Jennifer Doudna');
+  });
+
+  it('phrase-quotes multi-word name in the primary Solr clause (#4)', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 1, results: [doudnaResult] });
+
+    const ctx = createMockContext();
+    const input = orcidResolveResearcher.input.parse({ name: 'Mary Ann Smith' });
+    await orcidResolveResearcher.handler(input, ctx);
+
+    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(callParams.q).toBe('given-and-family-names:"Mary Ann Smith"');
+  });
+
   it('propagates service errors', async () => {
     mockExpandedSearch.mockRejectedValueOnce(new Error('Connection refused'));
 
