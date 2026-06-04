@@ -7,6 +7,7 @@
 import type { AffiliationType } from './orcid-service.js';
 import type {
   Affiliation,
+  BulkWorkResult,
   ExpandedSearchResponse,
   ExpandedSearchResult,
   ExternalIdentifier,
@@ -18,6 +19,7 @@ import type {
   RawActivities,
   RawAffiliationGroup,
   RawAffiliationSummary,
+  RawBulkWorksResponse,
   RawExpandedSearchResponse,
   RawExpandedSearchResult,
   RawFundingGroup,
@@ -349,6 +351,24 @@ export function normalizeWorkDetail(raw: RawWorkDetail): WorkDetail {
   if (urlVal) detail.url = urlVal;
   if (raw['language-code']) detail.languageCode = raw['language-code'];
   return detail;
+}
+
+/**
+ * Normalize the bulk works endpoint response.
+ * Each entry is either a `work` (full detail) or an `error` (not-found or access denied).
+ * Error entries are surfaced as BulkWorkResult errors rather than failing the whole call.
+ */
+export function normalizeBulkWorks(raw: RawBulkWorksResponse): BulkWorkResult[] {
+  return (raw.bulk ?? []).map((entry): BulkWorkResult => {
+    if (entry.error) {
+      const msg =
+        entry.error['developer-message'] ??
+        `ORCID error code ${entry.error['error-code'] ?? entry.error['response-code'] ?? 'unknown'}`;
+      const putCode = entry.error['put-code'];
+      return { type: 'error', ...(putCode !== undefined && { putCode }), message: msg };
+    }
+    return { type: 'work', detail: normalizeWorkDetail(entry.work) };
+  });
 }
 
 export function normalizeResearchResources(raw: RawResearchResourcesResponse): ResearchResource[] {

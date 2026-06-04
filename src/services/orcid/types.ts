@@ -293,6 +293,32 @@ export type RawResearchResourceSummary = {
   } | null;
 };
 
+/**
+ * Bulk works endpoint — each entry is either a successful `work` or an `error`.
+ * GET /v3.0/{orcid}/works/{putCode1},{putCode2},...
+ */
+export type RawBulkWorkEntry =
+  | { work: RawWorkDetail; error?: undefined }
+  | {
+      error: {
+        'put-code'?: number;
+        'response-code'?: number;
+        'developer-message'?: string;
+        'error-code'?: number;
+      };
+      work?: undefined;
+    };
+
+/** Top-level bulk works response. */
+export type RawBulkWorksResponse = {
+  bulk?: RawBulkWorkEntry[];
+};
+
+/** Normalized result from the bulk endpoint — either a full detail or an error. */
+export type BulkWorkResult =
+  | { type: 'work'; detail: WorkDetail }
+  | { type: 'error'; putCode?: number; message: string };
+
 /** Research resource group (grouped by external ID). */
 export type RawResearchResourceGroup = {
   'last-modified-date'?: { value?: number } | null;

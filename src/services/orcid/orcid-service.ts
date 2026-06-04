@@ -17,6 +17,7 @@ import { getServerConfig } from '@/config/server-config.js';
 import type { NormalizedPerson } from './normalizers.js';
 import {
   normalizeActivities,
+  normalizeBulkWorks,
   normalizeExpandedSearch,
   normalizeFundings,
   normalizePeerReviews,
@@ -27,10 +28,12 @@ import {
 } from './normalizers.js';
 import type {
   Affiliation,
+  BulkWorkResult,
   ExpandedSearchResponse,
   FundingRecord,
   PeerReview,
   RawActivities,
+  RawBulkWorksResponse,
   RawExpandedSearchResponse,
   RawFundingsResponse,
   RawPeerReviewsResponse,
@@ -211,6 +214,25 @@ export class OrcidService {
     ctx.log.debug('ORCID getWorkDetail', { orcidId: id, putCode });
     const raw = await this.fetchJson<RawWorkDetail>(url, ctx);
     return normalizeWorkDetail(raw);
+  }
+
+  /**
+   * Fetch full detail records for up to 100 works in a single bulk round-trip.
+   * Uses GET /v3.0/{orcid}/works/{putCode1},{putCode2},...
+   * Per-record errors (not-found put-codes) are returned as error entries rather
+   * than failing the entire call.
+   */
+  async getWorkDetails(
+    orcidId: string,
+    putCodes: number[],
+    ctx: Context,
+  ): Promise<BulkWorkResult[]> {
+    const id = normalizeOrcidId(orcidId);
+    const codesStr = putCodes.join(',');
+    const url = `${this.baseUrl}/${id}/works/${codesStr}`;
+    ctx.log.debug('ORCID getWorkDetails (bulk)', { orcidId: id, count: putCodes.length });
+    const raw = await this.fetchJson<RawBulkWorksResponse>(url, ctx);
+    return normalizeBulkWorks(raw);
   }
 
   /**

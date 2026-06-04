@@ -1,10 +1,11 @@
 /**
- * @fileoverview Fetch the full detail record for a single ORCID work by its put-code.
+ * @fileoverview Fetch full detail records for one or more ORCID works by their put-codes
+ * using the bulk works endpoint.
  * @module mcp-server/tools/definitions/get-work-detail
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
 import type { WorkDetail } from '@/services/orcid/types.js';
 
@@ -34,34 +35,8 @@ const ContributorSchema = z
   })
   .describe('Work contributor with optional role and ORCID iD.');
 
-export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
-  title: 'Get ORCID Work Detail',
-  description:
-    'Fetch the full detail record for a single work by its put-code, which is returned by orcid_get_works in the put_code field of each work entry. Returns the abstract (short-description), all contributors with CRediT roles, the complete external ID list (DOI, PMID, arXiv, ISBN, etc.), citation metadata (BibTeX or other formats when provided), journal title, and URL. Use this when you need more than the summary — especially the abstract or contributor list — after calling orcid_get_works to identify the put-code.',
-  annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
-
-  input: z.object({
-    orcid_id: z
-      .string()
-      .regex(
-        /^(https?:\/\/orcid\.org\/)?\d{4}-\d{4}-\d{4}-\d{3}[\dX]$/,
-        'Must be a valid ORCID iD (e.g. 0000-0001-2345-6789) or full ORCID URI.',
-      )
-      .describe(
-        'ORCID iD — bare format (0000-0001-2345-6789) or full URI (https://orcid.org/0000-0001-2345-6789).',
-      ),
-    put_code: z
-      .number()
-      .int()
-      .positive()
-      .describe(
-        'Work put-code, available in the put_code field returned by orcid_get_works. Each work group has a unique put-code.',
-      ),
-  }),
-
-  output: z.object({
-    orcidId: z.string().describe('Normalized ORCID iD (bare format).'),
-    orcidUri: z.string().describe('Full ORCID URI.'),
+const WorkDetailSchema = z
+  .object({
     putCode: z.number().describe('Put-code of this work record.'),
     title: z.string().optional().describe('Work title.'),
     subtitle: z.string().optional().describe('Work subtitle, when provided.'),
@@ -90,99 +65,165 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
       .array(ContributorSchema)
       .describe('Work contributors with optional roles. May be empty if not deposited.'),
     languageCode: z.string().optional().describe('Language code of the work, when provided.'),
+  })
+  .describe('Full detail record for one work.');
+
+const WorkErrorSchema = z
+  .object({
+    putCode: z
+      .number()
+      .optional()
+      .describe('Put-code that produced this error, when identifiable.'),
+    message: z.string().describe('Error message from ORCID (e.g. not found or access denied).'),
+  })
+  .describe('Error entry for a put-code that could not be resolved.');
+
+export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
+  title: 'Get ORCID Work Details (Bulk)',
+  description:
+    'Fetch full detail records for 1–100 works by their put-codes in a single request. Put-codes are returned by orcid_get_works in the put_code field of each work entry. Returns the abstract (short-description), all contributors with CRediT roles, the complete external ID list (DOI, PMID, arXiv, ISBN, etc.), citation metadata (BibTeX or other formats when provided), journal title, and URL for each work. Per-record errors (not-found or inaccessible put-codes) are surfaced as error entries rather than failing the whole call.',
+  annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+
+  input: z.object({
+    orcid_id: z
+      .string()
+      .regex(
+        /^(https?:\/\/orcid\.org\/)?\d{4}-\d{4}-\d{4}-\d{3}[\dX]$/,
+        'Must be a valid ORCID iD (e.g. 0000-0001-2345-6789) or full ORCID URI.',
+      )
+      .describe(
+        'ORCID iD — bare format (0000-0001-2345-6789) or full URI (https://orcid.org/0000-0001-2345-6789).',
+      ),
+    put_codes: z
+      .array(z.number().int().positive().describe('Work put-code (positive integer).'))
+      .min(1)
+      .max(100)
+      .describe(
+        'Array of 1–100 work put-codes to fetch. Put-codes are available in the put_code field returned by orcid_get_works.',
+      ),
+  }),
+
+  output: z.object({
+    orcidId: z.string().describe('Normalized ORCID iD (bare format).'),
+    orcidUri: z.string().describe('Full ORCID URI.'),
+    works: z.array(WorkDetailSchema).describe('Successfully resolved work detail records.'),
+    errors: z
+      .array(WorkErrorSchema)
+      .describe(
+        'Per-record errors for put-codes that could not be resolved (not found or inaccessible). Empty when all put-codes resolved successfully.',
+      ),
   }),
 
   errors: [
     {
-      reason: 'work_not_found',
-      code: JsonRpcErrorCode.NotFound,
-      when: 'The ORCID iD or put-code does not correspond to a known record.',
-      recovery:
-        'Verify the ORCID iD with orcid_search_researchers and the put-code with orcid_get_works.',
+      reason: 'fetch_failed',
+      code: JsonRpcErrorCode.InternalError,
+      when: 'The ORCID bulk works endpoint returns an unexpected error.',
+      recovery: 'Retry the request; if the error persists, verify the ORCID iD and put-codes.',
     },
   ],
 
   async handler(input, ctx) {
     const service = getOrcidService();
-    ctx.log.info('orcid_get_work_detail', { orcidId: input.orcid_id, putCode: input.put_code });
+    const bareId = normalizeOrcidId(input.orcid_id);
+    ctx.log.info('orcid_get_work_detail', { orcidId: bareId, count: input.put_codes.length });
 
-    let detail: WorkDetail;
-    try {
-      detail = await service.getWorkDetail(input.orcid_id, input.put_code, ctx);
-    } catch (err) {
-      if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
-        throw ctx.fail(
-          'work_not_found',
-          `Work put-code ${input.put_code} not found for ORCID iD ${normalizeOrcidId(input.orcid_id)}`,
-        );
+    const results = await service.getWorkDetails(input.orcid_id, input.put_codes, ctx);
+
+    const works: WorkDetail[] = [];
+    const errors: Array<{ putCode?: number; message: string }> = [];
+
+    for (const result of results) {
+      if (result.type === 'error') {
+        errors.push({
+          ...(result.putCode !== undefined && { putCode: result.putCode }),
+          message: result.message,
+        });
+      } else {
+        const d = result.detail;
+        works.push({
+          putCode: d.putCode,
+          ...(d.title !== undefined && { title: d.title }),
+          ...(d.subtitle !== undefined && { subtitle: d.subtitle }),
+          ...(d.workType !== undefined && { workType: d.workType }),
+          ...(d.publicationDate !== undefined && { publicationDate: d.publicationDate }),
+          ...(d.journalTitle !== undefined && { journalTitle: d.journalTitle }),
+          ...(d.abstract !== undefined && { abstract: d.abstract }),
+          ...(d.citation !== undefined && { citation: d.citation }),
+          ...(d.url !== undefined && { url: d.url }),
+          externalIds: d.externalIds,
+          contributors: d.contributors,
+          ...(d.languageCode !== undefined && { languageCode: d.languageCode }),
+        });
       }
-      throw err;
     }
 
-    const bareId = normalizeOrcidId(input.orcid_id);
     ctx.log.info('orcid_get_work_detail completed', {
       orcidId: bareId,
-      putCode: detail.putCode,
-      hasAbstract: !!detail.abstract,
-      contributorCount: detail.contributors.length,
+      resolved: works.length,
+      errors: errors.length,
     });
 
     return {
       orcidId: bareId,
       orcidUri: `https://orcid.org/${bareId}`,
-      putCode: detail.putCode,
-      ...(detail.title !== undefined && { title: detail.title }),
-      ...(detail.subtitle !== undefined && { subtitle: detail.subtitle }),
-      ...(detail.workType !== undefined && { workType: detail.workType }),
-      ...(detail.publicationDate !== undefined && { publicationDate: detail.publicationDate }),
-      ...(detail.journalTitle !== undefined && { journalTitle: detail.journalTitle }),
-      ...(detail.abstract !== undefined && { abstract: detail.abstract }),
-      ...(detail.citation !== undefined && { citation: detail.citation }),
-      ...(detail.url !== undefined && { url: detail.url }),
-      externalIds: detail.externalIds,
-      contributors: detail.contributors,
-      ...(detail.languageCode !== undefined && { languageCode: detail.languageCode }),
+      works,
+      errors,
     };
   },
 
   format: (result) => {
     const lines: string[] = [
-      `## ${result.title ?? '(untitled)'}`,
-      `**ORCID iD:** ${result.orcidId} | **URI:** ${result.orcidUri} | **Put-code:** ${result.putCode}`,
+      `**ORCID iD:** ${result.orcidId} | **URI:** ${result.orcidUri}`,
+      `**Works resolved:** ${result.works.length} | **Errors:** ${result.errors.length}`,
     ];
-    if (result.subtitle) lines.push(`**Subtitle:** ${result.subtitle}`);
-    if (result.workType) lines.push(`**Type:** ${result.workType}`);
-    if (result.publicationDate) lines.push(`**Date:** ${result.publicationDate}`);
-    if (result.journalTitle) lines.push(`**Journal:** ${result.journalTitle}`);
-    if (result.url) lines.push(`**URL:** ${result.url}`);
-    if (result.externalIds.length) {
-      const idParts = result.externalIds.map((id) => {
-        const rel = id.relationship ? ` [${id.relationship}]` : '';
-        const urlPart = id.url ? ` (${id.url})` : '';
-        return `${id.type}:${id.value}${urlPart}${rel}`;
-      });
-      lines.push(`**IDs:** ${idParts.join(', ')}`);
+
+    for (const work of result.works) {
+      lines.push('', `---`, `## ${work.title ?? '(untitled)'}`);
+      lines.push(`**Put-code:** ${work.putCode}`);
+      if (work.subtitle) lines.push(`**Subtitle:** ${work.subtitle}`);
+      if (work.workType) lines.push(`**Type:** ${work.workType}`);
+      if (work.publicationDate) lines.push(`**Date:** ${work.publicationDate}`);
+      if (work.journalTitle) lines.push(`**Journal:** ${work.journalTitle}`);
+      if (work.url) lines.push(`**URL:** ${work.url}`);
+      if (work.externalIds.length) {
+        const idParts = work.externalIds.map((id) => {
+          const rel = id.relationship ? ` [${id.relationship}]` : '';
+          const urlPart = id.url ? ` (${id.url})` : '';
+          return `${id.type}:${id.value}${urlPart}${rel}`;
+        });
+        lines.push(`**IDs:** ${idParts.join(', ')}`);
+      }
+      if (work.abstract) {
+        lines.push('', `**Abstract:** ${work.abstract}`);
+      }
+      if (work.contributors.length) {
+        lines.push('', '**Contributors:**');
+        for (const c of work.contributors) {
+          const name = c.name ?? '(unnamed)';
+          const role = c.role ? ` — ${c.role}` : '';
+          const seq = c.sequence ? ` (${c.sequence})` : '';
+          const orcid = c.orcidId ? ` [${c.orcidId}]` : '';
+          lines.push(`- ${name}${role}${seq}${orcid}`);
+        }
+      }
+      if (work.citation) {
+        lines.push('', `**Citation (${work.citation.type}):**`);
+        lines.push('```');
+        lines.push(work.citation.value);
+        lines.push('```');
+      }
+      if (work.languageCode) lines.push(`**Language:** ${work.languageCode}`);
     }
-    if (result.abstract) {
-      lines.push('', `**Abstract:** ${result.abstract}`);
-    }
-    if (result.contributors.length) {
-      lines.push('', '**Contributors:**');
-      for (const c of result.contributors) {
-        const name = c.name ?? '(unnamed)';
-        const role = c.role ? ` — ${c.role}` : '';
-        const seq = c.sequence ? ` (${c.sequence})` : '';
-        const orcid = c.orcidId ? ` [${c.orcidId}]` : '';
-        lines.push(`- ${name}${role}${seq}${orcid}`);
+
+    if (result.errors.length) {
+      lines.push('', '---', '**Errors:**');
+      for (const err of result.errors) {
+        const putCodeLabel = err.putCode !== undefined ? ` (put-code ${err.putCode})` : '';
+        lines.push(`- ${err.message}${putCodeLabel}`);
       }
     }
-    if (result.citation) {
-      lines.push('', `**Citation (${result.citation.type}):**`);
-      lines.push('```');
-      lines.push(result.citation.value);
-      lines.push('```');
-    }
-    if (result.languageCode) lines.push(`**Language:** ${result.languageCode}`);
+
     return [{ type: 'text', text: lines.join('\n') }];
   },
 });
