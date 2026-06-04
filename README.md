@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.2.1-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/orcid-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/orcid-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/orcid-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.2-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.2.2-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/orcid-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/orcid-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/orcid-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.2-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -36,7 +36,7 @@ Nine tools organized around three workflows — author disambiguation, researche
 | `orcid_search_researchers` | Search the ORCID registry using structured field params (name, affiliation, keyword, ROR ID, DOI, PMID). All params are ANDed into a Solr query against the expanded-search endpoint, returning ORCID iDs with inline name and institution data. |
 | `orcid_get_profile` | Fetch a researcher's public profile: name, biography, keywords, researcher URLs, and external identifiers (Scopus Author ID, ResearcherID, Loop, etc.). |
 | `orcid_get_works` | Retrieve works (publications, datasets, software, preprints) for a researcher. Returns summaries with put-codes, titles, types, dates, journal names, and external identifiers. Pass put-codes to `orcid_get_work_detail` for abstracts and full contributor lists. |
-| `orcid_get_work_detail` | Fetch the full detail record for a single work by its put-code (from `orcid_get_works`). Returns the abstract, all contributors with CRediT roles, complete external IDs, citation metadata, journal title, and URL. |
+| `orcid_get_work_detail` | Fetch full detail records for 1–100 works by their put-codes in a single bulk request (from `orcid_get_works`). Returns abstracts, all contributors with CRediT roles, complete external IDs, citation metadata, journal title, and URL. Per-record errors are surfaced without failing the whole call. |
 | `orcid_get_affiliations` | Fetch affiliation records for a researcher. Accepts a `types` list to filter which sections to return: `employment`, `education`, `invited-positions`, `distinctions`, `memberships`, `qualifications`, `services`, or `all`. |
 | `orcid_get_funding` | Fetch funding records: grants, contracts, awards, and salary awards, with funder names, grant numbers, and funding periods. |
 | `orcid_get_peer_reviews` | Fetch peer review activity: convening organizations, reviewer role, review type, completion dates, and ISSN-keyed group identifiers. |
@@ -79,11 +79,12 @@ Retrieve the works list for a researcher.
 
 ### `orcid_get_work_detail`
 
-Fetch the full detail record for a single work by its put-code.
+Fetch full detail records for 1–100 works in a single bulk request using the ORCID bulk works endpoint.
 
-- Put-codes come from `orcid_get_works` — each work summary now carries its `put_code`
-- Returns the abstract, all contributors with CRediT roles, the complete external ID list, citation metadata (BibTeX or other formats when deposited), journal title, and URL
-- The works list is intentionally lightweight; use this when you need the abstract or contributor list without a round-trip to Crossref or PubMed
+- `put_codes` is an array of 1–100 put-codes from `orcid_get_works`
+- Single round-trip regardless of how many put-codes are requested
+- Returns abstracts, all contributors with CRediT roles, the complete external ID list, citation metadata (BibTeX or other formats when deposited), journal title, and URL for each work
+- Per-record errors (not-found or inaccessible put-codes) arrive as `errors` entries — the remaining works still resolve
 
 ---
 
