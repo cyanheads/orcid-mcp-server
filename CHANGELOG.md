@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.2](changelog/0.2.x/0.2.2.md) — 2026-06-04 · ⚠️ Breaking
+
+orcid_get_work_detail bulk endpoint — accepts put_codes array (1–100); BREAKING: rename from put_code
+
 ## [0.2.1](changelog/0.2.x/0.2.1.md) — 2026-06-02
 
 Adopt @cyanheads/mcp-ts-core 0.9.21 — per-request log context fix, secret-stripped error messages, withRetry fail-fast; sync skills and scripts
