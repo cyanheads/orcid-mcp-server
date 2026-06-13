@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.3](changelog/0.2.x/0.2.3.md) — 2026-06-12
+
+Adopt @cyanheads/mcp-ts-core 0.10.6; bundle cleaner strips dev deps and dependency-shipped agent docs; explicit createApp identity; Dockerfile healthcheck
+
 ## [0.2.2](changelog/0.2.x/0.2.2.md) — 2026-06-04 · ⚠️ Breaking
 
 orcid_get_work_detail bulk endpoint — accepts put_codes array (1–100); BREAKING: rename from put_code
