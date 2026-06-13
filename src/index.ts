@@ -20,6 +20,8 @@ import { orcidSearchResearchers } from './mcp-server/tools/definitions/search-re
 import { initOrcidService } from './services/orcid/orcid-service.js';
 
 await createApp({
+  name: 'orcid-mcp-server',
+  title: 'orcid-mcp-server',
   tools: [
     orcidGetProfile,
     orcidSearchResearchers,
