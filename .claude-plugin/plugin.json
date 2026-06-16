@@ -1,5 +1,5 @@
 {
-  "name": "@cyanheads/orcid-mcp-server",
+  "name": "orcid-mcp-server",
   "version": "0.2.3",
   "description": "Search and retrieve researcher profiles, works, affiliations, funding, and peer review records from the ORCID registry via MCP. STDIO or Streamable HTTP.",
   "author": {
@@ -9,7 +9,7 @@
   "repository": "https://github.com/cyanheads/orcid-mcp-server",
   "license": "Apache-2.0",
   "mcpServers": {
-    "@cyanheads/orcid-mcp-server": {
+    "orcid-mcp-server": {
       "command": "npx",
       "args": ["-y", "@cyanheads/orcid-mcp-server"],
       "env": {
