@@ -98,8 +98,11 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
       .number()
       .int()
       .min(0)
+      .max(10000)
       .default(0)
-      .describe('Pagination offset (0-based). ORCID Public API caps at 10,000 total results.'),
+      .describe(
+        'Pagination offset (0-based), 0–10,000. The ORCID Public API rejects start > 10,000 for unauthenticated requests.',
+      ),
   }),
 
   output: z.object({

@@ -154,6 +154,17 @@ describe('orcidSearchResearchers', () => {
     expect(text).toContain('UC Berkeley');
   });
 
+  it('rejects start above the ORCID Public API cap of 10,000', () => {
+    expect(() =>
+      orcidSearchResearchers.input.parse({ family_name: 'Smith', start: 10001 }),
+    ).toThrow();
+  });
+
+  it('accepts start at the inclusive 10,000 boundary', () => {
+    const input = orcidSearchResearchers.input.parse({ family_name: 'Smith', start: 10000 });
+    expect(input.start).toBe(10000);
+  });
+
   it('formats empty results', () => {
     const output = orcidSearchResearchers.output.parse({
       results: [],
