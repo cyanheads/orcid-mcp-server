@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.4](changelog/0.2.x/0.2.4.md) — 2026-06-19
+
+Non-existent-iD handling for orcid_get_research_resources; start cap on orcid_search_researchers; researcher-profile resource no longer leaks the upstream URL or error body on 404
+
 ## [0.2.3](changelog/0.2.x/0.2.3.md) — 2026-06-12
 
 Adopt @cyanheads/mcp-ts-core 0.10.6; bundle cleaner strips dev deps and dependency-shipped agent docs; explicit createApp identity; Dockerfile healthcheck
