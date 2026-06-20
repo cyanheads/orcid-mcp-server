@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.6](changelog/0.2.x/0.2.6.md) — 2026-06-20
+
+Adopt @cyanheads/mcp-ts-core ^0.10.9 — devcheck gains two static guards (floating dependency specifiers, plugin marketplace manifest correctness); synced framework scripts, skills, and devcheck config. No tool, resource, or server source changed.
+
 ## [0.2.5](changelog/0.2.x/0.2.5.md) — 2026-06-19
 
 Adopt @cyanheads/mcp-ts-core ^0.10.8 — ctx.content media collector, canvas SQL-gate invalid_sql classification, DuckdbProvider.describe() filter fix, fresh-scaffold devcheck/changelog guards; dependency refresh and synced framework scripts/skills
