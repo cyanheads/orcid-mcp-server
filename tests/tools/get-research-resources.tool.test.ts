@@ -9,10 +9,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetResearchResources } from '@/mcp-server/tools/definitions/get-research-resources.tool.js';
 
 const mockGetResearchResources = vi.fn();
+const mockGetPerson = vi.fn();
 vi.mock('@/services/orcid/orcid-service.js', () => ({
-  getOrcidService: () => ({ getResearchResources: mockGetResearchResources }),
+  getOrcidService: () => ({
+    getResearchResources: mockGetResearchResources,
+    getPerson: mockGetPerson,
+  }),
   normalizeOrcidId: (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim(),
 }));
+
+/** Minimal NormalizedPerson stand-in proving the record exists (empty-result path). */
+const existingPerson = {
+  keywords: [],
+  researcherUrls: [],
+  externalIdentifiers: [],
+  emails: [],
+  countries: [],
+};
 
 const sampleResources = [
   {
@@ -65,9 +78,11 @@ describe('orcidGetResearchResources', () => {
     expect(getEnrichment(ctx).notice).toBeUndefined();
   });
 
-  it('returns empty list gracefully and sets notice enrichment', async () => {
-    // Real API response for Josiah Carberry: {"group":[],...}
+  it('returns empty list gracefully and sets notice enrichment for an existing record', async () => {
+    // Real API response for an existing researcher with no resources: {"group":[],...}.
+    // The empty-result path verifies existence via getPerson, which resolves here.
     mockGetResearchResources.mockResolvedValueOnce([]);
+    mockGetPerson.mockResolvedValueOnce(existingPerson);
 
     const ctx = createMockContext();
     const input = orcidGetResearchResources.input.parse({ orcid_id: '0000-0002-1825-0097' });
@@ -75,9 +90,39 @@ describe('orcidGetResearchResources', () => {
 
     expect(result.resourceCount).toBe(0);
     expect(result.resources).toEqual([]);
+    expect(mockGetPerson).toHaveBeenCalledTimes(1);
     const enrichment = getEnrichment(ctx);
     expect(enrichment.notice).toBeDefined();
     expect(enrichment.notice).toContain('No research resources found');
+  });
+
+  it('throws profile_not_found for a non-existent iD (empty 200 disambiguated via getPerson 404)', async () => {
+    // /research-resources returns HTTP 200 {"group":[]} for non-existent iDs (no 404),
+    // so the empty result is ambiguous. The existence check via getPerson 404s.
+    mockGetResearchResources.mockResolvedValueOnce([]);
+    mockGetPerson.mockRejectedValueOnce(
+      new McpError(JsonRpcErrorCode.NotFound, 'ORCID returned HTTP 404 Not Found.'),
+    );
+
+    const ctx = createMockContext({ errors: orcidGetResearchResources.errors });
+    const input = orcidGetResearchResources.input.parse({ orcid_id: '0000-0000-0000-0001' });
+    const error = await orcidGetResearchResources.handler(input, ctx).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(McpError);
+    expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
+    expect((error as McpError).data?.reason).toBe('profile_not_found');
+    expect(mockGetResearchResources).toHaveBeenCalledTimes(1);
+    expect(mockGetPerson).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not call getPerson when resources are present', async () => {
+    mockGetResearchResources.mockResolvedValueOnce(sampleResources);
+
+    const ctx = createMockContext();
+    const input = orcidGetResearchResources.input.parse({ orcid_id: '0000-0002-4788-2309' });
+    await orcidGetResearchResources.handler(input, ctx);
+
+    expect(mockGetPerson).not.toHaveBeenCalled();
   });
 
   it('handles sparse resource (no host, no dates, no URL)', async () => {

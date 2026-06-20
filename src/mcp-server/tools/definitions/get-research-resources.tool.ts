@@ -109,6 +109,14 @@ export const orcidGetResearchResources = tool('orcid_get_research_resources', {
     let resources: ResearchResource[];
     try {
       resources = await service.getResearchResources(input.orcid_id, ctx);
+      // The /research-resources endpoint is unique among ORCID sections: it returns
+      // HTTP 200 {"group":[]} for non-existent iDs instead of 404, so an empty result
+      // is ambiguous (genuinely empty vs. no such record). Disambiguate by fetching
+      // /person, which does 404 for non-existent iDs. Only on the empty path — a
+      // populated result already proves the record exists, so no extra round-trip there.
+      if (resources.length === 0) {
+        await service.getPerson(input.orcid_id, ctx);
+      }
     } catch (err) {
       if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
         throw ctx.fail(
