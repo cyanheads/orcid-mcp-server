@@ -3,6 +3,7 @@
  * @module tests/resources/researcher-profile.resource.test
  */
 
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { researcherProfileResource } from '@/mcp-server/resources/definitions/researcher-profile.resource.js';
@@ -95,6 +96,47 @@ describe('researcherProfileResource', () => {
       orcid_id: '0000-0001-9522-8779',
     });
     await expect(researcherProfileResource.handler(params, ctx)).rejects.toThrow('Service down');
+  });
+
+  it('remaps an upstream 404 to a clean NotFound without leaking the upstream url or body', async () => {
+    // fetchJson → httpErrorFromResponse builds an McpError whose data carries the raw
+    // ORCID endpoint URL and error body. The handler must catch it and rethrow a clean
+    // NotFound so the framework never serializes those internals to the client.
+    mockGetPerson.mockRejectedValueOnce(
+      new McpError(JsonRpcErrorCode.NotFound, 'ORCID returned HTTP 404 Not Found.', {
+        url: 'https://pub.orcid.org/v3.0/0000-0000-0000-0001/person',
+        status: 404,
+        statusText: 'Not Found',
+        body: '{"response-code":404,"developer-message":"404 Not Found"}',
+      }),
+    );
+
+    const ctx = createMockContext({ tenantId: 'test-tenant' });
+    const params = researcherProfileResource.params.parse({ orcid_id: '0000-0000-0000-0001' });
+    const error = await researcherProfileResource.handler(params, ctx).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(McpError);
+    expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
+    expect((error as McpError).message).toBe(
+      'No public profile found for ORCID iD 0000-0000-0000-0001.',
+    );
+    const data = (error as McpError).data as Record<string, unknown> | undefined;
+    expect(data?.url).toBeUndefined();
+    expect(data?.body).toBeUndefined();
+    expect(data?.status).toBeUndefined();
+  });
+
+  it('propagates a non-NotFound McpError unchanged', async () => {
+    mockGetPerson.mockRejectedValueOnce(
+      new McpError(JsonRpcErrorCode.ServiceUnavailable, 'ORCID API unavailable.'),
+    );
+
+    const ctx = createMockContext({ tenantId: 'test-tenant' });
+    const params = researcherProfileResource.params.parse({ orcid_id: '0000-0001-9522-8779' });
+    const error = await researcherProfileResource.handler(params, ctx).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(McpError);
+    expect((error as McpError).code).toBe(JsonRpcErrorCode.ServiceUnavailable);
   });
 
   it('handles a sparse profile with creditName only (no givenNames or familyName)', async () => {

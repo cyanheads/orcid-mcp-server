@@ -6,7 +6,8 @@
  */
 
 import { resource, z } from '@cyanheads/mcp-ts-core';
-import { notFound } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, McpError, notFound } from '@cyanheads/mcp-ts-core/errors';
+import type { NormalizedPerson } from '@/services/orcid/normalizers.js';
 import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
 
 export const researcherProfileResource = resource('orcid://researcher/{orcid_id}/profile', {
@@ -54,7 +55,19 @@ export const researcherProfileResource = resource('orcid://researcher/{orcid_id}
 
     ctx.log.debug('orcid-researcher-profile resource', { orcidId: bareId });
 
-    const person = await service.getPerson(params.orcid_id, ctx);
+    // Catch the upstream 404 here so the framework doesn't serialize McpError.data
+    // (the raw ORCID URL + error body) into the JSON-RPC error sent to the client.
+    let person: NormalizedPerson;
+    try {
+      person = await service.getPerson(params.orcid_id, ctx);
+    } catch (err) {
+      if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
+        throw notFound(`No public profile found for ORCID iD ${bareId}.`, undefined, {
+          cause: err,
+        });
+      }
+      throw err;
+    }
 
     if (!person.givenNames && !person.familyName && !person.creditName) {
       throw notFound(
