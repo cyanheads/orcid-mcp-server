@@ -1,9 +1,10 @@
 # orcid-mcp-server - Directory Structure
 
-Generated on: 2026-06-13 03:32:11
+Generated on: 2026-06-20 05:26:05
 
 ```text
 orcid-mcp-server/
+├── .agents/
 ├── .claude/
 ├── .claude-plugin/
 │   └── plugin.json

@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.5](changelog/0.2.x/0.2.5.md) — 2026-06-19
+
+Adopt @cyanheads/mcp-ts-core ^0.10.8 — ctx.content media collector, canvas SQL-gate invalid_sql classification, DuckdbProvider.describe() filter fix, fresh-scaffold devcheck/changelog guards; dependency refresh and synced framework scripts/skills
+
 ## [0.2.4](changelog/0.2.x/0.2.4.md) — 2026-06-19
 
 Non-existent-iD handling for orcid_get_research_resources; start cap on orcid_search_researchers; researcher-profile resource no longer leaks the upstream URL or error body on 404
