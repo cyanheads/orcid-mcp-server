@@ -1,6 +1,6 @@
 # orcid-mcp-server - Directory Structure
 
-Generated on: 2026-06-20 18:53:18
+Generated on: 2026-07-13 17:48:30
 
 ```text
 orcid-mcp-server/
@@ -16,7 +16,8 @@ orcid-mcp-server/
 │   │   ├── bug_report.yml
 │   │   ├── config.yml
 │   │   └── feature_request.yml
-│   └── FUNDING.yml
+│   ├── FUNDING.yml
+│   └── SECURITY.md
 ├── .vscode/
 │   ├── extensions.json
 │   └── settings.json
@@ -152,6 +153,7 @@ orcid-mcp-server/
 │   ├── services/
 │   │   └── orcid/
 │   │       ├── normalizers.ts
+│   │       ├── orcid-id.ts
 │   │       ├── orcid-service.ts
 │   │       └── types.ts
 │   └── index.ts
@@ -163,7 +165,8 @@ orcid-mcp-server/
 │   ├── services/
 │   │   └── orcid/
 │   │       ├── normalizers-extended.test.ts
-│   │       └── normalizers.test.ts
+│   │       ├── normalizers.test.ts
+│   │       └── orcid-id.test.ts
 │   └── tools/
 │       ├── get-affiliations.tool.test.ts
 │       ├── get-funding.tool.test.ts
@@ -179,6 +182,7 @@ orcid-mcp-server/
 │       └── security.tool.test.ts
 ├── .dockerignore
 ├── .env.example
+├── .gitattributes
 ├── .gitignore
 ├── .mcpbignore
 ├── biome.json
@@ -189,6 +193,7 @@ orcid-mcp-server/
 ├── CLAUDE.md
 ├── devcheck.config.json
 ├── Dockerfile
+├── LICENSE
 ├── manifest.json
 ├── package.json
 ├── README.md

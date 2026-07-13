@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.7](changelog/0.2.x/0.2.7.md) — 2026-07-13
+
+Local ISO 7064 checksum validation rejects invalid ORCID iDs before upstream calls (#14); orcid_get_works gains limit/offset/include_external_ids pagination, the works resource caps to a compact first-25 page (#16); adopts mcp-ts-core ^0.10.14 and Bun/Socket supply-chain hardening.
+
 ## [0.2.6](changelog/0.2.x/0.2.6.md) — 2026-06-20
 
 Adopt @cyanheads/mcp-ts-core ^0.10.9 — devcheck gains two static guards (floating dependency specifiers, plugin marketplace manifest correctness); synced framework scripts, skills, and devcheck config. No tool, resource, or server source changed.
