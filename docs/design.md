@@ -9,9 +9,11 @@
 | `orcid_search_researchers` | Search the ORCID registry. Structured params build a Solr query; all provided params are ANDed. Returns ORCID iDs with inline name and institution data via `expanded-search`. Use when you know specific field values (name, affiliation, keyword). For author disambiguation from an ambiguous name, use `orcid_resolve_researcher` instead. | `given_name`, `family_name`, `affiliation`, `keyword`, `ror_id`, `doi`, `pmid`, `query` (raw Solr, appended to structured params), `rows`, `start` | `readOnlyHint: true`, `openWorldHint: true` |
 | `orcid_get_profile` | Fetch a researcher's public profile: name, biography, keywords, researcher URLs, and external identifiers (Scopus ID, ResearcherID, Loop, etc.). The entry point for building a researcher dossier. Pass a bare ORCID iD (`0000-0001-2345-6789`) or full URI. | `orcid_id` | `readOnlyHint: true`, `openWorldHint: false` |
 | `orcid_get_works` | Retrieve works (publications, datasets, software, preprints, etc.) associated with an ORCID iD. Returns titles, work types, publication dates, journal names, and all external identifiers — DOIs, PMIDs, arXiv IDs — ready for chaining to Crossref, PubMed, or arXiv servers. | `orcid_id` | `readOnlyHint: true`, `openWorldHint: false` |
+| `orcid_get_work_detail` | Fetch full detail records for 1–100 works by their put-codes in a single bulk request. Returns abstracts, contributors with CRediT roles, the complete external ID list (DOI, PMID, arXiv, ISBN), citation metadata, journal title, and URL per work. Put-codes come from the `put_code` field of `orcid_get_works`; per-record errors are surfaced rather than failing the whole call. | `orcid_id`, `put_codes` | `readOnlyHint: true`, `openWorldHint: false` |
 | `orcid_get_affiliations` | Fetch affiliation records for a researcher. `types` controls which sections to return: `employment`, `education`, `invited-positions`, `distinctions`, `memberships`, `qualifications`, `services`, or `all`. Default is `employment` and `education`. Returns organization names, disambiguated org IDs (ROR/GRID/Ringgold), departments, roles, and date ranges. | `orcid_id`, `types` | `readOnlyHint: true`, `openWorldHint: false` |
 | `orcid_get_funding` | Fetch funding records for a researcher: grants, contracts, awards, and salary awards, with funder names, grant numbers, and funding periods. Funding data is self-reported and often sparse — absence does not mean no funding. | `orcid_id` | `readOnlyHint: true`, `openWorldHint: false` |
 | `orcid_get_peer_reviews` | Fetch peer review activity: convening organizations (journals/publishers), reviewer role (`reviewer`, `editor`, `chair`, etc.), review type, completion dates, and ISSN-keyed group identifiers. Use to assess a researcher's editorial activity and journal affiliations. | `orcid_id` | `readOnlyHint: true`, `openWorldHint: false` |
+| `orcid_get_research_resources` | List research resources associated with a researcher — compute allocations, equipment access, lab facilities, data resources, and clinical study registrations. A newer, sparsely-populated ORCID section; most researchers have no entries. Returns resource title, hosting organization, external identifiers, and access period. | `orcid_id` | `readOnlyHint: true`, `openWorldHint: false` |
 | `orcid_resolve_researcher` | Disambiguate an author name to a verified ORCID iD. Returns a ranked list of up to 5 candidates with transparent signals: name match type, institution overlap, and whether a DOI/PMID anchor was used. Use this (not `orcid_search_researchers`) when the input is an ambiguous name that needs ranked disambiguation. `doi` or `pmid` anchor the search to a specific work. | `name`, `affiliation`, `doi`, `pmid`, `rows` | `readOnlyHint: true`, `openWorldHint: true` |
 
 ### Resources
@@ -80,11 +82,13 @@ No API key required for the Public API's read-only endpoints. The search endpoin
 3. `orcid_get_profile` — person section (baseline read, simplest endpoint)
 4. `orcid_search_researchers` — expanded-search (discover → profile flow)
 5. `orcid_get_works` — works endpoint, external ID extraction
-6. `orcid_get_affiliations` — `/activities` endpoint, affiliation section filtering
-7. `orcid_get_funding` — funding endpoint
-8. `orcid_get_peer_reviews` — peer-reviews endpoint
-9. `orcid_resolve_researcher` — workflow tool composing search + scoring
-10. Resources
+6. `orcid_get_work_detail` — bulk work detail by put-codes
+7. `orcid_get_affiliations` — `/activities` endpoint, affiliation section filtering
+8. `orcid_get_funding` — funding endpoint
+9. `orcid_get_peer_reviews` — peer-reviews endpoint
+10. `orcid_get_research_resources` — research-resources endpoint
+11. `orcid_resolve_researcher` — workflow tool composing search + scoring
+12. Resources
 
 ---
 
@@ -95,7 +99,7 @@ No API key required for the Public API's read-only endpoints. The search endpoin
 | Researcher (search) | `GET /expanded-search/?q=...` `GET /search/?q=...` | `orcid_search_researchers`, `orcid_resolve_researcher` |
 | Person | `GET /{id}/person` | `orcid_get_profile` |
 | External identifiers | included in `GET /{id}/person` | `orcid_get_profile` |
-| Works | `GET /{id}/works` | `orcid_get_works` |
+| Works | `GET /{id}/works` `GET /{id}/works/{put-codes}` | `orcid_get_works`, `orcid_get_work_detail` |
 | Employment | `GET /{id}/activities` (employments section) | `orcid_get_affiliations` |
 | Education | `GET /{id}/activities` (educations section) | `orcid_get_affiliations` |
 | Invited positions | `GET /{id}/activities` (invited-positions section) | `orcid_get_affiliations` |
@@ -105,8 +109,9 @@ No API key required for the Public API's read-only endpoints. The search endpoin
 | Services | `GET /{id}/activities` (services section) | `orcid_get_affiliations` |
 | Funding | `GET /{id}/fundings` | `orcid_get_funding` |
 | Peer reviews | `GET /{id}/peer-reviews` | `orcid_get_peer_reviews` |
+| Research resources | `GET /{id}/research-resources` | `orcid_get_research_resources` |
 
-**Not exposed:** `/record` (full record — too large, noisy for agents; individual sections are better scoped), research-resources (niche, rarely populated).
+**Not exposed:** `/record` (full record — too large, noisy for agents; individual sections are better scoped).
 
 ---
 
