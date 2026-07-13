@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.2.6-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/orcid-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/orcid-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/orcid-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.2-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.2.7-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/orcid-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/orcid-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/orcid-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.14-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -35,7 +35,7 @@ Nine tools organized around three workflows — author disambiguation, researche
 |:-----|:------------|
 | `orcid_search_researchers` | Search the ORCID registry using structured field params (name, affiliation, keyword, ROR ID, DOI, PMID). All params are ANDed into a Solr query against the expanded-search endpoint, returning ORCID iDs with inline name and institution data. |
 | `orcid_get_profile` | Fetch a researcher's public profile: name, biography, keywords, researcher URLs, and external identifiers (Scopus Author ID, ResearcherID, Loop, etc.). |
-| `orcid_get_works` | Retrieve works (publications, datasets, software, preprints) for a researcher. Returns summaries with put-codes, titles, types, dates, journal names, and external identifiers. Pass put-codes to `orcid_get_work_detail` for abstracts and full contributor lists. |
+| `orcid_get_works` | Retrieve works (publications, datasets, software, preprints) for a researcher. Returns summaries with put-codes, titles, types, dates, journal names, and external identifiers. Returns the first 50 by default with `workCount` and paging via `offset`/`nextOffset` (or `limit`); set `include_external_ids` false for a lighter payload. Pass put-codes to `orcid_get_work_detail` for abstracts and full contributor lists. |
 | `orcid_get_work_detail` | Fetch full detail records for 1–100 works by their put-codes in a single bulk request (from `orcid_get_works`). Returns abstracts, all contributors with CRediT roles, complete external IDs, citation metadata, journal title, and URL. Per-record errors are surfaced without failing the whole call. |
 | `orcid_get_affiliations` | Fetch affiliation records for a researcher. Accepts a `types` list to filter which sections to return: `employment`, `education`, `invited-positions`, `distinctions`, `memberships`, `qualifications`, `services`, or `all`. |
 | `orcid_get_funding` | Fetch funding records: grants, contracts, awards, and salary awards, with funder names, grant numbers, and funding periods. |
@@ -72,6 +72,8 @@ Fetch a researcher's public person section by ORCID iD.
 Retrieve the works list for a researcher.
 
 - Returns work summaries: title, type, publication date, journal name, and all external identifiers (DOI, PMID, arXiv ID, ISBN, etc.)
+- Returns the first 50 works by default; `workCount` reports the total available, and prolific records are paged with `offset` plus the returned `nextOffset` (or raise `limit`, max 1000). `truncated` flags when more works remain
+- Set `include_external_ids` to `false` to drop identifier lists when only titles, types, and dates are needed
 - External IDs are returned in formats consumable by downstream servers (Crossref, PubMed, arXiv)
 - Works list is summaries only — chain to the relevant server for full metadata or abstracts
 
@@ -143,7 +145,7 @@ Disambiguate an author name to a verified ORCID iD.
 | Type | Name | Description |
 |:-----|:-----|:------------|
 | Resource | `orcid://researcher/{orcid_id}/profile` | Researcher profile (person section: name, bio, keywords, external IDs). Prefer the tool when the response needs to flow into conditional logic. |
-| Resource | `orcid://researcher/{orcid_id}/works` | Works list for a researcher. DOIs and PMIDs in the response are ready for Crossref/PubMed chaining. |
+| Resource | `orcid://researcher/{orcid_id}/works` | Works list for a researcher — the first 25 works plus `workCount` (the total available). Use the `orcid_get_works` tool to page the full list. DOIs and PMIDs in the response are ready for Crossref/PubMed chaining. |
 
 All resource data is also reachable via tools. Use resources when injecting stable researcher context into a prompt; use tools when filtering or processing results is needed.
 

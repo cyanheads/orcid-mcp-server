@@ -40,11 +40,11 @@ describe('orcidGetPeerReviews', () => {
     mockGetPeerReviews.mockResolvedValueOnce(sampleReviews);
 
     const ctx = createMockContext();
-    const input = orcidGetPeerReviews.input.parse({ orcid_id: '0000-0001-9522-8779' });
+    const input = orcidGetPeerReviews.input.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await orcidGetPeerReviews.handler(input, ctx);
 
-    expect(result.orcidId).toBe('0000-0001-9522-8779');
-    expect(result.orcidUri).toBe('https://orcid.org/0000-0001-9522-8779');
+    expect(result.orcidId).toBe('0000-0002-1825-0097');
+    expect(result.orcidUri).toBe('https://orcid.org/0000-0002-1825-0097');
     expect(result.reviewCount).toBe(1);
     expect(result.peerReviews).toHaveLength(1);
     const r = result.peerReviews[0];
@@ -62,10 +62,10 @@ describe('orcidGetPeerReviews', () => {
 
     const ctx = createMockContext();
     const input = orcidGetPeerReviews.input.parse({
-      orcid_id: 'https://orcid.org/0000-0001-9522-8779',
+      orcid_id: 'https://orcid.org/0000-0002-1825-0097',
     });
     const result = await orcidGetPeerReviews.handler(input, ctx);
-    expect(result.orcidId).toBe('0000-0001-9522-8779');
+    expect(result.orcidId).toBe('0000-0002-1825-0097');
   });
 
   it('adds notice enrichment when no peer reviews found', async () => {
@@ -97,7 +97,7 @@ describe('orcidGetPeerReviews', () => {
     mockGetPeerReviews.mockRejectedValueOnce(new Error('Rate limited'));
 
     const ctx = createMockContext();
-    const input = orcidGetPeerReviews.input.parse({ orcid_id: '0000-0001-9522-8779' });
+    const input = orcidGetPeerReviews.input.parse({ orcid_id: '0000-0002-1825-0097' });
     await expect(orcidGetPeerReviews.handler(input, ctx)).rejects.toThrow('Rate limited');
   });
 
@@ -108,10 +108,10 @@ describe('orcidGetPeerReviews', () => {
 
   it('accepts bare and URI forms of a valid ORCID iD', () => {
     expect(() =>
-      orcidGetPeerReviews.input.parse({ orcid_id: '0000-0001-9522-8779' }),
+      orcidGetPeerReviews.input.parse({ orcid_id: '0000-0002-1825-0097' }),
     ).not.toThrow();
     expect(() =>
-      orcidGetPeerReviews.input.parse({ orcid_id: 'https://orcid.org/0000-0001-9522-8779' }),
+      orcidGetPeerReviews.input.parse({ orcid_id: 'https://orcid.org/0000-0002-1825-0097' }),
     ).not.toThrow();
   });
 
@@ -121,7 +121,7 @@ describe('orcidGetPeerReviews', () => {
     );
 
     const ctx = createMockContext({ errors: orcidGetPeerReviews.errors });
-    const input = orcidGetPeerReviews.input.parse({ orcid_id: '0000-0000-0000-0000' });
+    const input = orcidGetPeerReviews.input.parse({ orcid_id: '0000-0000-0000-0001' });
     const error = await orcidGetPeerReviews.handler(input, ctx).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(McpError);
     expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
@@ -130,8 +130,8 @@ describe('orcidGetPeerReviews', () => {
 
   it('formats peer reviews with all key fields', () => {
     const output = orcidGetPeerReviews.output.parse({
-      orcidId: '0000-0001-9522-8779',
-      orcidUri: 'https://orcid.org/0000-0001-9522-8779',
+      orcidId: '0000-0002-1825-0097',
+      orcidUri: 'https://orcid.org/0000-0002-1825-0097',
       reviewCount: 1,
       peerReviews: sampleReviews,
     });
@@ -140,8 +140,8 @@ describe('orcidGetPeerReviews', () => {
     expect(blocks).toHaveLength(1);
     expect(blocks[0].type).toBe('text');
     const text = (blocks[0] as { text: string }).text;
-    expect(text).toContain('0000-0001-9522-8779');
-    expect(text).toContain('https://orcid.org/0000-0001-9522-8779');
+    expect(text).toContain('0000-0002-1825-0097');
+    expect(text).toContain('https://orcid.org/0000-0002-1825-0097');
     expect(text).toContain('Science');
     expect(text).toContain('reviewer');
     expect(text).toContain('review');

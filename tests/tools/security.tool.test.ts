@@ -146,7 +146,7 @@ describe('security: no secrets or env values appear in tool output or error mess
     );
 
     const ctx = createMockContext();
-    const input = orcidGetProfile.input.parse({ orcid_id: '0000-0001-9522-8779' });
+    const input = orcidGetProfile.input.parse({ orcid_id: '0000-0002-1825-0097' });
     const err = await orcidGetProfile.handler(input, ctx).catch((e: unknown) => e as Error);
 
     // The error message is the service's, propagated as-is — but no env-var keys appear
@@ -159,7 +159,7 @@ describe('security: no secrets or env values appear in tool output or error mess
       numFound: 1,
       results: [
         {
-          orcidId: '0000-0001-9522-8779',
+          orcidId: '0000-0002-1825-0097',
           givenNames: 'Jennifer',
           familyNames: 'Doudna',
           otherNames: [],
@@ -181,9 +181,12 @@ describe('security: no secrets or env values appear in tool output or error mess
 
   it('get_works: format output does not include env-var-style strings', () => {
     const output = orcidGetWorks.output.parse({
-      orcidId: '0000-0001-9522-8779',
-      orcidUri: 'https://orcid.org/0000-0001-9522-8779',
+      orcidId: '0000-0002-1825-0097',
+      orcidUri: 'https://orcid.org/0000-0002-1825-0097',
       workCount: 1,
+      returnedCount: 1,
+      offset: 0,
+      truncated: false,
       works: [
         {
           title: 'A Paper',
@@ -200,8 +203,8 @@ describe('security: no secrets or env values appear in tool output or error mess
 
   it('get_affiliations: format output does not include env-var-style strings', () => {
     const output = orcidGetAffiliations.output.parse({
-      orcidId: '0000-0001-9522-8779',
-      orcidUri: 'https://orcid.org/0000-0001-9522-8779',
+      orcidId: '0000-0002-1825-0097',
+      orcidUri: 'https://orcid.org/0000-0002-1825-0097',
       affiliationCount: 1,
       affiliations: [
         {
@@ -221,8 +224,8 @@ describe('security: no secrets or env values appear in tool output or error mess
 
   it('get_funding: format output does not include env-var-style strings', () => {
     const output = orcidGetFunding.output.parse({
-      orcidId: '0000-0001-9522-8779',
-      orcidUri: 'https://orcid.org/0000-0001-9522-8779',
+      orcidId: '0000-0002-1825-0097',
+      orcidUri: 'https://orcid.org/0000-0002-1825-0097',
       fundingCount: 0,
       funding: [],
     });
@@ -234,8 +237,8 @@ describe('security: no secrets or env values appear in tool output or error mess
 
   it('get_peer_reviews: format output does not include env-var-style strings', () => {
     const output = orcidGetPeerReviews.output.parse({
-      orcidId: '0000-0001-9522-8779',
-      orcidUri: 'https://orcid.org/0000-0001-9522-8779',
+      orcidId: '0000-0002-1825-0097',
+      orcidUri: 'https://orcid.org/0000-0002-1825-0097',
       reviewCount: 0,
       peerReviews: [],
     });

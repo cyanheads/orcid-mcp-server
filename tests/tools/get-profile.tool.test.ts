@@ -43,11 +43,11 @@ describe('orcidGetProfile', () => {
     mockGetPerson.mockResolvedValueOnce(fullPerson);
 
     const ctx = createMockContext();
-    const input = orcidGetProfile.input.parse({ orcid_id: '0000-0001-9522-8779' });
+    const input = orcidGetProfile.input.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await orcidGetProfile.handler(input, ctx);
 
-    expect(result.orcidId).toBe('0000-0001-9522-8779');
-    expect(result.orcidUri).toBe('https://orcid.org/0000-0001-9522-8779');
+    expect(result.orcidId).toBe('0000-0002-1825-0097');
+    expect(result.orcidUri).toBe('https://orcid.org/0000-0002-1825-0097');
     expect(result.givenNames).toBe('Jennifer');
     expect(result.familyName).toBe('Doudna');
     expect(result.creditName).toBe('Jennifer A. Doudna');
@@ -64,12 +64,12 @@ describe('orcidGetProfile', () => {
 
     const ctx = createMockContext();
     const input = orcidGetProfile.input.parse({
-      orcid_id: 'https://orcid.org/0000-0001-9522-8779',
+      orcid_id: 'https://orcid.org/0000-0002-1825-0097',
     });
     const result = await orcidGetProfile.handler(input, ctx);
 
-    expect(result.orcidId).toBe('0000-0001-9522-8779');
-    expect(result.orcidUri).toBe('https://orcid.org/0000-0001-9522-8779');
+    expect(result.orcidId).toBe('0000-0002-1825-0097');
+    expect(result.orcidUri).toBe('https://orcid.org/0000-0002-1825-0097');
   });
 
   it('handles a sparse profile (name only, no biography/keywords/etc.)', async () => {
@@ -97,7 +97,7 @@ describe('orcidGetProfile', () => {
     mockGetPerson.mockRejectedValueOnce(new Error('Network error'));
 
     const ctx = createMockContext();
-    const input = orcidGetProfile.input.parse({ orcid_id: '0000-0001-9522-8779' });
+    const input = orcidGetProfile.input.parse({ orcid_id: '0000-0002-1825-0097' });
     await expect(orcidGetProfile.handler(input, ctx)).rejects.toThrow('Network error');
   });
 
@@ -108,12 +108,12 @@ describe('orcidGetProfile', () => {
   });
 
   it('accepts both bare and URI forms of a valid ORCID iD', () => {
-    expect(() => orcidGetProfile.input.parse({ orcid_id: '0000-0001-9522-8779' })).not.toThrow();
+    expect(() => orcidGetProfile.input.parse({ orcid_id: '0000-0002-1825-0097' })).not.toThrow();
     expect(() =>
-      orcidGetProfile.input.parse({ orcid_id: 'https://orcid.org/0000-0001-9522-8779' }),
+      orcidGetProfile.input.parse({ orcid_id: 'https://orcid.org/0000-0002-1825-0097' }),
     ).not.toThrow();
     // X checksum digit
-    expect(() => orcidGetProfile.input.parse({ orcid_id: '0000-0001-5109-344X' })).not.toThrow();
+    expect(() => orcidGetProfile.input.parse({ orcid_id: '0000-0002-9079-593X' })).not.toThrow();
   });
 
   it('throws profile_not_found McpError on 404', async () => {
@@ -122,7 +122,7 @@ describe('orcidGetProfile', () => {
     );
 
     const ctx = createMockContext({ errors: orcidGetProfile.errors });
-    const input = orcidGetProfile.input.parse({ orcid_id: '0000-0000-0000-0000' });
+    const input = orcidGetProfile.input.parse({ orcid_id: '0000-0000-0000-0001' });
     const error = await orcidGetProfile.handler(input, ctx).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(McpError);
     expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
@@ -131,8 +131,8 @@ describe('orcidGetProfile', () => {
 
   it('formats profile with ORCID ID and all populated fields', () => {
     const output = orcidGetProfile.output.parse({
-      orcidId: '0000-0001-9522-8779',
-      orcidUri: 'https://orcid.org/0000-0001-9522-8779',
+      orcidId: '0000-0002-1825-0097',
+      orcidUri: 'https://orcid.org/0000-0002-1825-0097',
       givenNames: 'Jennifer',
       familyName: 'Doudna',
       creditName: 'Jennifer A. Doudna',
@@ -150,8 +150,8 @@ describe('orcidGetProfile', () => {
     expect(blocks).toHaveLength(1);
     expect(blocks[0].type).toBe('text');
     const text = (blocks[0] as { text: string }).text;
-    expect(text).toContain('0000-0001-9522-8779');
-    expect(text).toContain('https://orcid.org/0000-0001-9522-8779');
+    expect(text).toContain('0000-0002-1825-0097');
+    expect(text).toContain('https://orcid.org/0000-0002-1825-0097');
     expect(text).toContain('Jennifer Doudna');
     expect(text).toContain('Biochemist at UC Berkeley.');
     expect(text).toContain('CRISPR');

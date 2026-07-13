@@ -6,6 +6,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { orcidIdSchema } from '@/services/orcid/orcid-id.js';
 import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
 import type { PeerReview } from '@/services/orcid/types.js';
 
@@ -16,15 +17,7 @@ export const orcidGetPeerReviews = tool('orcid_get_peer_reviews', {
   annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
 
   input: z.object({
-    orcid_id: z
-      .string()
-      .regex(
-        /^(https?:\/\/orcid\.org\/)?\d{4}-\d{4}-\d{4}-\d{3}[\dX]$/,
-        'Must be a valid ORCID iD (e.g. 0000-0001-2345-6789) or full ORCID URI.',
-      )
-      .describe(
-        'ORCID iD — bare format (0000-0001-2345-6789) or full URI (https://orcid.org/0000-0001-2345-6789).',
-      ),
+    orcid_id: orcidIdSchema,
   }),
 
   output: z.object({

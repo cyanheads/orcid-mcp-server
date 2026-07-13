@@ -38,20 +38,20 @@ describe('researcherProfileResource — param validation', () => {
   it('rejects non-ORCID URI formats', () => {
     expect(() =>
       researcherProfileResource.params.parse({
-        orcid_id: 'http://example.com/0000-0001-9522-8779',
+        orcid_id: 'http://example.com/0000-0002-1825-0097',
       }),
     ).toThrow();
   });
 
   it('accepts bare ORCID iD with X checksum', () => {
     expect(() =>
-      researcherProfileResource.params.parse({ orcid_id: '0000-0001-5109-344X' }),
+      researcherProfileResource.params.parse({ orcid_id: '0000-0002-9079-593X' }),
     ).not.toThrow();
   });
 
   it('accepts full URI form', () => {
     expect(() =>
-      researcherProfileResource.params.parse({ orcid_id: 'https://orcid.org/0000-0001-9522-8779' }),
+      researcherProfileResource.params.parse({ orcid_id: 'https://orcid.org/0000-0002-1825-0097' }),
     ).not.toThrow();
   });
 });
@@ -78,7 +78,7 @@ describe('researcherProfileResource — output', () => {
     });
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherProfileResource.params.parse({ orcid_id: '0000-0001-9522-8779' });
+    const params = researcherProfileResource.params.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await researcherProfileResource.handler(params, ctx);
 
     expect(result.biography).toBe('Biochemist specializing in RNA structure and CRISPR.');
@@ -114,10 +114,10 @@ describe('researcherProfileResource — output', () => {
     });
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherProfileResource.params.parse({ orcid_id: '0000-0001-9522-8779' });
+    const params = researcherProfileResource.params.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await researcherProfileResource.handler(params, ctx);
 
-    expect(result.orcidUri).toBe('https://orcid.org/0000-0001-9522-8779');
+    expect(result.orcidUri).toBe('https://orcid.org/0000-0002-1825-0097');
   });
 
   it('returns keywords array when keywords are set', async () => {
@@ -132,7 +132,7 @@ describe('researcherProfileResource — output', () => {
     });
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherProfileResource.params.parse({ orcid_id: '0000-0001-9522-8779' });
+    const params = researcherProfileResource.params.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await researcherProfileResource.handler(params, ctx);
 
     expect(result.keywords).toEqual(['CRISPR', 'RNA Biology', 'Genome Editing']);
@@ -154,7 +154,7 @@ describe('researcherWorksResource — param validation', () => {
 
   it('accepts X checksum digit', () => {
     expect(() =>
-      researcherWorksResource.params.parse({ orcid_id: '0000-0001-5109-344X' }),
+      researcherWorksResource.params.parse({ orcid_id: '0000-0002-9079-593X' }),
     ).not.toThrow();
   });
 });
@@ -168,7 +168,7 @@ describe('researcherWorksResource — output', () => {
     vi.clearAllMocks();
   });
 
-  it('returns workCount matching the works array length', async () => {
+  it('returns workCount matching the works array length for a small record', async () => {
     mockGetWorks.mockResolvedValueOnce([
       { title: 'Work A', externalIds: [] },
       { title: 'Work B', externalIds: [] },
@@ -176,7 +176,7 @@ describe('researcherWorksResource — output', () => {
     ]);
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0001-9522-8779' });
+    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await researcherWorksResource.handler(params, ctx);
 
     expect(result.workCount).toBe(3);
@@ -193,7 +193,7 @@ describe('researcherWorksResource — output', () => {
     ]);
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0001-9522-8779' });
+    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await researcherWorksResource.handler(params, ctx);
 
     expect(result.works[0].journalTitle).toBe('Nature Methods');
@@ -209,7 +209,7 @@ describe('researcherWorksResource — output', () => {
     ]);
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0001-9522-8779' });
+    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await researcherWorksResource.handler(params, ctx);
 
     // url is not projected into the resource output schema
@@ -226,7 +226,7 @@ describe('researcherWorksResource — output', () => {
     ]);
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0001-9522-8779' });
+    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await researcherWorksResource.handler(params, ctx);
 
     expect(result.works[0].workType).toBeUndefined();

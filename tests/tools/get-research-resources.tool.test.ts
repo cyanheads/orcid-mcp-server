@@ -134,7 +134,7 @@ describe('orcidGetResearchResources', () => {
     mockGetResearchResources.mockResolvedValueOnce([sparseResource]);
 
     const ctx = createMockContext();
-    const input = orcidGetResearchResources.input.parse({ orcid_id: '0000-0001-0000-0000' });
+    const input = orcidGetResearchResources.input.parse({ orcid_id: '0000-0002-4788-2309' });
     const result = await orcidGetResearchResources.handler(input, ctx);
 
     expect(result.resourceCount).toBe(1);
@@ -165,7 +165,7 @@ describe('orcidGetResearchResources', () => {
     );
 
     const ctx = createMockContext({ errors: orcidGetResearchResources.errors });
-    const input = orcidGetResearchResources.input.parse({ orcid_id: '0000-0000-0000-0000' });
+    const input = orcidGetResearchResources.input.parse({ orcid_id: '0000-0000-0000-0001' });
     const error = await orcidGetResearchResources.handler(input, ctx).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(McpError);
     expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
@@ -249,8 +249,8 @@ describe('orcidGetResearchResources', () => {
 
   it('formats untitled resource without crashing', () => {
     const output = orcidGetResearchResources.output.parse({
-      orcidId: '0000-0001-0000-0000',
-      orcidUri: 'https://orcid.org/0000-0001-0000-0000',
+      orcidId: '0000-0002-4788-2309',
+      orcidUri: 'https://orcid.org/0000-0002-4788-2309',
       resourceCount: 1,
       resources: [{ putCode: 1, externalIds: [] }],
     });

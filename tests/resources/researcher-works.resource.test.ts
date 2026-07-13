@@ -28,20 +28,27 @@ const sampleWorks = [
   },
 ];
 
+/** Prolific record fixture (0000-0001-9161-999X returns 524 works in production). */
+const prolificWorks = Array.from({ length: 60 }, (_, i) => ({
+  title: `Work ${i}`,
+  workType: 'journal-article',
+  externalIds: [{ type: 'doi', value: `10.1/${i}` }],
+}));
+
 describe('researcherWorksResource', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('returns works list for a valid ORCID iD', async () => {
+  it('returns the works for a valid ORCID iD', async () => {
     mockGetWorks.mockResolvedValueOnce(sampleWorks);
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0001-9522-8779' });
+    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await researcherWorksResource.handler(params, ctx);
 
-    expect(result.orcidId).toBe('0000-0001-9522-8779');
-    expect(result.orcidUri).toBe('https://orcid.org/0000-0001-9522-8779');
+    expect(result.orcidId).toBe('0000-0002-1825-0097');
+    expect(result.orcidUri).toBe('https://orcid.org/0000-0002-1825-0097');
     expect(result.workCount).toBe(1);
     expect(result.works).toHaveLength(1);
     expect(result.works[0].title).toBe('CRISPR-Cas9 Mechanism');
@@ -63,13 +70,27 @@ describe('researcherWorksResource', () => {
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
     const params = researcherWorksResource.params.parse({
-      orcid_id: 'https://orcid.org/0000-0001-9522-8779',
+      orcid_id: 'https://orcid.org/0000-0002-1825-0097',
     });
     const result = await researcherWorksResource.handler(params, ctx);
-    expect(result.orcidId).toBe('0000-0001-9522-8779');
+    expect(result.orcidId).toBe('0000-0002-1825-0097');
   });
 
-  it('returns empty works list with workCount 0 when no works', async () => {
+  it('caps the works to a compact page and reports the full total in workCount', async () => {
+    mockGetWorks.mockResolvedValueOnce(prolificWorks);
+
+    const ctx = createMockContext({ tenantId: 'test-tenant' });
+    // 0000-0001-9161-999X is the real prolific record (524 works in production).
+    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0001-9161-999X' });
+    const result = await researcherWorksResource.handler(params, ctx);
+
+    expect(result.workCount).toBe(60); // total available, not the page size
+    expect(result.works).toHaveLength(25); // conservative compact cap
+    expect(result.works[0].title).toBe('Work 0');
+    expect(result.works[24].title).toBe('Work 24');
+  });
+
+  it('returns empty works with workCount 0 when no works', async () => {
     mockGetWorks.mockResolvedValueOnce([]);
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
@@ -96,25 +117,39 @@ describe('researcherWorksResource', () => {
     mockGetWorks.mockRejectedValueOnce(new Error('API unavailable'));
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0001-9522-8779' });
+    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0002-1825-0097' });
     await expect(researcherWorksResource.handler(params, ctx)).rejects.toThrow('API unavailable');
   });
 
-  it('surfaces notFound() for a non-existent ORCID iD (#8)', async () => {
-    // Simulate the service throwing an McpError NotFound (as httpErrorFromResponse does on 404)
-    mockGetWorks.mockRejectedValueOnce(
-      new McpError(JsonRpcErrorCode.NotFound, 'Not Found', {
-        url: 'https://pub.orcid.org/v3.0/0000-0000-0000-0000/works',
-      }),
-    );
-
+  it('rejects a checksum-invalid ORCID iD with InvalidParams before any upstream request', async () => {
     const ctx = createMockContext({ tenantId: 'test-tenant' });
+    // Well-shaped but checksum-invalid: passes the regex-only param schema, rejected in-handler.
     const params = researcherWorksResource.params.parse({ orcid_id: '0000-0000-0000-0000' });
     const err = await researcherWorksResource.handler(params, ctx).catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(McpError);
-    expect((err as McpError).code).toBe(JsonRpcErrorCode.NotFound);
+    expect((err as McpError).code).toBe(JsonRpcErrorCode.InvalidParams);
     expect((err as McpError).message).toContain('0000-0000-0000-0000');
+    expect((err as McpError).message).toContain('ISO 7064');
+    expect(mockGetWorks).not.toHaveBeenCalled();
+  });
+
+  it('surfaces notFound() for a non-existent ORCID iD (#8)', async () => {
+    // Simulate the service throwing an McpError NotFound (as httpErrorFromResponse does on 404).
+    // 0000-0000-0000-0001 is checksum-valid but unregistered — passes local validation.
+    mockGetWorks.mockRejectedValueOnce(
+      new McpError(JsonRpcErrorCode.NotFound, 'Not Found', {
+        url: 'https://pub.orcid.org/v3.0/0000-0000-0000-0001/works',
+      }),
+    );
+
+    const ctx = createMockContext({ tenantId: 'test-tenant' });
+    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0000-0000-0001' });
+    const err = await researcherWorksResource.handler(params, ctx).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(McpError);
+    expect((err as McpError).code).toBe(JsonRpcErrorCode.NotFound);
+    expect((err as McpError).message).toContain('0000-0000-0000-0001');
     expect((err as McpError).message).toContain('not exist or may be fully private');
   });
 
@@ -123,7 +158,7 @@ describe('researcherWorksResource', () => {
     mockGetWorks.mockRejectedValueOnce(serviceError);
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0001-9522-8779' });
+    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0002-1825-0097' });
     const err = await researcherWorksResource.handler(params, ctx).catch((e: unknown) => e);
 
     expect(err).toBe(serviceError);

@@ -41,11 +41,11 @@ describe('orcidGetFunding', () => {
     mockGetFundings.mockResolvedValueOnce(sampleFunding);
 
     const ctx = createMockContext();
-    const input = orcidGetFunding.input.parse({ orcid_id: '0000-0001-9522-8779' });
+    const input = orcidGetFunding.input.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await orcidGetFunding.handler(input, ctx);
 
-    expect(result.orcidId).toBe('0000-0001-9522-8779');
-    expect(result.orcidUri).toBe('https://orcid.org/0000-0001-9522-8779');
+    expect(result.orcidId).toBe('0000-0002-1825-0097');
+    expect(result.orcidUri).toBe('https://orcid.org/0000-0002-1825-0097');
     expect(result.fundingCount).toBe(1);
     expect(result.funding).toHaveLength(1);
     const f = result.funding[0];
@@ -64,10 +64,10 @@ describe('orcidGetFunding', () => {
 
     const ctx = createMockContext();
     const input = orcidGetFunding.input.parse({
-      orcid_id: 'https://orcid.org/0000-0001-9522-8779',
+      orcid_id: 'https://orcid.org/0000-0002-1825-0097',
     });
     const result = await orcidGetFunding.handler(input, ctx);
-    expect(result.orcidId).toBe('0000-0001-9522-8779');
+    expect(result.orcidId).toBe('0000-0002-1825-0097');
   });
 
   it('adds notice enrichment when no funding records found', async () => {
@@ -99,7 +99,7 @@ describe('orcidGetFunding', () => {
     mockGetFundings.mockRejectedValueOnce(new Error('Timeout'));
 
     const ctx = createMockContext();
-    const input = orcidGetFunding.input.parse({ orcid_id: '0000-0001-9522-8779' });
+    const input = orcidGetFunding.input.parse({ orcid_id: '0000-0002-1825-0097' });
     await expect(orcidGetFunding.handler(input, ctx)).rejects.toThrow('Timeout');
   });
 
@@ -109,9 +109,9 @@ describe('orcidGetFunding', () => {
   });
 
   it('accepts bare and URI forms of a valid ORCID iD', () => {
-    expect(() => orcidGetFunding.input.parse({ orcid_id: '0000-0001-9522-8779' })).not.toThrow();
+    expect(() => orcidGetFunding.input.parse({ orcid_id: '0000-0002-1825-0097' })).not.toThrow();
     expect(() =>
-      orcidGetFunding.input.parse({ orcid_id: 'https://orcid.org/0000-0001-9522-8779' }),
+      orcidGetFunding.input.parse({ orcid_id: 'https://orcid.org/0000-0002-1825-0097' }),
     ).not.toThrow();
   });
 
@@ -121,7 +121,7 @@ describe('orcidGetFunding', () => {
     );
 
     const ctx = createMockContext({ errors: orcidGetFunding.errors });
-    const input = orcidGetFunding.input.parse({ orcid_id: '0000-0000-0000-0000' });
+    const input = orcidGetFunding.input.parse({ orcid_id: '0000-0000-0000-0001' });
     const error = await orcidGetFunding.handler(input, ctx).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(McpError);
     expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
@@ -130,8 +130,8 @@ describe('orcidGetFunding', () => {
 
   it('formats funding records with all key fields visible', () => {
     const output = orcidGetFunding.output.parse({
-      orcidId: '0000-0001-9522-8779',
-      orcidUri: 'https://orcid.org/0000-0001-9522-8779',
+      orcidId: '0000-0002-1825-0097',
+      orcidUri: 'https://orcid.org/0000-0002-1825-0097',
       fundingCount: 1,
       funding: sampleFunding,
     });
@@ -140,8 +140,8 @@ describe('orcidGetFunding', () => {
     expect(blocks).toHaveLength(1);
     expect(blocks[0].type).toBe('text');
     const text = (blocks[0] as { text: string }).text;
-    expect(text).toContain('0000-0001-9522-8779');
-    expect(text).toContain('https://orcid.org/0000-0001-9522-8779');
+    expect(text).toContain('0000-0002-1825-0097');
+    expect(text).toContain('https://orcid.org/0000-0002-1825-0097');
     expect(text).toContain('CRISPR Development Grant');
     expect(text).toContain('NIH');
     expect(text).toContain('https://doi.org/10.13039/100000002');

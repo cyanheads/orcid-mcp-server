@@ -43,12 +43,12 @@ describe('researcherProfileResource', () => {
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
     const params = researcherProfileResource.params.parse({
-      orcid_id: '0000-0001-9522-8779',
+      orcid_id: '0000-0002-1825-0097',
     });
     const result = await researcherProfileResource.handler(params, ctx);
 
-    expect(result.orcidId).toBe('0000-0001-9522-8779');
-    expect(result.orcidUri).toBe('https://orcid.org/0000-0001-9522-8779');
+    expect(result.orcidId).toBe('0000-0002-1825-0097');
+    expect(result.orcidUri).toBe('https://orcid.org/0000-0002-1825-0097');
     expect(result.givenNames).toBe('Jennifer');
     expect(result.familyName).toBe('Doudna');
     expect(result.creditName).toBe('Jennifer A. Doudna');
@@ -66,10 +66,23 @@ describe('researcherProfileResource', () => {
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
     const params = researcherProfileResource.params.parse({
-      orcid_id: 'https://orcid.org/0000-0001-9522-8779',
+      orcid_id: 'https://orcid.org/0000-0002-1825-0097',
     });
     const result = await researcherProfileResource.handler(params, ctx);
-    expect(result.orcidId).toBe('0000-0001-9522-8779');
+    expect(result.orcidId).toBe('0000-0002-1825-0097');
+  });
+
+  it('rejects a checksum-invalid ORCID iD with InvalidParams before any upstream request', async () => {
+    const ctx = createMockContext({ tenantId: 'test-tenant' });
+    // Well-shaped but checksum-invalid: passes the regex-only param schema, rejected in-handler.
+    const params = researcherProfileResource.params.parse({ orcid_id: '0000-0000-0000-0000' });
+    const err = await researcherProfileResource.handler(params, ctx).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(McpError);
+    expect((err as McpError).code).toBe(JsonRpcErrorCode.InvalidParams);
+    expect((err as McpError).message).toContain('0000-0000-0000-0000');
+    expect((err as McpError).message).toContain('ISO 7064');
+    expect(mockGetPerson).not.toHaveBeenCalled();
   });
 
   it('throws notFound when person has no public name', async () => {
@@ -93,7 +106,7 @@ describe('researcherProfileResource', () => {
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
     const params = researcherProfileResource.params.parse({
-      orcid_id: '0000-0001-9522-8779',
+      orcid_id: '0000-0002-1825-0097',
     });
     await expect(researcherProfileResource.handler(params, ctx)).rejects.toThrow('Service down');
   });
@@ -132,7 +145,7 @@ describe('researcherProfileResource', () => {
     );
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherProfileResource.params.parse({ orcid_id: '0000-0001-9522-8779' });
+    const params = researcherProfileResource.params.parse({ orcid_id: '0000-0002-1825-0097' });
     const error = await researcherProfileResource.handler(params, ctx).catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(McpError);
@@ -150,7 +163,7 @@ describe('researcherProfileResource', () => {
     });
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherProfileResource.params.parse({ orcid_id: '0000-0009-0000-0001' });
+    const params = researcherProfileResource.params.parse({ orcid_id: '0000-0009-0000-0007' });
     const result = await researcherProfileResource.handler(params, ctx);
     expect(result.creditName).toBe('Anonymous Researcher');
     expect(result.givenNames).toBeUndefined();
@@ -160,7 +173,7 @@ describe('researcherProfileResource', () => {
     mockGetPerson.mockResolvedValueOnce(fullPerson);
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherProfileResource.params.parse({ orcid_id: '0000-0001-9522-8779' });
+    const params = researcherProfileResource.params.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await researcherProfileResource.handler(params, ctx);
 
     // relationship is stripped — not part of the resource output schema

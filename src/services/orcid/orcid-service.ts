@@ -26,6 +26,7 @@ import {
   normalizeWorkDetail,
   normalizeWorks,
 } from './normalizers.js';
+import { normalizeOrcidId } from './orcid-id.js';
 import type {
   Affiliation,
   BulkWorkResult,
@@ -46,10 +47,8 @@ import type {
   WorkDetail,
 } from './types.js';
 
-/** Strip https://orcid.org/ prefix to get the bare 0000-XXXX-XXXX-XXXX form. */
-export function normalizeOrcidId(id: string): string {
-  return id.replace(/^https?:\/\/orcid\.org\//, '').trim();
-}
+/** Re-exported from the shared ORCID iD parser/validator (`./orcid-id.js`). */
+export { normalizeOrcidId };
 
 /** The accepted affiliation types as a union for type-safety. */
 export type AffiliationType =

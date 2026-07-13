@@ -35,24 +35,37 @@ const sampleWorks = [
   },
 ];
 
+/** Prolific record fixture (0000-0001-9161-999X returns 524 works in production). */
+const prolificWorks = Array.from({ length: 60 }, (_, i) => ({
+  putCode: 1000 + i,
+  title: `Work ${i}`,
+  workType: 'journal-article',
+  publicationDate: '2020',
+  externalIds: [{ type: 'doi', value: `10.1/${i}` }],
+}));
+
 describe('orcidGetWorks', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('returns works list with correct counts and IDs', async () => {
+  it('returns works list with counts, offset, and truncation flags', async () => {
     mockGetWorks.mockResolvedValueOnce(sampleWorks);
 
     const ctx = createMockContext();
-    const input = orcidGetWorks.input.parse({ orcid_id: '0000-0001-9522-8779' });
+    const input = orcidGetWorks.input.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await orcidGetWorks.handler(input, ctx);
 
-    expect(result.orcidId).toBe('0000-0001-9522-8779');
-    expect(result.orcidUri).toBe('https://orcid.org/0000-0001-9522-8779');
+    expect(result.orcidId).toBe('0000-0002-1825-0097');
+    expect(result.orcidUri).toBe('https://orcid.org/0000-0002-1825-0097');
     expect(result.workCount).toBe(2);
+    expect(result.returnedCount).toBe(2);
+    expect(result.offset).toBe(0);
+    expect(result.truncated).toBe(false);
+    expect(result.nextOffset).toBeUndefined();
     expect(result.works).toHaveLength(2);
     expect(result.works[0].title).toBe('CRISPR-Cas9 Mechanism');
-    expect(result.works[0].externalIds[0].type).toBe('doi');
+    expect(result.works[0].externalIds?.[0].type).toBe('doi');
     expect(getEnrichment(ctx).notice).toBeUndefined();
   });
 
@@ -61,10 +74,83 @@ describe('orcidGetWorks', () => {
 
     const ctx = createMockContext();
     const input = orcidGetWorks.input.parse({
-      orcid_id: 'https://orcid.org/0000-0001-9522-8779',
+      orcid_id: 'https://orcid.org/0000-0002-1825-0097',
     });
     const result = await orcidGetWorks.handler(input, ctx);
-    expect(result.orcidId).toBe('0000-0001-9522-8779');
+    expect(result.orcidId).toBe('0000-0002-1825-0097');
+  });
+
+  it('slices a prolific record to the default limit and reports truncation', async () => {
+    mockGetWorks.mockResolvedValueOnce(prolificWorks);
+
+    const ctx = createMockContext();
+    // 0000-0001-9161-999X is the real prolific record (524 works in production).
+    const input = orcidGetWorks.input.parse({ orcid_id: '0000-0001-9161-999X' });
+    const result = await orcidGetWorks.handler(input, ctx);
+
+    expect(result.workCount).toBe(60);
+    expect(result.returnedCount).toBe(50); // default limit
+    expect(result.offset).toBe(0);
+    expect(result.truncated).toBe(true);
+    expect(result.nextOffset).toBe(50);
+    expect(result.works).toHaveLength(50);
+    expect(result.works[0].title).toBe('Work 0');
+    expect(result.works[49].title).toBe('Work 49');
+  });
+
+  it('pages the tail with offset and clears truncation on the final page', async () => {
+    mockGetWorks.mockResolvedValueOnce(prolificWorks);
+
+    const ctx = createMockContext();
+    const input = orcidGetWorks.input.parse({ orcid_id: '0000-0001-9161-999X', offset: 50 });
+    const result = await orcidGetWorks.handler(input, ctx);
+
+    expect(result.workCount).toBe(60);
+    expect(result.returnedCount).toBe(10);
+    expect(result.offset).toBe(50);
+    expect(result.truncated).toBe(false);
+    expect(result.nextOffset).toBeUndefined();
+    expect(result.works[0].title).toBe('Work 50');
+  });
+
+  it('respects an explicit limit smaller than the record', async () => {
+    mockGetWorks.mockResolvedValueOnce(sampleWorks);
+
+    const ctx = createMockContext();
+    const input = orcidGetWorks.input.parse({ orcid_id: '0000-0002-1825-0097', limit: 1 });
+    const result = await orcidGetWorks.handler(input, ctx);
+
+    expect(result.workCount).toBe(2);
+    expect(result.returnedCount).toBe(1);
+    expect(result.truncated).toBe(true);
+    expect(result.nextOffset).toBe(1);
+    expect(result.works).toHaveLength(1);
+  });
+
+  it('includes external identifiers by default', async () => {
+    mockGetWorks.mockResolvedValueOnce(sampleWorks);
+
+    const ctx = createMockContext();
+    const input = orcidGetWorks.input.parse({ orcid_id: '0000-0002-1825-0097' });
+    const result = await orcidGetWorks.handler(input, ctx);
+
+    expect(result.works[0].externalIds).toEqual([
+      { type: 'doi', value: '10.1126/science.1225829' },
+    ]);
+  });
+
+  it('omits external identifiers when include_external_ids is false', async () => {
+    mockGetWorks.mockResolvedValueOnce(sampleWorks);
+
+    const ctx = createMockContext();
+    const input = orcidGetWorks.input.parse({
+      orcid_id: '0000-0002-1825-0097',
+      include_external_ids: false,
+    });
+    const result = await orcidGetWorks.handler(input, ctx);
+
+    expect(result.works[0].externalIds).toBeUndefined();
+    expect(result.works[0].title).toBe('CRISPR-Cas9 Mechanism');
   });
 
   it('adds notice enrichment when works list is empty', async () => {
@@ -76,6 +162,8 @@ describe('orcidGetWorks', () => {
     const enrichment = getEnrichment(ctx);
 
     expect(result.workCount).toBe(0);
+    expect(result.returnedCount).toBe(0);
+    expect(result.truncated).toBe(false);
     expect(result.works).toEqual([]);
     expect(enrichment.notice).toBeDefined();
     expect(enrichment.notice).toContain('No works found');
@@ -97,7 +185,7 @@ describe('orcidGetWorks', () => {
     mockGetWorks.mockRejectedValueOnce(new Error('Upstream timeout'));
 
     const ctx = createMockContext();
-    const input = orcidGetWorks.input.parse({ orcid_id: '0000-0001-9522-8779' });
+    const input = orcidGetWorks.input.parse({ orcid_id: '0000-0002-1825-0097' });
     await expect(orcidGetWorks.handler(input, ctx)).rejects.toThrow('Upstream timeout');
   });
 
@@ -106,10 +194,16 @@ describe('orcidGetWorks', () => {
     expect(() => orcidGetWorks.input.parse({ orcid_id: '' })).toThrow();
   });
 
+  it('rejects a checksum-invalid ORCID iD before any upstream request', () => {
+    // Well-shaped but the ISO 7064 check digit is wrong (correct digit is 1).
+    expect(() => orcidGetWorks.input.parse({ orcid_id: '0000-0000-0000-0000' })).toThrow();
+    expect(mockGetWorks).not.toHaveBeenCalled();
+  });
+
   it('accepts bare and URI forms of a valid ORCID iD', () => {
-    expect(() => orcidGetWorks.input.parse({ orcid_id: '0000-0001-9522-8779' })).not.toThrow();
+    expect(() => orcidGetWorks.input.parse({ orcid_id: '0000-0002-1825-0097' })).not.toThrow();
     expect(() =>
-      orcidGetWorks.input.parse({ orcid_id: 'https://orcid.org/0000-0001-9522-8779' }),
+      orcidGetWorks.input.parse({ orcid_id: 'https://orcid.org/0000-0002-1825-0097' }),
     ).not.toThrow();
   });
 
@@ -119,18 +213,23 @@ describe('orcidGetWorks', () => {
     );
 
     const ctx = createMockContext({ errors: orcidGetWorks.errors });
-    const input = orcidGetWorks.input.parse({ orcid_id: '0000-0000-0000-0000' });
+    // Checksum-valid but unregistered iD — passes local validation, 404s upstream.
+    const input = orcidGetWorks.input.parse({ orcid_id: '0000-0000-0000-0001' });
     const error = await orcidGetWorks.handler(input, ctx).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(McpError);
     expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
     expect((error as McpError).data?.reason).toBe('profile_not_found');
   });
 
-  it('formats works with titles, types, dates, and external IDs', () => {
+  it('formats works with counts, truncation, and external IDs', () => {
     const output = orcidGetWorks.output.parse({
-      orcidId: '0000-0001-9522-8779',
-      orcidUri: 'https://orcid.org/0000-0001-9522-8779',
-      workCount: 2,
+      orcidId: '0000-0002-1825-0097',
+      orcidUri: 'https://orcid.org/0000-0002-1825-0097',
+      workCount: 60,
+      returnedCount: 2,
+      offset: 0,
+      nextOffset: 2,
+      truncated: true,
       works: sampleWorks,
     });
 
@@ -138,14 +237,15 @@ describe('orcidGetWorks', () => {
     expect(blocks).toHaveLength(1);
     expect(blocks[0].type).toBe('text');
     const text = (blocks[0] as { text: string }).text;
-    expect(text).toContain('0000-0001-9522-8779');
-    expect(text).toContain('https://orcid.org/0000-0001-9522-8779');
+    expect(text).toContain('0000-0002-1825-0097');
+    expect(text).toContain('https://orcid.org/0000-0002-1825-0097');
     expect(text).toContain('CRISPR-Cas9 Mechanism');
     expect(text).toContain('journal-article');
-    expect(text).toContain('2012-08');
-    expect(text).toContain('Science');
     expect(text).toContain('doi:10.1126/science.1225829');
-    expect(text).toContain('**Total Works:** 2');
+    expect(text).toContain('**Total Works:** 60');
+    expect(text).toContain('**Returned:** 2 (offset 0)');
+    expect(text).toContain('**Truncated:** Yes');
+    expect(text).toContain('**Next Offset:** 2');
   });
 
   it('formats empty works list', () => {
@@ -153,12 +253,16 @@ describe('orcidGetWorks', () => {
       orcidId: '0000-0002-1825-0097',
       orcidUri: 'https://orcid.org/0000-0002-1825-0097',
       workCount: 0,
+      returnedCount: 0,
+      offset: 0,
+      truncated: false,
       works: [],
     });
 
     const blocks = orcidGetWorks.format!(output);
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('**Total Works:** 0');
+    expect(text).toContain('**Truncated:** No');
   });
 
   it('formats untitled work as (untitled)', () => {
@@ -166,6 +270,9 @@ describe('orcidGetWorks', () => {
       orcidId: '0000-0002-1825-0097',
       orcidUri: 'https://orcid.org/0000-0002-1825-0097',
       workCount: 1,
+      returnedCount: 1,
+      offset: 0,
+      truncated: false,
       works: [{ externalIds: [] }],
     });
 

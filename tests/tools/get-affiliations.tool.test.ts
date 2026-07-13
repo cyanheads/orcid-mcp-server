@@ -46,11 +46,11 @@ describe('orcidGetAffiliations', () => {
     mockGetAffiliations.mockResolvedValueOnce(sampleAffiliations);
 
     const ctx = createMockContext();
-    const input = orcidGetAffiliations.input.parse({ orcid_id: '0000-0001-9522-8779' });
+    const input = orcidGetAffiliations.input.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await orcidGetAffiliations.handler(input, ctx);
 
-    expect(result.orcidId).toBe('0000-0001-9522-8779');
-    expect(result.orcidUri).toBe('https://orcid.org/0000-0001-9522-8779');
+    expect(result.orcidId).toBe('0000-0002-1825-0097');
+    expect(result.orcidUri).toBe('https://orcid.org/0000-0002-1825-0097');
     expect(result.affiliationCount).toBe(2);
     expect(result.requestedTypes).toEqual(['employment', 'education']);
     expect(result.affiliations).toHaveLength(2);
@@ -68,7 +68,7 @@ describe('orcidGetAffiliations', () => {
 
     const ctx = createMockContext();
     const input = orcidGetAffiliations.input.parse({
-      orcid_id: '0000-0001-9522-8779',
+      orcid_id: '0000-0002-1825-0097',
       types: ['all'],
     });
     await orcidGetAffiliations.handler(input, ctx);
@@ -112,7 +112,7 @@ describe('orcidGetAffiliations', () => {
     mockGetAffiliations.mockRejectedValueOnce(new Error('API error'));
 
     const ctx = createMockContext();
-    const input = orcidGetAffiliations.input.parse({ orcid_id: '0000-0001-9522-8779' });
+    const input = orcidGetAffiliations.input.parse({ orcid_id: '0000-0002-1825-0097' });
     await expect(orcidGetAffiliations.handler(input, ctx)).rejects.toThrow('API error');
   });
 
@@ -123,10 +123,10 @@ describe('orcidGetAffiliations', () => {
 
   it('accepts bare and URI forms of a valid ORCID iD', () => {
     expect(() =>
-      orcidGetAffiliations.input.parse({ orcid_id: '0000-0001-9522-8779' }),
+      orcidGetAffiliations.input.parse({ orcid_id: '0000-0002-1825-0097' }),
     ).not.toThrow();
     expect(() =>
-      orcidGetAffiliations.input.parse({ orcid_id: 'https://orcid.org/0000-0001-9522-8779' }),
+      orcidGetAffiliations.input.parse({ orcid_id: 'https://orcid.org/0000-0002-1825-0097' }),
     ).not.toThrow();
   });
 
@@ -136,7 +136,7 @@ describe('orcidGetAffiliations', () => {
     );
 
     const ctx = createMockContext({ errors: orcidGetAffiliations.errors });
-    const input = orcidGetAffiliations.input.parse({ orcid_id: '0000-0000-0000-0000' });
+    const input = orcidGetAffiliations.input.parse({ orcid_id: '0000-0000-0000-0001' });
     const error = await orcidGetAffiliations.handler(input, ctx).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(McpError);
     expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
@@ -145,8 +145,8 @@ describe('orcidGetAffiliations', () => {
 
   it('formats affiliations grouped by type with org details', () => {
     const output = orcidGetAffiliations.output.parse({
-      orcidId: '0000-0001-9522-8779',
-      orcidUri: 'https://orcid.org/0000-0001-9522-8779',
+      orcidId: '0000-0002-1825-0097',
+      orcidUri: 'https://orcid.org/0000-0002-1825-0097',
       affiliationCount: 2,
       affiliations: sampleAffiliations,
       requestedTypes: ['employment', 'education'],
@@ -156,7 +156,7 @@ describe('orcidGetAffiliations', () => {
     expect(blocks).toHaveLength(1);
     expect(blocks[0].type).toBe('text');
     const text = (blocks[0] as { text: string }).text;
-    expect(text).toContain('0000-0001-9522-8779');
+    expect(text).toContain('0000-0002-1825-0097');
     expect(text).toContain('UC Berkeley');
     expect(text).toContain('Professor');
     expect(text).toContain('2002');

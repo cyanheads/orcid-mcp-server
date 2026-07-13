@@ -6,8 +6,9 @@
  */
 
 import { resource, z } from '@cyanheads/mcp-ts-core';
-import { JsonRpcErrorCode, McpError, notFound } from '@cyanheads/mcp-ts-core/errors';
+import { invalidParams, JsonRpcErrorCode, McpError, notFound } from '@cyanheads/mcp-ts-core/errors';
 import type { NormalizedPerson } from '@/services/orcid/normalizers.js';
+import { isValidOrcidId, orcidIdParamSchema } from '@/services/orcid/orcid-id.js';
 import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
 
 export const researcherProfileResource = resource('orcid://researcher/{orcid_id}/profile', {
@@ -17,15 +18,7 @@ export const researcherProfileResource = resource('orcid://researcher/{orcid_id}
   mimeType: 'application/json',
 
   params: z.object({
-    orcid_id: z
-      .string()
-      .regex(
-        /^(https?:\/\/orcid\.org\/)?\d{4}-\d{4}-\d{4}-\d{3}[\dX]$/,
-        'Must be a valid ORCID iD (e.g. 0000-0001-2345-6789) or full ORCID URI.',
-      )
-      .describe(
-        'ORCID iD — bare format (0000-0001-2345-6789) or full URI (https://orcid.org/0000-0001-2345-6789).',
-      ),
+    orcid_id: orcidIdParamSchema,
   }),
 
   output: z.object({
@@ -50,6 +43,15 @@ export const researcherProfileResource = resource('orcid://researcher/{orcid_id}
   }),
 
   async handler(params, ctx) {
+    // Reject a checksum-invalid iD locally, before any upstream call — mirrors the
+    // tool route's InvalidParams. The regex-only param schema matched the shape; the
+    // ISO 7064 check digit is verified here.
+    if (!isValidOrcidId(params.orcid_id)) {
+      throw invalidParams(
+        `The ORCID iD ${params.orcid_id} is invalid — its ISO 7064 check digit does not match. Verify the iD and try again.`,
+      );
+    }
+
     const service = getOrcidService();
     const bareId = normalizeOrcidId(params.orcid_id);
 
