@@ -140,14 +140,32 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
   // Agent-facing context: the queries used, total match count, and empty-result guidance.
   // Reaches both structuredContent and content[] without a format() entry.
   enrichment: {
-    queryUsed: z.string().describe('Solr query sent to ORCID for the primary search.'),
+    queryUsed: z
+      .string()
+      .describe(
+        'The Solr query that produced the returned candidates — the primary query, or the final relaxed query when a fallback ran. Paired with totalFound.',
+      ),
     relaxedQuery: z
       .string()
       .optional()
       .describe(
         'Solr query used in a secondary relaxed search, if the primary returned no results.',
       ),
-    totalFound: z.number().describe('Total ORCID records matching the primary query.'),
+    totalFound: z
+      .number()
+      .describe(
+        'Total ORCID records matching queryUsed (the query that produced the returned candidates).',
+      ),
+    primaryQuery: z
+      .string()
+      .describe(
+        'The primary, most-constrained Solr query attempted first (name + optional anchor + optional affiliation). Always populated; equals queryUsed when no relaxed fallback ran.',
+      ),
+    primaryTotalFound: z
+      .number()
+      .describe(
+        'Total ORCID records matching primaryQuery. Zero when the primary query found nothing and a relaxed fallback produced the returned candidates.',
+      ),
     notice: z
       .string()
       .optional()
@@ -160,6 +178,8 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
     queryUsed: { label: 'Query Used' },
     relaxedQuery: { label: 'Relaxed Query' },
     totalFound: { label: 'Total Found' },
+    primaryQuery: { label: 'Primary Query' },
+    primaryTotalFound: { label: 'Primary Total Found' },
   },
 
   async handler(input, ctx) {
@@ -242,7 +262,16 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
       anchorType,
     }));
 
-    ctx.enrich({ queryUsed: primaryQuery, totalFound: finalResponse.numFound });
+    // queryUsed/totalFound must describe the SAME query — the effective query that
+    // produced the returned candidates (the primary query, or the last relaxed stage
+    // when a fallback ran). primaryQuery/primaryTotalFound preserve the primary attempt.
+    const effectiveQuery = relaxedQuery ?? primaryQuery;
+    ctx.enrich({
+      queryUsed: effectiveQuery,
+      totalFound: finalResponse.numFound,
+      primaryQuery,
+      primaryTotalFound: primaryResponse.numFound,
+    });
     if (relaxedQuery) ctx.enrich({ relaxedQuery });
 
     if (candidates.length === 0) {

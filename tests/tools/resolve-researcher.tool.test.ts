@@ -229,3 +229,79 @@ describe('orcidResolveResearcher', () => {
     expect(text).toContain('No candidates found');
   });
 });
+
+describe('orcidResolveResearcher — count/query pairing (#15)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('reports primaryQuery/primaryTotalFound equal to queryUsed/totalFound when no fallback runs', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 3, results: [doudnaResult] });
+
+    const ctx = createMockContext();
+    const input = orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna' });
+    await orcidResolveResearcher.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
+
+    expect(enrichment.relaxedQuery).toBeUndefined();
+    expect(enrichment.queryUsed).toBe(enrichment.primaryQuery);
+    expect(enrichment.totalFound).toBe(3);
+    expect(enrichment.primaryTotalFound).toBe(3);
+  });
+
+  it('pairs queryUsed with totalFound from the final response after a drop-affiliation fallback', async () => {
+    // Primary (affiliation-constrained) finds nothing; relaxed (name-only) finds records.
+    mockExpandedSearch
+      .mockResolvedValueOnce({ numFound: 0, results: [] })
+      .mockResolvedValueOnce({ numFound: 5, results: [doudnaResult] });
+
+    const ctx = createMockContext();
+    const input = orcidResolveResearcher.input.parse({
+      name: 'Jennifer Doudna',
+      affiliation: 'University of California Berkeley',
+    });
+    await orcidResolveResearcher.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
+
+    // queryUsed is the query that actually produced totalFound — the relaxed one, not the primary.
+    expect(enrichment.queryUsed).not.toContain('affiliation-org-name:');
+    expect(enrichment.queryUsed).toBe(enrichment.relaxedQuery);
+    expect(enrichment.totalFound).toBe(5); // from the relaxed response, not the primary's 0
+
+    // primary* fields preserve the constrained first attempt's audit trail.
+    expect(enrichment.primaryQuery).toContain('affiliation-org-name:');
+    expect(enrichment.primaryTotalFound).toBe(0);
+  });
+
+  it('keeps queryUsed/totalFound paired through both relaxed stages in sequence', async () => {
+    // Stage 0 primary (name + doi + affiliation) → 0
+    // Stage 1 drop-affiliation (name + doi) → 0
+    // Stage 2 anchor-only (doi) → 4
+    mockExpandedSearch
+      .mockResolvedValueOnce({ numFound: 0, results: [] })
+      .mockResolvedValueOnce({ numFound: 0, results: [] })
+      .mockResolvedValueOnce({ numFound: 4, results: [doudnaResult] });
+
+    const ctx = createMockContext();
+    const input = orcidResolveResearcher.input.parse({
+      name: 'Jennifer Doudna',
+      affiliation: 'University of California Berkeley',
+      doi: '10.1126/science.1225829',
+    });
+    await orcidResolveResearcher.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
+
+    // Three upstream calls: primary, drop-affiliation, anchor-only.
+    expect(mockExpandedSearch).toHaveBeenCalledTimes(3);
+
+    // Effective query is the anchor-only stage that finally matched.
+    expect(enrichment.queryUsed).toBe('doi-self:10.1126/science.1225829');
+    expect(enrichment.queryUsed).toBe(enrichment.relaxedQuery);
+    expect(enrichment.totalFound).toBe(4); // from the anchor-only response
+
+    // primaryQuery still describes the fully-constrained first attempt.
+    expect(enrichment.primaryQuery).toContain('affiliation-org-name:');
+    expect(enrichment.primaryQuery).toContain('doi-self:10.1126/science.1225829');
+    expect(enrichment.primaryTotalFound).toBe(0);
+  });
+});
