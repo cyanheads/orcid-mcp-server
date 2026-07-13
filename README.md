@@ -344,7 +344,7 @@ The Dockerfile defaults to HTTP transport, stateless session mode, and logs to `
 |:----------|:--------|
 | `src/index.ts` | `createApp()` entry point — registers tools and resources, inits services. |
 | `src/config` | Server-specific environment variable parsing and validation with Zod. |
-| `src/mcp-server/tools` | Tool definitions (`*.tool.ts`). Seven tools across search, profile, works, affiliations, funding, peer reviews, and disambiguation. |
+| `src/mcp-server/tools` | Tool definitions (`*.tool.ts`). Nine tools across search, disambiguation, profile, works, work detail, affiliations, funding, peer reviews, and research resources. |
 | `src/mcp-server/resources` | Resource definitions (`*.resource.ts`). Profile and works resources. |
 | `src/services/orcid` | ORCID Public API v3.0 service layer — search, record section fetchers, retry/backoff. |
 | `tests/` | Unit and integration tests mirroring `src/`. |
