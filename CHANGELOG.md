@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.8](changelog/0.2.x/0.2.8.md) — 2026-07-13
+
+orcid_resolve_researcher pairs queryUsed/totalFound with the query that actually produced them, adding primaryQuery/primaryTotalFound for audit trail (#15); docs/design.md reconciled to the 9-tool surface (#17).
+
 ## [0.2.7](changelog/0.2.x/0.2.7.md) — 2026-07-13
 
 Local ISO 7064 checksum validation rejects invalid ORCID iDs before upstream calls (#14); orcid_get_works gains limit/offset/include_external_ids pagination, the works resource caps to a compact first-25 page (#16); adopts mcp-ts-core ^0.10.14 and Bun/Socket supply-chain hardening.

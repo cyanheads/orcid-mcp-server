@@ -1,6 +1,6 @@
 {
   "name": "orcid-mcp-server",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "Search and retrieve researcher profiles, works, affiliations, funding, and peer review records from the ORCID registry via MCP. STDIO or Streamable HTTP.",
   "author": {
     "name": "cyanheads"
