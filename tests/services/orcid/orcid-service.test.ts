@@ -4,9 +4,11 @@
  * @module tests/services/orcid/orcid-service.test
  */
 
+import type { Context } from '@cyanheads/mcp-ts-core';
 import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, type MockContextLogger } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OrcidService } from '@/services/orcid/orcid-service.js';
 
@@ -42,5 +44,56 @@ describe('OrcidService — upstream error-body redaction (#18)', () => {
     expect(err.data?.body).toBeUndefined();
     // 400 is non-transient — a single upstream call, no retry loop.
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('OrcidService — assertNotHtml message redaction (#28)', () => {
+  // assertNotHtml is private; access it through a narrow structural cast rather than `any`.
+  // Exercised directly (not via fetchJson) — the code it throws is transient, so routing
+  // through the public surface would mean waiting out withRetry's real backoff delays.
+  type AssertNotHtmlHost = { assertNotHtml(text: string, url: string, ctx: Context): void };
+
+  const url = 'https://pub.orcid.org/v3.0/0000-0001-9161-999X/person';
+  const html = '<!DOCTYPE html><html><body>Rate limited</body></html>';
+
+  function newService(): OrcidService {
+    return new OrcidService({} as unknown as AppConfig, {} as unknown as StorageService);
+  }
+
+  it('does not leak the upstream URL into the thrown message or data', () => {
+    const ctx = createMockContext();
+
+    let thrown: unknown;
+    try {
+      (newService() as unknown as AssertNotHtmlHost).assertNotHtml(html, url, ctx);
+    } catch (e) {
+      thrown = e;
+    }
+
+    expect(thrown).toBeInstanceOf(McpError);
+    const err = thrown as McpError;
+    expect(err.code).toBe(JsonRpcErrorCode.ServiceUnavailable);
+    expect(err.message).not.toContain(url);
+    expect(err.message).not.toContain('pub.orcid.org');
+    expect(err.message).toContain('ORCID');
+
+    // No data argument is ever passed to the factory — nothing to redact, nothing to leak.
+    expect(err.data).toBeUndefined();
+  });
+
+  it('still logs the URL server-side for operators', () => {
+    const ctx = createMockContext();
+    const log = ctx.log as MockContextLogger;
+
+    expect(() =>
+      (newService() as unknown as AssertNotHtmlHost).assertNotHtml(html, url, ctx),
+    ).toThrow(McpError);
+
+    expect(
+      log.calls.some(
+        (c) =>
+          c.level === 'warning' && (c.data as Record<string, unknown> | undefined)?.url === url,
+      ),
+    ).toBe(true);
   });
 });

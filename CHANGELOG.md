@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.10](changelog/0.2.x/0.2.10.md) — 2026-07-16 · 🛡️ Security
+
+orcid_get_work_detail attaches putCode to bulk errors and normalizes whole-request failures into a redacted, still-retryable error contract (#21, #22); record-fetch tools surface their profile_not_found recovery hint (#25); the ORCID API URL no longer leaks into HTML-guard errors (#28).
+
 ## [0.2.9](changelog/0.2.x/0.2.9.md) — 2026-07-16 · 🛡️ Security
 
 Solr reserved-character escaping closes a query-injection and upstream-500 gap in both search tools (#18); orcid_resolve_researcher gains a DOI/PMID dual-anchor fallback (#19) and filters generic institution stopwords from overlap matching (#20).

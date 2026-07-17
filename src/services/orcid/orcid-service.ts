@@ -84,15 +84,25 @@ export class OrcidService {
   private headers(): Record<string, string> {
     return {
       Accept: 'application/json',
-      'User-Agent': 'orcid-mcp-server/0.2.9 (https://github.com/cyanheads/orcid-mcp-server)',
+      'User-Agent': 'orcid-mcp-server/0.2.10 (https://github.com/cyanheads/orcid-mcp-server)',
     };
   }
 
-  /** Detect HTML error pages masquerading as JSON responses (rate-limit or maintenance pages). */
-  private assertNotHtml(text: string, url: string): void {
+  /**
+   * Detect HTML error pages masquerading as JSON responses (rate-limit or maintenance pages).
+   * The endpoint URL is logged server-side for operators but never enters the thrown message
+   * or `data` — the client-facing error must not leak the upstream API URL (see #28).
+   */
+  private assertNotHtml(text: string, url: string, ctx: Context): void {
     if (/^\s*<(!DOCTYPE\s+html|html[\s>])/i.test(text)) {
+      ctx.log.warning(
+        'ORCID returned HTML instead of JSON — likely rate-limited or under maintenance.',
+        {
+          url,
+        },
+      );
       throw serviceUnavailable(
-        `ORCID API returned HTML instead of JSON at ${url} — likely rate-limited or under maintenance.`,
+        'ORCID API returned HTML instead of JSON — likely rate-limited or under maintenance.',
       );
     }
   }
@@ -121,7 +131,7 @@ export class OrcidService {
           });
         }
         const text = await response.text();
-        this.assertNotHtml(text, url);
+        this.assertNotHtml(text, url, ctx);
         return JSON.parse(text) as T;
       },
       {
