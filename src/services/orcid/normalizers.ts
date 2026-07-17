@@ -354,6 +354,20 @@ export function normalizeWorkDetail(raw: RawWorkDetail): WorkDetail {
 }
 
 /**
+ * Extract the failing put-code from a bulk-error developer message.
+ * The live bulk endpoint never populates a `put-code` field for the invalid-put-code
+ * error class — the failing code appears only inside the validation text
+ * (e.g. `'999999999' is not a valid put code`). Returns the code only on a single
+ * unambiguous match; messages with no embedded code (access denied, generic 4xx)
+ * leave it undefined.
+ */
+function extractInvalidPutCode(message: string): number | undefined {
+  const matches = [...message.matchAll(/'(\d+)' is not a valid put code/g)];
+  const captured = matches.length === 1 ? matches[0]?.[1] : undefined;
+  return captured === undefined ? undefined : Number(captured);
+}
+
+/**
  * Normalize the bulk works endpoint response.
  * Each entry is either a `work` (full detail) or an `error` (not-found or access denied).
  * Error entries are surfaced as BulkWorkResult errors rather than failing the whole call.
@@ -364,7 +378,9 @@ export function normalizeBulkWorks(raw: RawBulkWorksResponse): BulkWorkResult[] 
       const msg =
         entry.error['developer-message'] ??
         `ORCID error code ${entry.error['error-code'] ?? entry.error['response-code'] ?? 'unknown'}`;
-      const putCode = entry.error['put-code'];
+      // The upstream `put-code` field is authoritative when present, but the live API
+      // omits it for the invalid-put-code class — fall back to extracting from `msg`.
+      const putCode = entry.error['put-code'] ?? extractInvalidPutCode(msg);
       return { type: 'error', ...(putCode !== undefined && { putCode }), message: msg };
     }
     return { type: 'work', detail: normalizeWorkDetail(entry.work) };

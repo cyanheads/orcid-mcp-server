@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   normalizeActivities,
+  normalizeBulkWorks,
   normalizeExpandedSearch,
   normalizeFundings,
   normalizePeerReviews,
@@ -14,6 +15,7 @@ import {
 } from '@/services/orcid/normalizers.js';
 import type {
   RawActivities,
+  RawBulkWorksResponse,
   RawExpandedSearchResponse,
   RawFundingsResponse,
   RawPeerReviewsResponse,
@@ -469,5 +471,136 @@ describe('normalizeExpandedSearch', () => {
     expect(r.otherNames).toEqual([]);
     expect(r.emails).toEqual([]);
     expect(r.institutionNames).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeBulkWorks
+// ---------------------------------------------------------------------------
+
+describe('normalizeBulkWorks', () => {
+  it('extracts the failing put-code from developer-message when no put-code field is present', () => {
+    // Mirrors the live bulk response: invalid put-codes against an existing profile
+    // return HTTP 200 with per-entry errors that carry the failing code only inside the
+    // validation text — never in a `put-code` field.
+    const raw: RawBulkWorksResponse = {
+      bulk: [
+        {
+          error: {
+            'response-code': 400,
+            'developer-message':
+              "400 Bad Request: The put code provided is not valid. Full validation error: '999999999' is not a valid put code",
+            'error-code': 9034,
+          },
+        },
+        {
+          error: {
+            'response-code': 400,
+            'developer-message':
+              "400 Bad Request: The put code provided is not valid. Full validation error: '888888888' is not a valid put code",
+            'error-code': 9034,
+          },
+        },
+      ],
+    };
+
+    const results = normalizeBulkWorks(raw);
+
+    expect(results).toHaveLength(2);
+    expect(results[0]).toEqual({
+      type: 'error',
+      putCode: 999999999,
+      message:
+        "400 Bad Request: The put code provided is not valid. Full validation error: '999999999' is not a valid put code",
+    });
+    expect(results[1].type).toBe('error');
+    expect((results[1] as { putCode?: number }).putCode).toBe(888888888);
+  });
+
+  it('leaves putCode absent when the message carries no extractable code', () => {
+    const raw: RawBulkWorksResponse = {
+      bulk: [
+        {
+          error: {
+            'response-code': 403,
+            'developer-message':
+              '403 Forbidden: The work is not public and cannot be accessed with this token.',
+            'error-code': 9017,
+          },
+        },
+      ],
+    };
+
+    const results = normalizeBulkWorks(raw);
+
+    expect(results).toHaveLength(1);
+    expect(results[0].type).toBe('error');
+    expect((results[0] as { putCode?: number }).putCode).toBeUndefined();
+    expect((results[0] as { message: string }).message).toContain('not public');
+  });
+
+  it('normalizes a mixed work + error bulk array, associating the code with its entry', () => {
+    const raw: RawBulkWorksResponse = {
+      bulk: [
+        {
+          work: {
+            'put-code': 215949386,
+            title: { title: { value: 'CRISPR-Cas9' } },
+            type: 'journal-article',
+          },
+        },
+        {
+          error: {
+            'response-code': 400,
+            'developer-message':
+              "400 Bad Request: The put code provided is not valid. Full validation error: '777777777' is not a valid put code",
+            'error-code': 9034,
+          },
+        },
+      ],
+    };
+
+    const results = normalizeBulkWorks(raw);
+
+    expect(results).toHaveLength(2);
+    expect(results[0].type).toBe('work');
+    expect((results[0] as { detail: { putCode: number } }).detail.putCode).toBe(215949386);
+    expect(results[1].type).toBe('error');
+    expect((results[1] as { putCode?: number }).putCode).toBe(777777777);
+  });
+
+  it('prefers an explicit upstream put-code field over message extraction', () => {
+    // Forward-compat: if ORCID ever populates the field, it wins over the text fallback.
+    const raw: RawBulkWorksResponse = {
+      bulk: [
+        {
+          error: {
+            'put-code': 123,
+            'response-code': 400,
+            'developer-message': "400 Bad Request: '999' is not a valid put code",
+            'error-code': 9034,
+          },
+        },
+      ],
+    };
+
+    const results = normalizeBulkWorks(raw);
+    expect((results[0] as { putCode?: number }).putCode).toBe(123);
+  });
+
+  it('synthesizes a message and omits putCode when developer-message is absent', () => {
+    const raw: RawBulkWorksResponse = {
+      bulk: [{ error: { 'error-code': 9042 } }],
+    };
+
+    const results = normalizeBulkWorks(raw);
+    expect(results[0].type).toBe('error');
+    expect((results[0] as { message: string }).message).toContain('9042');
+    expect((results[0] as { putCode?: number }).putCode).toBeUndefined();
+  });
+
+  it('returns an empty array for an empty bulk response', () => {
+    expect(normalizeBulkWorks({})).toEqual([]);
+    expect(normalizeBulkWorks({ bulk: [] })).toEqual([]);
   });
 });
