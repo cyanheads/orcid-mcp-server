@@ -96,6 +96,7 @@ export const orcidGetProfile = tool('orcid_get_profile', {
         throw ctx.fail(
           'profile_not_found',
           `ORCID iD ${normalizeOrcidId(input.orcid_id)} not found`,
+          { ...ctx.recoveryFor('profile_not_found') },
         );
       }
       throw err;

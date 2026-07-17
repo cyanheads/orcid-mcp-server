@@ -218,7 +218,9 @@ describe('orcidGetWorks', () => {
     const error = await orcidGetWorks.handler(input, ctx).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(McpError);
     expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
-    expect((error as McpError).data?.reason).toBe('profile_not_found');
+    const data = (error as McpError).data as { reason?: string; recovery?: { hint?: string } };
+    expect(data.reason).toBe('profile_not_found');
+    expect(data.recovery?.hint).toBeDefined();
   });
 
   it('formats works with counts, truncation, and external IDs', () => {
