@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.11](changelog/0.2.x/0.2.11.md) — 2026-07-16
+
+orcid_search_researchers discloses the ORCID Public API's 10,000-offset retrieval ceiling via a truncated flag and nextStart cursor (#23); the researcher-profile resource now returns researcherUrls (#24); tool and resource descriptions corrected to match actual field names and limits (#26).
+
 ## [0.2.10](changelog/0.2.x/0.2.10.md) — 2026-07-16 · 🛡️ Security
 
 orcid_get_work_detail attaches putCode to bulk errors and normalizes whole-request failures into a redacted, still-retryable error contract (#21, #22); record-fetch tools surface their profile_not_found recovery hint (#25); the ORCID API URL no longer leaks into HTML-guard errors (#28).

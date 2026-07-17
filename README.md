@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.2.10-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/orcid-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/orcid-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/orcid-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.14-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.2.11-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/orcid-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/orcid-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/orcid-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.14-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -41,7 +41,7 @@ Nine tools organized around three workflows — author disambiguation, researche
 | `orcid_get_funding` | Fetch funding records: grants, contracts, awards, and salary awards, with funder names, grant numbers, and funding periods. |
 | `orcid_get_peer_reviews` | Fetch peer review activity: convening organizations, reviewer role, review type, completion dates, and ISSN-keyed group identifiers. |
 | `orcid_get_research_resources` | List research resources associated with a researcher — compute allocations, equipment access, lab facilities, and data resources. Sparsely populated; most researchers have no entries. |
-| `orcid_resolve_researcher` | Disambiguate an ambiguous author name to a verified ORCID iD. Returns a ranked list of up to 5 candidates with transparent signals: name match type, institution overlap, and whether a DOI or PMID anchor was used. |
+| `orcid_resolve_researcher` | Disambiguate an ambiguous author name to a verified ORCID iD. Returns a ranked list of candidates (5 by default, up to 20 via `rows`) with transparent signals: name match type, institution overlap, and whether a DOI or PMID anchor was used. |
 
 ### `orcid_search_researchers`
 
@@ -135,7 +135,7 @@ List research resources associated with a researcher.
 
 Disambiguate an author name to a verified ORCID iD.
 
-- Returns up to 5 ranked candidates with transparent disambiguation signals: name match type (`exact`/`partial`/`other-name`), institution overlap flag, and anchor type (`doi`/`pmid`/`none`)
+- Returns ranked candidates (5 by default, up to 20 via `rows`) with transparent disambiguation signals: name match type (`exact`/`partial`/`other-name`), institution overlap flag, and anchor type (`doi`/`pmid`/`none`)
 - When `doi` or `pmid` is provided, uses `doi-self` or `pmid-self` as an anchor — researchers who have linked that work to their ORCID record are near-deterministic matches
 - Falls back to a relaxed query (dropping affiliation) if the initial candidate set is empty
 - No synthetic scores — raw signal fields only, so callers can apply their own ranking logic
