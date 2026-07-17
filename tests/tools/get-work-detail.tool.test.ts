@@ -252,31 +252,120 @@ describe('orcidGetWorkDetail', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Service error propagation
+  // Profile-level failures (whole-request errors, not per-record bulk errors)
   // ---------------------------------------------------------------------------
 
-  it('propagates service errors (network failure, etc.)', async () => {
-    mockGetWorkDetails.mockRejectedValueOnce(new Error('Network timeout'));
-
-    const ctx = createMockContext();
-    const input = orcidGetWorkDetail.input.parse({
-      orcid_id: '0000-0001-9161-999X',
-      put_codes: [215949386],
-    });
-    await expect(orcidGetWorkDetail.handler(input, ctx)).rejects.toThrow('Network timeout');
-  });
-
-  it('propagates McpError from service layer', async () => {
+  it('maps a whole-request 404 to profile_not_found and redacts transport details', async () => {
+    // Confirmed live: a bulk request against a non-existent iD 404s the entire request.
+    // The upstream McpError carries url/status/statusText in data — none may reach the client.
     mockGetWorkDetails.mockRejectedValueOnce(
-      new McpError(JsonRpcErrorCode.InternalError, 'Service unavailable'),
+      new McpError(JsonRpcErrorCode.NotFound, 'ORCID returned HTTP 404 Not Found.', {
+        url: 'https://pub.orcid.org/v3.0/9999-9999-9999-9994/works/1',
+        status: 404,
+        statusText: 'Not Found',
+      }),
     );
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetWorkDetail.errors });
+    const input = orcidGetWorkDetail.input.parse({
+      orcid_id: '9999-9999-9999-9994',
+      put_codes: [1],
+    });
+    const error = await orcidGetWorkDetail.handler(input, ctx).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(McpError);
+    expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
+
+    const data = (error as McpError).data as { reason?: string; recovery?: { hint?: string } };
+    expect(data.reason).toBe('profile_not_found');
+    expect(data.recovery?.hint).toBeDefined();
+
+    // Redaction: fresh data must not inherit the caught error's transport fields.
+    const raw = (error as McpError).data as Record<string, unknown>;
+    expect(raw).not.toHaveProperty('url');
+    expect(raw).not.toHaveProperty('status');
+    expect(raw).not.toHaveProperty('statusText');
+    expect(raw).not.toHaveProperty('body');
+  });
+
+  it('preserves the code for a transient ServiceUnavailable failure and redacts transport details', async () => {
+    // A transient upstream failure (retries already exhausted by withRetry in the service
+    // layer) must keep its original code — collapsing it to fetch_failed/InternalError would
+    // downgrade the retryable signal consumers key on.
+    mockGetWorkDetails.mockRejectedValueOnce(
+      new McpError(
+        JsonRpcErrorCode.ServiceUnavailable,
+        'ORCID returned HTTP 503 Service Unavailable.',
+        {
+          url: 'https://pub.orcid.org/v3.0/0000-0001-9161-999X/works/1',
+          status: 503,
+          statusText: 'Service Unavailable',
+          retryable: true,
+        },
+      ),
+    );
+
+    const ctx = createMockContext({ errors: orcidGetWorkDetail.errors });
     const input = orcidGetWorkDetail.input.parse({
       orcid_id: '0000-0001-9161-999X',
       put_codes: [1],
     });
-    await expect(orcidGetWorkDetail.handler(input, ctx)).rejects.toBeInstanceOf(McpError);
+    const error = await orcidGetWorkDetail.handler(input, ctx).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(McpError);
+    // Code preserved — NOT downgraded to fetch_failed/InternalError.
+    expect((error as McpError).code).toBe(JsonRpcErrorCode.ServiceUnavailable);
+
+    const data = (error as McpError).data as Record<string, unknown>;
+    expect(data).not.toHaveProperty('url');
+    expect(data).not.toHaveProperty('status');
+    expect(data).not.toHaveProperty('statusText');
+    expect(data).not.toHaveProperty('body');
+    expect(data.retryable).toBe(true);
+    expect((error as McpError).cause).toBeInstanceOf(Error);
+  });
+
+  it('wraps an unexpected (non-McpError) service failure as fetch_failed', async () => {
+    mockGetWorkDetails.mockRejectedValueOnce(new Error('Network timeout'));
+
+    const ctx = createMockContext({ errors: orcidGetWorkDetail.errors });
+    const input = orcidGetWorkDetail.input.parse({
+      orcid_id: '0000-0001-9161-999X',
+      put_codes: [215949386],
+    });
+    const error = await orcidGetWorkDetail.handler(input, ctx).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(McpError);
+    expect((error as McpError).code).toBe(JsonRpcErrorCode.InternalError);
+    const data = (error as McpError).data as { reason?: string; recovery?: { hint?: string } };
+    expect(data.reason).toBe('fetch_failed');
+    expect(data.recovery?.hint).toBeDefined();
+    // The original error is chained as cause for server-side debugging but never serialized.
+    expect((error as McpError).cause).toBeInstanceOf(Error);
+    expect(data).not.toHaveProperty('url');
+  });
+
+  it('wraps a non-NotFound McpError from the service as fetch_failed with fresh data', async () => {
+    mockGetWorkDetails.mockRejectedValueOnce(
+      new McpError(JsonRpcErrorCode.InternalError, 'Service unavailable', {
+        url: 'https://pub.orcid.org/v3.0/x/works/1',
+        status: 500,
+      }),
+    );
+
+    const ctx = createMockContext({ errors: orcidGetWorkDetail.errors });
+    const input = orcidGetWorkDetail.input.parse({
+      orcid_id: '0000-0001-9161-999X',
+      put_codes: [1],
+    });
+    const error = await orcidGetWorkDetail.handler(input, ctx).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(McpError);
+    const data = (error as McpError).data as { reason?: string };
+    expect(data.reason).toBe('fetch_failed');
+    // Even an McpError with a leaky data payload is re-wrapped with fresh, redacted data.
+    expect(data).not.toHaveProperty('url');
+    expect(data).not.toHaveProperty('status');
   });
 
   // ---------------------------------------------------------------------------

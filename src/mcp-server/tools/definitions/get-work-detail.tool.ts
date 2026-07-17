@@ -5,10 +5,10 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { orcidIdSchema } from '@/services/orcid/orcid-id.js';
 import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
-import type { WorkDetail } from '@/services/orcid/types.js';
+import type { BulkWorkResult, WorkDetail } from '@/services/orcid/types.js';
 
 const ExternalIdSchema = z
   .object({
@@ -109,6 +109,13 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
 
   errors: [
     {
+      reason: 'profile_not_found',
+      code: JsonRpcErrorCode.NotFound,
+      when: 'The ORCID iD does not correspond to a registered researcher.',
+      recovery:
+        'Verify the ORCID iD is correct and try orcid_search_researchers to find valid iDs.',
+    },
+    {
       reason: 'fetch_failed',
       code: JsonRpcErrorCode.InternalError,
       when: 'The ORCID bulk works endpoint returns an unexpected error.',
@@ -121,7 +128,44 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
     const bareId = normalizeOrcidId(input.orcid_id);
     ctx.log.info('orcid_get_work_detail', { orcidId: bareId, count: input.put_codes.length });
 
-    const results = await service.getWorkDetails(input.orcid_id, input.put_codes, ctx);
+    let results: BulkWorkResult[];
+    try {
+      results = await service.getWorkDetails(input.orcid_id, input.put_codes, ctx);
+    } catch (err) {
+      // A whole-request 404 means the ORCID iD itself does not resolve. A transient
+      // upstream failure (retries already exhausted in the service layer) keeps its
+      // original code so clients retain the retryable signal instead of seeing a
+      // downgraded InternalError. Anything else is a genuinely unexpected bulk failure.
+      // Every branch builds fresh message + data (never spreading the caught error's
+      // data), which is what redacts upstream transport details (url/status/statusText/
+      // body) from the client payload.
+      if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
+        throw ctx.fail('profile_not_found', `ORCID iD ${bareId} not found`, {
+          ...ctx.recoveryFor('profile_not_found'),
+        });
+      }
+      if (
+        err instanceof McpError &&
+        (err.code === JsonRpcErrorCode.ServiceUnavailable || err.code === JsonRpcErrorCode.Timeout)
+      ) {
+        const message =
+          err.code === JsonRpcErrorCode.Timeout
+            ? `ORCID bulk works endpoint timed out for ${bareId}.`
+            : `ORCID bulk works endpoint is unavailable for ${bareId}.`;
+        throw new McpError(
+          err.code,
+          message,
+          { ...(err.data?.retryable !== undefined && { retryable: err.data.retryable }) },
+          { cause: err },
+        );
+      }
+      throw ctx.fail(
+        'fetch_failed',
+        `ORCID bulk works endpoint failed for ${bareId}`,
+        { ...ctx.recoveryFor('fetch_failed') },
+        { cause: err },
+      );
+    }
 
     const works: WorkDetail[] = [];
     const errors: Array<{ putCode?: number; message: string }> = [];
