@@ -78,12 +78,14 @@ describe('security: injection attempts are forwarded as query strings, not execu
     await orcidResolveResearcher.handler(input, ctx);
 
     const [callParams] = mockExpandedSearch.mock.calls[0];
-    // The injected string is wrapped in a Solr field clause — no structural change to query building
+    // The injected string is wrapped in a Solr field clause, and its embedded quote is
+    // escaped, so the DELETE suffix stays inside the phrase literal rather than breaking out.
     expect(callParams.q).toContain('given-and-family-names:');
+    expect(callParams.q).toContain('given-and-family-names:"Jennifer Doudna\\";');
     expect(typeof callParams.q).toBe('string');
   });
 
-  it('resolve_researcher: injection in affiliation is phrase-quoted in Solr clause', async () => {
+  it('resolve_researcher: injection in affiliation is escaped inside the Solr phrase clause', async () => {
     // Primary returns nothing, so a relaxed pass fires — provide two responses.
     mockExpandedSearch
       .mockResolvedValueOnce({ numFound: 0, results: [] })
@@ -97,8 +99,10 @@ describe('security: injection attempts are forwarded as query strings, not execu
     await orcidResolveResearcher.handler(input, ctx);
 
     const [callParams] = mockExpandedSearch.mock.calls[0];
-    // Affiliation is always wrapped in double quotes in the Solr clause
-    expect(callParams.q).toContain('affiliation-org-name:"UC Berkeley" OR *:*"');
+    // The injected quote and operator chars are backslash-escaped inside the phrase, so the
+    // value cannot break out of its quotes into a structural `OR *:*` clause.
+    expect(callParams.q).toContain('affiliation-org-name:"UC Berkeley\\" OR \\*\\:\\*"');
+    expect(callParams.q).not.toContain('affiliation-org-name:"UC Berkeley" OR *:*"');
   });
 });
 

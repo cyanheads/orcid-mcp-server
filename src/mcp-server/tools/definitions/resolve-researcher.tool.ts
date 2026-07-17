@@ -7,7 +7,45 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { getOrcidService } from '@/services/orcid/orcid-service.js';
+import { escapeSolrValue } from '@/services/orcid/solr-query.js';
 import type { ExpandedSearchResult } from '@/services/orcid/types.js';
+
+/**
+ * Generic organization words that carry no disambiguating signal on their own. Filtered
+ * out of the input affiliation tokens before the distinctive-token match so a bare
+ * "university"/"institute" can't mark unrelated institutions as overlapping.
+ */
+const ORG_STOPWORDS = new Set([
+  'university',
+  'universities',
+  'institute',
+  'institutes',
+  'institution',
+  'institutions',
+  'college',
+  'colleges',
+  'school',
+  'schools',
+  'department',
+  'departments',
+  'dept',
+  'center',
+  'centre',
+  'centers',
+  'centres',
+  'laboratory',
+  'laboratories',
+  'lab',
+  'labs',
+  'hospital',
+  'hospitals',
+  'of',
+  'the',
+  'and',
+  'for',
+  'national',
+  'state',
+]);
 
 /** Name match type based on how well the result name matches input. */
 type NameMatchType = 'exact' | 'partial' | 'other-name' | 'none';
@@ -55,7 +93,8 @@ function computeInstitutionOverlap(
   const normalizeAff = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, '');
   const inputTokens = normalizeAff(inputAffiliation)
     .split(/\s+/)
-    .filter((t) => t.length > 3); // skip short tokens (of, the, etc.)
+    // Drop short tokens and generic org words — only distinctive tokens signal overlap.
+    .filter((t) => t.length > 3 && !ORG_STOPWORDS.has(t));
 
   return candidate.institutionNames.some((inst) => {
     const instNorm = normalizeAff(inst);
@@ -191,15 +230,32 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
       hasPmid: !!input.pmid,
     });
 
-    const anchorType: 'doi' | 'pmid' | 'none' = input.doi ? 'doi' : input.pmid ? 'pmid' : 'none';
+    // Model every supplied anchor as its own escaped clause, highest precedence first
+    // (DOI before PMID). The anchor-only fallback retries each independently so a valid
+    // anchor is never discarded when a wrong one zeroes out the combined query.
+    const anchorClauses: { type: 'doi' | 'pmid'; clause: string }[] = [];
+    if (input.doi?.trim()) {
+      anchorClauses.push({ type: 'doi', clause: `doi-self:${escapeSolrValue(input.doi.trim())}` });
+    }
+    if (input.pmid?.trim()) {
+      anchorClauses.push({
+        type: 'pmid',
+        clause: `pmid-self:${escapeSolrValue(input.pmid.trim())}`,
+      });
+    }
 
-    // Build primary query: name + optional anchor + optional affiliation
-    const primaryClauses: string[] = [];
-    primaryClauses.push(`given-and-family-names:"${input.name.trim()}"`);
-    if (input.doi?.trim()) primaryClauses.push(`doi-self:${input.doi.trim()}`);
-    if (input.pmid?.trim()) primaryClauses.push(`pmid-self:${input.pmid.trim()}`);
+    // Describes the anchor that produced the returned candidates. Starts at the highest-
+    // precedence supplied anchor (the one the combined query leads with) and is reassigned
+    // if a lower-precedence anchor-only fallback is what actually matched.
+    let anchorType: 'doi' | 'pmid' | 'none' = anchorClauses[0]?.type ?? 'none';
+
+    // Build primary query: name + every supplied anchor + optional affiliation
+    const primaryClauses: string[] = [
+      `given-and-family-names:"${escapeSolrValue(input.name.trim())}"`,
+      ...anchorClauses.map((a) => a.clause),
+    ];
     if (input.affiliation?.trim()) {
-      primaryClauses.push(`affiliation-org-name:"${input.affiliation.trim()}"`);
+      primaryClauses.push(`affiliation-org-name:"${escapeSolrValue(input.affiliation.trim())}"`);
     }
     const primaryQuery = primaryClauses.join(' AND ');
 
@@ -218,12 +274,18 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
       finalResponse = await service.expandedSearch({ q: relaxedQuery, rows: input.rows }, ctx);
     }
 
-    // Second relaxed pass: if DOI/PMID anchor + affiliation both failed, try just DOI/PMID anchor
-    if (finalResponse.numFound === 0 && anchorType !== 'none') {
-      const prefix = anchorType === 'doi' ? 'doi-self:' : 'pmid-self:';
-      const anchorOnly = primaryClauses.find((c) => c.startsWith(prefix)) ?? '';
-      relaxedQuery = anchorOnly;
-      finalResponse = await service.expandedSearch({ q: anchorOnly, rows: input.rows }, ctx);
+    // Anchor-only fallback: if the combined query (and its drop-affiliation relaxation)
+    // still found nothing, retry each supplied anchor on its own — DOI first, then PMID —
+    // and report the anchor that actually matched.
+    if (finalResponse.numFound === 0 && anchorClauses.length > 0) {
+      for (const anchor of anchorClauses) {
+        relaxedQuery = anchor.clause;
+        finalResponse = await service.expandedSearch({ q: anchor.clause, rows: input.rows }, ctx);
+        if (finalResponse.numFound > 0) {
+          anchorType = anchor.type;
+          break;
+        }
+      }
     }
 
     ctx.log.info('orcid_resolve_researcher completed', {

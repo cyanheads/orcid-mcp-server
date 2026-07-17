@@ -29,7 +29,8 @@ describe('orcidSearchResearchers — Solr clause building', () => {
     await orcidSearchResearchers.handler(input, ctx);
 
     const [callParams] = mockExpandedSearch.mock.calls[0];
-    expect(callParams.q).toBe('ror-org-id:"https://ror.org/01an7q238"');
+    // ROR colons and slashes are Solr-reserved — escaped inside the phrase quote.
+    expect(callParams.q).toBe('ror-org-id:"https\\:\\/\\/ror.org\\/01an7q238"');
   });
 
   it('builds doi-self clause for doi param', async () => {
@@ -42,7 +43,8 @@ describe('orcidSearchResearchers — Solr clause building', () => {
     await orcidSearchResearchers.handler(input, ctx);
 
     const [callParams] = mockExpandedSearch.mock.calls[0];
-    expect(callParams.q).toBe('doi-self:10.1126/science.1225829');
+    // DOI slash is Solr-reserved — escaped so the value stays a literal, not a regex.
+    expect(callParams.q).toBe('doi-self:10.1126\\/science.1225829');
   });
 
   it('builds pmid-self clause for pmid param', async () => {
@@ -229,5 +231,63 @@ describe('orcidSearchResearchers — input validation bounds', () => {
   it('defaults start to 0 when not provided', () => {
     const input = orcidSearchResearchers.input.parse({});
     expect(input.start).toBe(0);
+  });
+});
+
+describe('orcidSearchResearchers — Solr value escaping (#18)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('escapes an embedded quote in family_name so it cannot break the phrase', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+
+    const ctx = createMockContext();
+    const input = orcidSearchResearchers.input.parse({ family_name: 'O"Connor' });
+    await orcidSearchResearchers.handler(input, ctx);
+
+    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(callParams.q).toBe('family-name:"O\\"Connor"');
+  });
+
+  it('escapes a backslash in a structured value', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+
+    const ctx = createMockContext();
+    const input = orcidSearchResearchers.input.parse({ keyword: 'a\\b' });
+    await orcidSearchResearchers.handler(input, ctx);
+
+    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(callParams.q).toBe('keyword:"a\\\\b"');
+  });
+
+  it('escapes punctuation-heavy DOI reserved chars, leaving non-reserved chars intact', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+
+    const ctx = createMockContext();
+    const input = orcidSearchResearchers.input.parse({
+      doi: '10.1002/(SICI)1099-0844(199912)17:4<290::AID-CBF849>3.0.CO;2-P',
+    });
+    await orcidSearchResearchers.handler(input, ctx);
+
+    const [callParams] = mockExpandedSearch.mock.calls[0];
+    // Reserved chars (/ ( ) - :) escaped; non-reserved (< > ;) left literal.
+    expect(callParams.q).toBe(
+      'doi-self:10.1002\\/\\(SICI\\)1099\\-0844\\(199912\\)17\\:4<290\\:\\:AID\\-CBF849>3.0.CO;2\\-P',
+    );
+  });
+
+  it('leaves the raw query passthrough unescaped', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+
+    const ctx = createMockContext();
+    const input = orcidSearchResearchers.input.parse({
+      query: 'given-names:Jennifer AND (family-name:Doudna OR family-name:*)',
+    });
+    await orcidSearchResearchers.handler(input, ctx);
+
+    const [callParams] = mockExpandedSearch.mock.calls[0];
+    // The raw query field is forwarded verbatim — its Solr operators are intentional.
+    expect(callParams.q).toBe('given-names:Jennifer AND (family-name:Doudna OR family-name:*)');
   });
 });

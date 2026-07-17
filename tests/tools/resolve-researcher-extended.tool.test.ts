@@ -181,6 +181,110 @@ describe('orcidResolveResearcher — institution overlap scoring', () => {
 
     expect(result.candidates[0].institutionOverlap).toBe(true);
   });
+
+  it('ignores generic org stopwords so unrelated institutions do not falsely overlap (#20)', async () => {
+    // "University of California Berkeley" → distinctive tokens are california/berkeley;
+    // "university"/"of" are generic stopwords that must not signal overlap on their own.
+    mockExpandedSearch.mockResolvedValueOnce({
+      numFound: 3,
+      results: [
+        {
+          ...baseCandidate,
+          orcidId: '0000-0001-9522-8779',
+          institutionNames: ['University of Vermont'],
+        },
+        {
+          ...baseCandidate,
+          orcidId: '0000-0002-1111-2222',
+          institutionNames: ['Pennsylvania State University'],
+        },
+        {
+          ...baseCandidate,
+          orcidId: '0000-0003-3333-4444',
+          institutionNames: ['University of Washington'],
+        },
+      ],
+    });
+
+    const ctx = createMockContext();
+    const input = orcidResolveResearcher.input.parse({
+      name: 'Bob Smith',
+      affiliation: 'University of California Berkeley',
+      rows: 10,
+    });
+    const result = await orcidResolveResearcher.handler(input, ctx);
+
+    for (const candidate of result.candidates) {
+      expect(candidate.institutionOverlap).toBe(false);
+    }
+  });
+
+  it('still reports overlap on a distinctive token match after stopword filtering (#20)', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({
+      numFound: 1,
+      results: [{ ...baseCandidate, institutionNames: ['University of California Berkeley'] }],
+    });
+
+    const ctx = createMockContext();
+    const input = orcidResolveResearcher.input.parse({
+      name: 'Bob Smith',
+      affiliation: 'University of California Berkeley',
+      rows: 10,
+    });
+    const result = await orcidResolveResearcher.handler(input, ctx);
+
+    // 'california'/'berkeley' are distinctive and present in the candidate institution.
+    expect(result.candidates[0].institutionOverlap).toBe(true);
+  });
+});
+
+describe('orcidResolveResearcher — Solr value escaping (#18)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('escapes embedded quotes in the name phrase clause', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+
+    const ctx = createMockContext();
+    const input = orcidResolveResearcher.input.parse({ name: 'Jean "Bob" Smith' });
+    await orcidResolveResearcher.handler(input, ctx);
+
+    const [callParams] = mockExpandedSearch.mock.calls[0];
+    // Embedded quotes are escaped so they cannot break out of the phrase into a raw clause.
+    expect(callParams.q).toBe('given-and-family-names:"Jean \\"Bob\\" Smith"');
+  });
+
+  it('escapes reserved characters in the affiliation phrase clause', async () => {
+    // Primary (with affiliation) returns nothing, so a relaxed pass fires — two responses.
+    mockExpandedSearch
+      .mockResolvedValueOnce({ numFound: 0, results: [] })
+      .mockResolvedValueOnce({ numFound: 0, results: [] });
+
+    const ctx = createMockContext();
+    const input = orcidResolveResearcher.input.parse({
+      name: 'Jane Roe',
+      affiliation: 'Foo & Bar (Institute)',
+    });
+    await orcidResolveResearcher.handler(input, ctx);
+
+    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(callParams.q).toContain('affiliation-org-name:"Foo \\& Bar \\(Institute\\)"');
+  });
+
+  it('escapes the slash in a DOI anchor clause', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 1, results: [baseCandidate] });
+
+    const ctx = createMockContext();
+    const input = orcidResolveResearcher.input.parse({
+      name: 'Jennifer Doudna',
+      doi: '10.1126/science.1225829',
+    });
+    await orcidResolveResearcher.handler(input, ctx);
+
+    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(callParams.q).toContain('doi-self:10.1126\\/science.1225829');
+  });
 });
 
 describe('orcidResolveResearcher — empty-result notice content', () => {

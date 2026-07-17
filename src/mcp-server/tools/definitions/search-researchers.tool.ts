@@ -6,6 +6,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { getOrcidService } from '@/services/orcid/orcid-service.js';
+import { escapeSolrValue } from '@/services/orcid/solr-query.js';
 
 /** Build a Solr query string from structured search parameters. */
 function buildSolrQuery(input: {
@@ -20,27 +21,29 @@ function buildSolrQuery(input: {
 }): string {
   const clauses: string[] = [];
 
+  // Every structured value is escaped so reserved characters (quotes, DOI punctuation,
+  // ROR colons/slashes) stay literal and cannot break out of their clause or malform the
+  // upstream request. The raw `query` passthrough below is deliberately left unescaped.
   if (input.given_name?.trim()) {
-    clauses.push(`given-names:"${input.given_name.trim()}"`);
+    clauses.push(`given-names:"${escapeSolrValue(input.given_name.trim())}"`);
   }
   if (input.family_name?.trim()) {
-    clauses.push(`family-name:"${input.family_name.trim()}"`);
+    clauses.push(`family-name:"${escapeSolrValue(input.family_name.trim())}"`);
   }
   if (input.affiliation?.trim()) {
-    clauses.push(`affiliation-org-name:"${input.affiliation.trim()}"`);
+    clauses.push(`affiliation-org-name:"${escapeSolrValue(input.affiliation.trim())}"`);
   }
   if (input.keyword?.trim()) {
-    clauses.push(`keyword:"${input.keyword.trim()}"`);
+    clauses.push(`keyword:"${escapeSolrValue(input.keyword.trim())}"`);
   }
   if (input.ror_id?.trim()) {
-    // ROR IDs contain colons and must be quoted in Solr
-    clauses.push(`ror-org-id:"${input.ror_id.trim()}"`);
+    clauses.push(`ror-org-id:"${escapeSolrValue(input.ror_id.trim())}"`);
   }
   if (input.doi?.trim()) {
-    clauses.push(`doi-self:${input.doi.trim()}`);
+    clauses.push(`doi-self:${escapeSolrValue(input.doi.trim())}`);
   }
   if (input.pmid?.trim()) {
-    clauses.push(`pmid-self:${input.pmid.trim()}`);
+    clauses.push(`pmid-self:${escapeSolrValue(input.pmid.trim())}`);
   }
   if (input.query?.trim()) {
     clauses.push(input.query.trim());

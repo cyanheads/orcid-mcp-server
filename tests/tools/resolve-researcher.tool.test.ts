@@ -80,7 +80,8 @@ describe('orcidResolveResearcher', () => {
     const enrichment = getEnrichment(ctx);
 
     expect(result.candidates[0].anchorType).toBe('doi');
-    expect(enrichment.queryUsed).toContain('doi-self:10.1126/science.1225829');
+    // DOI slash is Solr-reserved, so the executed clause carries the escaped form.
+    expect(enrichment.queryUsed).toContain('doi-self:10.1126\\/science.1225829');
   });
 
   it('falls back to relaxed query when primary returns nothing and affiliation provided', async () => {
@@ -116,7 +117,7 @@ describe('orcidResolveResearcher', () => {
     await orcidResolveResearcher.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
 
-    expect(enrichment.relaxedQuery).toBe('doi-self:10.1126/science.1225829');
+    expect(enrichment.relaxedQuery).toBe('doi-self:10.1126\\/science.1225829');
   });
 
   it('adds notice enrichment when no candidates found and returns empty list', async () => {
@@ -294,14 +295,69 @@ describe('orcidResolveResearcher — count/query pairing (#15)', () => {
     // Three upstream calls: primary, drop-affiliation, anchor-only.
     expect(mockExpandedSearch).toHaveBeenCalledTimes(3);
 
-    // Effective query is the anchor-only stage that finally matched.
-    expect(enrichment.queryUsed).toBe('doi-self:10.1126/science.1225829');
+    // Effective query is the anchor-only stage that finally matched (DOI slash escaped).
+    expect(enrichment.queryUsed).toBe('doi-self:10.1126\\/science.1225829');
     expect(enrichment.queryUsed).toBe(enrichment.relaxedQuery);
     expect(enrichment.totalFound).toBe(4); // from the anchor-only response
 
     // primaryQuery still describes the fully-constrained first attempt.
     expect(enrichment.primaryQuery).toContain('affiliation-org-name:');
-    expect(enrichment.primaryQuery).toContain('doi-self:10.1126/science.1225829');
+    expect(enrichment.primaryQuery).toContain('doi-self:10.1126\\/science.1225829');
     expect(enrichment.primaryTotalFound).toBe(0);
+  });
+});
+
+describe('orcidResolveResearcher — dual DOI+PMID anchor fallback (#19)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('recovers via the PMID anchor when a wrong DOI zeroes the combined query', async () => {
+    // Stage 0 combined (name AND doi AND pmid) → 0 because the DOI is wrong.
+    // Stage 1 anchor-only DOI → 0 (still the wrong DOI).
+    // Stage 2 anchor-only PMID → 1 (the valid PMID) — must NOT be discarded.
+    mockExpandedSearch
+      .mockResolvedValueOnce({ numFound: 0, results: [] })
+      .mockResolvedValueOnce({ numFound: 0, results: [] })
+      .mockResolvedValueOnce({ numFound: 1, results: [doudnaResult] });
+
+    const ctx = createMockContext();
+    const input = orcidResolveResearcher.input.parse({
+      name: 'Jennifer Doudna',
+      doi: '10.0000/not-real',
+      pmid: '41961593',
+      rows: 3,
+    });
+    const result = await orcidResolveResearcher.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
+
+    // Three upstream calls: combined primary, DOI-only, PMID-only.
+    expect(mockExpandedSearch).toHaveBeenCalledTimes(3);
+    // The valid PMID anchor produced the candidate and is reported as the anchor used.
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0].anchorType).toBe('pmid');
+    expect(enrichment.queryUsed).toBe('pmid-self:41961593');
+    expect(enrichment.relaxedQuery).toBe('pmid-self:41961593');
+  });
+
+  it('prefers the DOI anchor and never tries PMID when the DOI matches', async () => {
+    // Stage 0 combined (name AND doi AND pmid) → 0 because the PMID is wrong.
+    // Stage 1 anchor-only DOI → matches, so the PMID clause is never queried.
+    mockExpandedSearch
+      .mockResolvedValueOnce({ numFound: 0, results: [] })
+      .mockResolvedValueOnce({ numFound: 2, results: [doudnaResult] });
+
+    const ctx = createMockContext();
+    const input = orcidResolveResearcher.input.parse({
+      name: 'Jennifer Doudna',
+      doi: '10.1126/science.1225829',
+      pmid: '00000000',
+    });
+    const result = await orcidResolveResearcher.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
+
+    expect(mockExpandedSearch).toHaveBeenCalledTimes(2); // combined, DOI-only (PMID skipped)
+    expect(result.candidates[0].anchorType).toBe('doi');
+    expect(enrichment.relaxedQuery).toBe('doi-self:10.1126\\/science.1225829');
   });
 });

@@ -84,7 +84,7 @@ export class OrcidService {
   private headers(): Record<string, string> {
     return {
       Accept: 'application/json',
-      'User-Agent': 'orcid-mcp-server/0.1.3 (https://github.com/cyanheads/orcid-mcp-server)',
+      'User-Agent': 'orcid-mcp-server/0.2.9 (https://github.com/cyanheads/orcid-mcp-server)',
     };
   }
 
@@ -112,7 +112,13 @@ export class OrcidService {
           signal,
         });
         if (!response.ok) {
-          throw await httpErrorFromResponse(response, { service: 'ORCID', data: { url } });
+          // captureBody: false — ORCID's Solr error body echoes its internal Solr host
+          // and Java exception classes; keep that upstream diagnostic text off the wire.
+          throw await httpErrorFromResponse(response, {
+            service: 'ORCID',
+            data: { url },
+            captureBody: false,
+          });
         }
         const text = await response.text();
         this.assertNotHtml(text, url);

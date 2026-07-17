@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.9](changelog/0.2.x/0.2.9.md) — 2026-07-16 · 🛡️ Security
+
+Solr reserved-character escaping closes a query-injection and upstream-500 gap in both search tools (#18); orcid_resolve_researcher gains a DOI/PMID dual-anchor fallback (#19) and filters generic institution stopwords from overlap matching (#20).
+
 ## [0.2.8](changelog/0.2.x/0.2.8.md) — 2026-07-13
 
 orcid_resolve_researcher pairs queryUsed/totalFound with the query that actually produced them, adding primaryQuery/primaryTotalFound for audit trail (#15); docs/design.md reconciled to the 9-tool surface (#17).

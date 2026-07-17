@@ -148,6 +148,10 @@ The handler scores candidates by: exact name match weight, affiliation string ov
 
 **`ror-org-id` values must be quoted in Solr queries.** ROR IDs are full URLs (`https://ror.org/XXXXXXX`) containing colons, which break bare Solr field queries. The handler must URL-encode or quote the value: `ror-org-id:"https://ror.org/00f54p054"`. The `ror_id` input parameter accepts the raw URL; quoting is handled internally.
 
+**Structured Solr values are escaped, not just quoted.** Quoting alone is insufficient — an embedded quote or backslash still breaks phrase scoping, and unquoted punctuation-heavy DOIs (`10.1002/(SICI)…17:4<290::…`) produce an upstream Solr 500. Both query builders (`search-researchers`, `resolve-researcher`) route every structured value through a single shared `escapeSolrValue` (`src/services/orcid/solr-query.ts`) that backslash-escapes the Lucene reserved set (`\ + - ! ( ) { } [ ] ^ " ~ * ? : | & /`). A universal escaper — applied to every value, quoted or not — is simpler and safer than tracking which fields are quoted; escaping a character that is already literal inside a phrase quote was verified against the live API to be a no-op (identical result count and status). The raw `query` passthrough on `orcid_search_researchers` is deliberately left unescaped so callers can supply intentional Solr operators.
+
+**Upstream Solr error bodies stay off the wire.** ORCID's Solr error responses echo its internal Solr host and Java exception class names. The shared fetch path throws with `captureBody: false` so that upstream body is never forwarded into client-visible `error.data` — only the request URL, status, and status text remain.
+
 ---
 
 ## Known Limitations
