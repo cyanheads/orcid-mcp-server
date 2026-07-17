@@ -24,7 +24,7 @@ const MAX_WORKS = 25;
 export const researcherWorksResource = resource('orcid://researcher/{orcid_id}/works', {
   name: 'orcid-researcher-works',
   description:
-    "Works list for an ORCID researcher: titles, types, publication dates, journal names, and external identifiers (DOIs, PMIDs, arXiv IDs). Use when providing a researcher's publication list as background context, e.g., before asking an LLM to summarize a body of work. Returns the first 25 works plus workCount (the total available) — call the orcid_get_works tool to page through the full list or filter results. DOIs and PMIDs in the response are ready for Crossref or PubMed chaining. Prefer the orcid_get_works tool when filtering or processing results is needed.",
+    "Works list for an ORCID researcher: titles, types, publication dates, journal names, and external identifiers (DOIs, PMIDs, arXiv IDs). Use when providing a researcher's publication list as background context for summarizing or reviewing a body of work. Returns the first 25 works plus workCount (the total available) — call the orcid_get_works tool to page through the full list or filter results. DOIs and PMIDs in the response are ready for Crossref or PubMed chaining. Prefer the orcid_get_works tool when filtering or processing results is needed.",
   mimeType: 'application/json',
 
   params: z.object({

@@ -82,7 +82,7 @@ const WorkErrorSchema = z
 export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
   title: 'Get ORCID Work Details (Bulk)',
   description:
-    'Fetch full detail records for 1–100 works by their put-codes in a single request. Put-codes are returned by orcid_get_works in the put_code field of each work entry. Returns the abstract (short-description), all contributors with CRediT roles, the complete external ID list (DOI, PMID, arXiv, ISBN, etc.), citation metadata (BibTeX or other formats when provided), journal title, and URL for each work. Per-record errors (not-found or inaccessible put-codes) are surfaced as error entries rather than failing the whole call.',
+    'Fetch full detail records for 1–100 works by their put-codes in a single request. Put-codes are returned by orcid_get_works in the putCode field of each work entry. Returns the abstract (short-description), all contributors with CRediT roles, the complete external ID list (DOI, PMID, arXiv, ISBN, etc.), citation metadata (BibTeX or other formats when provided), journal title, and URL for each work. Per-record errors (not-found or inaccessible put-codes) are surfaced as error entries rather than failing the whole call.',
   annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
 
   input: z.object({
@@ -92,7 +92,7 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
       .min(1)
       .max(100)
       .describe(
-        'Array of 1–100 work put-codes to fetch. Put-codes are available in the put_code field returned by orcid_get_works.',
+        'Array of 1–100 work put-codes to fetch. Put-codes are available in the putCode field returned by orcid_get_works.',
       ),
   }),
 

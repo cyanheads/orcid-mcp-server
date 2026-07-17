@@ -105,7 +105,7 @@ function computeInstitutionOverlap(
 export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
   title: 'Resolve ORCID Researcher',
   description:
-    'Disambiguate an author name to a verified ORCID iD. Returns up to 5 ranked candidates with transparent disambiguation signals: name match type (exact/partial/other-name/none), institution overlap flag, and whether a DOI or PMID anchor was used in the query. A DOI or PMID anchor is near-deterministic — it filters to researchers who have linked that specific work to their ORCID record. Use this tool (not orcid_search_researchers) when the input is an ambiguous name that needs ranked disambiguation. No synthetic scores are used — raw signals only.',
+    'Disambiguate an author name to a verified ORCID iD. Returns ranked candidates (5 by default, up to 20 via the rows parameter) with transparent disambiguation signals: name match type (exact/partial/other-name/none), institution overlap flag, and whether a DOI or PMID anchor was used in the query. A DOI or PMID anchor is near-deterministic — it filters to researchers who have linked that specific work to their ORCID record. Use this tool (not orcid_search_researchers) when the input is an ambiguous name that needs ranked disambiguation. No synthetic scores are used — raw signals only.',
   annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
