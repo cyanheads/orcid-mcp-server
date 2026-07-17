@@ -54,6 +54,7 @@ describe('researcherProfileResource', () => {
     expect(result.creditName).toBe('Jennifer A. Doudna');
     expect(result.biography).toBe('Biochemist at UC Berkeley.');
     expect(result.keywords).toEqual(['CRISPR']);
+    expect(result.researcherUrls).toEqual([{ name: 'Lab', url: 'https://doudnalab.org' }]);
     expect(result.externalIdentifiers).toHaveLength(1);
     expect(result.externalIdentifiers[0].type).toBe('Scopus Author ID');
     expect(result.externalIdentifiers[0].value).toBe('6603342255');
@@ -167,6 +168,7 @@ describe('researcherProfileResource', () => {
     const result = await researcherProfileResource.handler(params, ctx);
     expect(result.creditName).toBe('Anonymous Researcher');
     expect(result.givenNames).toBeUndefined();
+    expect(result.researcherUrls).toEqual([]);
   });
 
   it('does not include externalIdentifier relationship in output (not in resource schema)', async () => {

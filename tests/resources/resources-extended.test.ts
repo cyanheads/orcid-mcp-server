@@ -137,6 +137,30 @@ describe('researcherProfileResource — output', () => {
 
     expect(result.keywords).toEqual(['CRISPR', 'RNA Biology', 'Genome Editing']);
   });
+
+  it('returns researcherUrls when present, preserving name-optional entries', async () => {
+    mockGetPerson.mockResolvedValueOnce({
+      givenNames: 'Jennifer',
+      familyName: 'Doudna',
+      keywords: [],
+      researcherUrls: [
+        { name: 'Lab', url: 'https://doudnalab.org' },
+        { url: 'https://example.org/no-name' },
+      ],
+      externalIdentifiers: [],
+      emails: [],
+      countries: [],
+    });
+
+    const ctx = createMockContext({ tenantId: 'test-tenant' });
+    const params = researcherProfileResource.params.parse({ orcid_id: '0000-0002-1825-0097' });
+    const result = await researcherProfileResource.handler(params, ctx);
+
+    expect(result.researcherUrls).toEqual([
+      { name: 'Lab', url: 'https://doudnalab.org' },
+      { url: 'https://example.org/no-name' },
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------

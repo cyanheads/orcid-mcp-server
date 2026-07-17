@@ -29,6 +29,16 @@ export const researcherProfileResource = resource('orcid://researcher/{orcid_id}
     creditName: z.string().optional().describe('Published credit name, if set.'),
     biography: z.string().optional().describe('Researcher biography, if publicly visible.'),
     keywords: z.array(z.string().describe('Keyword.')).describe('Research keywords.'),
+    researcherUrls: z
+      .array(
+        z
+          .object({
+            name: z.string().optional().describe('Label for this URL.'),
+            url: z.string().describe('URL value.'),
+          })
+          .describe('Researcher URL entry.'),
+      )
+      .describe('Researcher-provided URLs (personal site, lab page, blog, etc.).'),
     externalIdentifiers: z
       .array(
         z
@@ -85,6 +95,7 @@ export const researcherProfileResource = resource('orcid://researcher/{orcid_id}
       ...(person.creditName && { creditName: person.creditName }),
       ...(person.biography && { biography: person.biography }),
       keywords: person.keywords,
+      researcherUrls: person.researcherUrls,
       externalIdentifiers: person.externalIdentifiers.map((id) => ({
         type: id.type,
         value: id.value,
