@@ -176,4 +176,103 @@ describe('orcidSearchResearchers', () => {
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('No results');
   });
+
+  // #23 — disclosure of the ORCID Public API 10,000-offset retrieval ceiling.
+  const stubResults = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      orcidId: `0000-0000-0000-${String(i).padStart(4, '0')}`,
+      otherNames: [] as string[],
+      emails: [] as string[],
+      institutionNames: [] as string[],
+    }));
+
+  it('sets truncated false and omits nextStart when all matches fit below the cap', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 2, results: stubResults(2) });
+
+    const ctx = createMockContext();
+    const input = orcidSearchResearchers.input.parse({ family_name: 'Doudna', rows: 20, start: 0 });
+    const result = await orcidSearchResearchers.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
+
+    expect(enrichment.truncated).toBe(false);
+    expect(result.nextStart).toBeUndefined();
+    expect(enrichment.notice).toBeUndefined();
+  });
+
+  it('emits nextStart when more matches remain below the cap', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 100, results: stubResults(20) });
+
+    const ctx = createMockContext();
+    const input = orcidSearchResearchers.input.parse({ family_name: 'Smith', rows: 20, start: 0 });
+    const result = await orcidSearchResearchers.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
+
+    expect(result.nextStart).toBe(20);
+    expect(enrichment.truncated).toBe(false);
+    expect(enrichment.notice).toBeUndefined();
+  });
+
+  it('flags truncated with a ceiling notice and a still-reachable nextStart when numFound exceeds 10,000', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 24043, results: stubResults(20) });
+
+    const ctx = createMockContext();
+    const input = orcidSearchResearchers.input.parse({ family_name: 'Smith', rows: 20, start: 0 });
+    const result = await orcidSearchResearchers.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
+
+    expect(enrichment.truncated).toBe(true);
+    expect(enrichment.notice).toBeDefined();
+    expect(enrichment.notice).toContain('10,000');
+    expect(enrichment.notice).toMatch(/narrow|partition/i);
+    // Below the ceiling, the next page is still reachable.
+    expect(result.nextStart).toBe(20);
+  });
+
+  it('keeps truncated true but omits nextStart on the final reachable page at start 10,000', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 24043, results: stubResults(20) });
+
+    const ctx = createMockContext();
+    const input = orcidSearchResearchers.input.parse({
+      family_name: 'Smith',
+      rows: 20,
+      start: 10000,
+    });
+    const result = await orcidSearchResearchers.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
+
+    expect(enrichment.truncated).toBe(true);
+    expect(result.start).toBe(10000);
+    expect(result.nextStart).toBeUndefined();
+    expect(enrichment.notice).toBeDefined();
+    expect(enrichment.notice).toContain('10,000');
+  });
+
+  it('offers nextStart at the inclusive 10,000 boundary when it is the last legal page', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 24043, results: stubResults(20) });
+
+    const ctx = createMockContext();
+    const input = orcidSearchResearchers.input.parse({
+      family_name: 'Smith',
+      rows: 20,
+      start: 9980,
+    });
+    const result = await orcidSearchResearchers.handler(input, ctx);
+
+    // endStart = 9980 + 20 = 10000 → inclusive boundary, still the last reachable page.
+    expect(result.nextStart).toBe(10000);
+  });
+
+  it('renders Next Start in the content trailer when nextStart is present', () => {
+    const output = orcidSearchResearchers.output.parse({
+      results: [],
+      rows: 20,
+      start: 0,
+      nextStart: 20,
+    });
+
+    const blocks = orcidSearchResearchers.format!(output);
+    const text = (blocks[0] as { text: string }).text;
+    expect(text).toContain('Next Start');
+    expect(text).toContain('20');
+  });
 });

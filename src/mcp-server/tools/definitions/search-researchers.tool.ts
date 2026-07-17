@@ -123,13 +123,19 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
               .describe('Other names listed on the ORCID record.'),
             institutionNames: z
               .array(z.string().describe('Institution name.'))
-              .describe('Affiliated institution names returned by expanded-search.'),
+              .describe('Affiliated institution names returned inline with each search result.'),
           })
           .describe('Expanded search result for one researcher.'),
       )
       .describe('Matching researchers with inline name and institution data.'),
     rows: z.number().describe('Number of results returned in this response.'),
     start: z.number().describe('Pagination offset used for this response.'),
+    nextStart: z
+      .number()
+      .optional()
+      .describe(
+        'Offset to pass as start on the next call to continue paging. Present only when more matches remain below the ORCID Public API 10,000-offset ceiling; omitted at the final reachable page and when this response already includes the last match.',
+      ),
   }),
 
   // Agent-facing context: the query the API received, total match count, and empty-result
@@ -137,17 +143,23 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
   enrichment: {
     effectiveQuery: z.string().describe('Solr query sent to the ORCID API.'),
     numFound: z.number().describe('Total number of matching records in ORCID (before pagination).'),
+    truncated: z
+      .boolean()
+      .describe(
+        "True when numFound exceeds the ORCID Public API's 10,000-offset retrieval ceiling, so some matches cannot be paged to with the current query. Narrow or partition the query to reach them.",
+      ),
     notice: z
       .string()
       .optional()
       .describe(
-        'Recovery hint when results are empty or pagination overshoots the total. Absent on successful pages.',
+        'Recovery hint when results are empty, pagination overshoots the total, or matches exceed the 10,000-offset ceiling. Absent on fully retrievable pages.',
       ),
   },
 
   enrichmentTrailer: {
     effectiveQuery: { label: 'Effective Query' },
     numFound: { label: 'Total Found' },
+    truncated: { label: 'Truncated' },
   },
 
   async handler(input, ctx) {
@@ -170,19 +182,30 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
       returned: response.results.length,
     });
 
-    ctx.enrich({ effectiveQuery, numFound: response.numFound });
+    const numFound = response.numFound;
+    const returned = response.results.length;
+    // numFound above the public API's 10,000-offset ceiling means some matches can never
+    // be paged to with the current query — a corpus-level truncation, distinct from a
+    // per-page row cap.
+    const truncated = numFound > 10000;
+    // Next legal offset: just past the last returned result. Offered only while another
+    // page both holds more matches and stays within the 10,000-offset ceiling.
+    const endStart = input.start + returned;
+    const hasNextPage = endStart < numFound && endStart <= 10000;
 
-    if (response.numFound === 0) {
+    ctx.enrich({ effectiveQuery, numFound, truncated });
+
+    if (numFound === 0) {
       ctx.enrich.notice(
         'No results found. Try fewer constraints, verify spelling, or use the query field with Solr syntax.',
       );
-    } else if (
-      response.results.length === 0 &&
-      input.start > 0 &&
-      input.start >= response.numFound
-    ) {
+    } else if (returned === 0 && input.start > 0 && input.start >= numFound) {
       ctx.enrich.notice(
-        `Offset ${input.start} exceeds numFound (${response.numFound}). Reduce start to page through results.`,
+        `Offset ${input.start} exceeds numFound (${numFound}). Reduce start to page through results.`,
+      );
+    } else if (truncated) {
+      ctx.enrich.notice(
+        `ORCID reports ${numFound.toLocaleString('en-US')} matches, but the public API cannot page beyond offset 10,000. Narrow or partition the query with additional structured fields or raw Solr constraints to retrieve the remaining records.`,
       );
     }
 
@@ -196,8 +219,9 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
         otherNames: r.otherNames,
         institutionNames: r.institutionNames,
       })),
-      rows: response.results.length,
+      rows: returned,
       start: input.start,
+      ...(hasNextPage && { nextStart: endStart }),
     };
   },
 
@@ -206,6 +230,9 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
       `## ORCID Search Results`,
       `**Returned:** ${result.rows} | **Offset:** ${result.start}`,
     ];
+    if (result.nextStart != null) {
+      lines.push(`**Next Start:** ${result.nextStart}`);
+    }
 
     if (result.results.length === 0) {
       lines.push('', 'No results.');
