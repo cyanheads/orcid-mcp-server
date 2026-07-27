@@ -4,6 +4,7 @@
  * @module tests/tools/search-researchers-extended.tool.test
  */
 
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidSearchResearchers } from '@/mcp-server/tools/definitions/search-researchers.tool.js';
@@ -289,5 +290,52 @@ describe('orcidSearchResearchers — Solr value escaping (#18)', () => {
     const [callParams] = mockExpandedSearch.mock.calls[0];
     // The raw query field is forwarded verbatim — its Solr operators are intentional.
     expect(callParams.q).toBe('given-names:Jennifer AND (family-name:Doudna OR family-name:*)');
+  });
+});
+
+describe('orcidSearchResearchers — query_failed contract (#31)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('carries reason and a recovery hint naming the query field on a non-transient failure', async () => {
+    // ORCID answers malformed raw Solr with a 500, which maps to InternalError.
+    mockExpandedSearch.mockRejectedValueOnce(
+      new McpError(
+        JsonRpcErrorCode.InternalError,
+        'ORCID returned HTTP 500 Internal Server Error.',
+      ),
+    );
+
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
+    const input = orcidSearchResearchers.input.parse({ query: 'family-name:[unclosed' });
+    const err = (await orcidSearchResearchers
+      .handler(input, ctx)
+      .catch((e: unknown) => e)) as McpError;
+
+    expect(err).toBeInstanceOf(McpError);
+    expect(err.code).toBe(JsonRpcErrorCode.InvalidParams);
+    const data = err.data as Record<string, unknown>;
+    expect(data.reason).toBe('query_failed');
+    expect((data.recovery as { hint: string }).hint).toContain('query');
+    // The submitted query is echoed so the agent can see what it sent.
+    expect(err.message).toContain('family-name:[unclosed');
+    // Never the upstream endpoint.
+    expect(JSON.stringify(data)).not.toContain('orcid.org');
+  });
+
+  it('rethrows a transient upstream failure unchanged so the retryable signal survives', async () => {
+    const upstream = new McpError(
+      JsonRpcErrorCode.ServiceUnavailable,
+      'ORCID returned HTTP 503 Service Unavailable.',
+      { status: 503, retryAfter: '30' },
+    );
+    mockExpandedSearch.mockRejectedValueOnce(upstream);
+
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
+    const input = orcidSearchResearchers.input.parse({ family_name: 'Doudna' });
+    const err = await orcidSearchResearchers.handler(input, ctx).catch((e: unknown) => e);
+
+    expect(err).toBe(upstream);
   });
 });

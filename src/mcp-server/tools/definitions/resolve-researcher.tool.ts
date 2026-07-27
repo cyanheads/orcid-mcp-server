@@ -6,14 +6,15 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { getOrcidService } from '@/services/orcid/orcid-service.js';
 import { escapeSolrValue } from '@/services/orcid/solr-query.js';
 import type { ExpandedSearchResult } from '@/services/orcid/types.js';
 
 /**
- * Generic organization words that carry no disambiguating signal on their own. Filtered
- * out of the input affiliation tokens before the distinctive-token match so a bare
- * "university"/"institute" can't mark unrelated institutions as overlapping.
+ * Generic organization words that carry no disambiguating signal on their own. A name — or
+ * a matched run — made of nothing but these words can't establish institution overlap, so
+ * a bare "university"/"institute" never marks unrelated institutions as overlapping (#20).
  */
 const ORG_STOPWORDS = new Set([
   'university',
@@ -85,21 +86,61 @@ function computeNameMatch(candidate: ExpandedSearchResult, inputName: string): N
   return 'none';
 }
 
+/**
+ * Content words of an institution name, in order. Tokens of 3 characters or fewer carry
+ * too little identity to match on. Generic org words are deliberately *kept* — they
+ * position the distinctive words within the name, which is what separates
+ * "University of Washington" from "Washington University".
+ */
+function contentTokens(name: string): string[] {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(' ')
+    .filter((t) => t.length > 3);
+}
+
+/**
+ * True when the shorter content-word sequence appears as a contiguous run inside the
+ * longer one, and that run carries at least one non-generic word.
+ *
+ * Requiring the whole of one name to appear inside the other is what closes #27: a single
+ * shared proper noun ("washington") no longer matches wherever it happens to appear, since
+ * "university of washington" is not a contiguous run of "george washington university".
+ * Abbreviated forms still match, because the abbreviation's content words are a run of the
+ * full name ("UC Berkeley" → "University of California, Berkeley").
+ *
+ * Known residual: a name that is a genuine prefix or suffix of a different institution's
+ * name still matches — "Washington University" is a contiguous run of "George Washington
+ * University". Anchoring the run (rejecting a match preceded by another content word)
+ * would close it, but would also reject "UC Berkeley" against "University of California,
+ * Berkeley" and "Genomics Institute" against "Innovative Genomics Institute", which are
+ * both correct matches. The narrower false positive is the better trade.
+ */
+function sharesWholeRun(a: string[], b: string[]): boolean {
+  const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
+  if (shorter.length === 0) return false;
+  // A run of nothing but generic org words ("institute", "university") is not a signal.
+  if (!shorter.some((t) => !ORG_STOPWORDS.has(t))) return false;
+
+  for (let i = 0; i + shorter.length <= longer.length; i++) {
+    if (shorter.every((t, j) => longer[i + j] === t)) return true;
+  }
+  return false;
+}
+
 function computeInstitutionOverlap(
   candidate: ExpandedSearchResult,
   inputAffiliation: string | undefined,
 ): boolean {
   if (!inputAffiliation?.trim()) return false;
-  const normalizeAff = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, '');
-  const inputTokens = normalizeAff(inputAffiliation)
-    .split(/\s+/)
-    // Drop short tokens and generic org words — only distinctive tokens signal overlap.
-    .filter((t) => t.length > 3 && !ORG_STOPWORDS.has(t));
+  const inputTokens = contentTokens(inputAffiliation);
+  // An affiliation of nothing but generic org words carries no disambiguating signal (#20).
+  if (!inputTokens.some((t) => !ORG_STOPWORDS.has(t))) return false;
 
-  return candidate.institutionNames.some((inst) => {
-    const instNorm = normalizeAff(inst);
-    return inputTokens.some((t) => instNorm.includes(t));
-  });
+  return candidate.institutionNames.some((inst) =>
+    sharesWholeRun(inputTokens, contentTokens(inst)),
+  );
 }
 
 export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
@@ -163,7 +204,7 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
             institutionOverlap: z
               .boolean()
               .describe(
-                "True when at least one of the candidate's institutions matches tokens from the provided affiliation parameter.",
+                "True when the provided affiliation and one of the candidate's institutions are the same name, or one appears inside the other as a contiguous run of words (so an abbreviated form still matches its full name). A single shared word such as a city or surname is not enough.",
               ),
             anchorType: z
               .enum(['doi', 'pmid', 'none'])
@@ -175,6 +216,16 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
       )
       .describe('Ranked candidates, ordered by name match quality then institution overlap.'),
   }),
+
+  errors: [
+    {
+      reason: 'query_failed',
+      code: JsonRpcErrorCode.InvalidParams,
+      when: 'ORCID rejects a search built from the supplied name, affiliation, or identifier anchor.',
+      recovery:
+        'Check name for stray punctuation and verify doi or pmid is a real identifier, then retry with affiliation omitted.',
+    },
+  ],
 
   // Agent-facing context: the queries used, total match count, and empty-result guidance.
   // Reaches both structuredContent and content[] without a format() entry.
@@ -230,6 +281,31 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
       hasPmid: !!input.pmid,
     });
 
+    // Every search stage (primary, affiliation-relaxed, anchor-only) goes through here so
+    // an upstream rejection carries the contract's recovery hint no matter which one fired.
+    // Transient conditions keep their original code so the client retains the retryable
+    // signal — the service layer has already exhausted its retry budget.
+    const search = async (q: string) => {
+      try {
+        return await service.expandedSearch({ q, rows: input.rows }, ctx);
+      } catch (err) {
+        if (
+          err instanceof McpError &&
+          (err.code === JsonRpcErrorCode.ServiceUnavailable ||
+            err.code === JsonRpcErrorCode.Timeout ||
+            err.code === JsonRpcErrorCode.RateLimited)
+        ) {
+          throw err;
+        }
+        throw ctx.fail(
+          'query_failed',
+          `ORCID could not complete the search for query: ${q}`,
+          { ...ctx.recoveryFor('query_failed') },
+          { cause: err },
+        );
+      }
+    };
+
     // Model every supplied anchor as its own escaped clause, highest precedence first
     // (DOI before PMID). The anchor-only fallback retries each independently so a valid
     // anchor is never discarded when a wrong one zeroes out the combined query.
@@ -259,10 +335,7 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
     }
     const primaryQuery = primaryClauses.join(' AND ');
 
-    const primaryResponse = await service.expandedSearch(
-      { q: primaryQuery, rows: input.rows },
-      ctx,
-    );
+    const primaryResponse = await search(primaryQuery);
 
     let relaxedQuery: string | undefined;
     let finalResponse = primaryResponse;
@@ -271,7 +344,7 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
     if (primaryResponse.numFound === 0 && input.affiliation?.trim()) {
       const relaxedClauses = primaryClauses.filter((c) => !c.startsWith('affiliation-org-name:'));
       relaxedQuery = relaxedClauses.join(' AND ');
-      finalResponse = await service.expandedSearch({ q: relaxedQuery, rows: input.rows }, ctx);
+      finalResponse = await search(relaxedQuery);
     }
 
     // Anchor-only fallback: if the combined query (and its drop-affiliation relaxation)
@@ -280,7 +353,7 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
     if (finalResponse.numFound === 0 && anchorClauses.length > 0) {
       for (const anchor of anchorClauses) {
         relaxedQuery = anchor.clause;
-        finalResponse = await service.expandedSearch({ q: anchor.clause, rows: input.rows }, ctx);
+        finalResponse = await search(anchor.clause);
         if (finalResponse.numFound > 0) {
           anchorType = anchor.type;
           break;

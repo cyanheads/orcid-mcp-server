@@ -3,6 +3,7 @@
  * @module tests/tools/resolve-researcher.tool.test
  */
 
+import { McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidResolveResearcher } from '@/mcp-server/tools/definitions/resolve-researcher.tool.js';
@@ -183,12 +184,19 @@ describe('orcidResolveResearcher', () => {
     expect(callParams.q).toBe('given-and-family-names:"Mary Ann Smith"');
   });
 
-  it('propagates service errors', async () => {
-    mockExpandedSearch.mockRejectedValueOnce(new Error('Connection refused'));
+  it('surfaces a service error as the query_failed contract, keeping the original as cause', async () => {
+    const upstream = new Error('Connection refused');
+    mockExpandedSearch.mockRejectedValueOnce(upstream);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna' });
-    await expect(orcidResolveResearcher.handler(input, ctx)).rejects.toThrow('Connection refused');
+    const err = (await orcidResolveResearcher
+      .handler(input, ctx)
+      .catch((e: unknown) => e)) as McpError;
+
+    expect(err).toBeInstanceOf(McpError);
+    expect(err.data?.reason).toBe('query_failed');
+    expect(err.cause).toBe(upstream);
   });
 
   it('formats candidates with disambiguation signals', () => {

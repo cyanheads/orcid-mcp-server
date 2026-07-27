@@ -5,8 +5,10 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { getOrcidService } from '@/services/orcid/orcid-service.js';
 import { escapeSolrValue } from '@/services/orcid/solr-query.js';
+import type { ExpandedSearchResponse } from '@/services/orcid/types.js';
 
 /** Build a Solr query string from structured search parameters. */
 function buildSolrQuery(input: {
@@ -138,6 +140,16 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
       ),
   }),
 
+  errors: [
+    {
+      reason: 'query_failed',
+      code: JsonRpcErrorCode.InvalidParams,
+      when: 'ORCID rejects the compiled Solr query — most often malformed raw query syntax.',
+      recovery:
+        'Check the query field for unbalanced quotes or brackets and unknown Solr field names, or drop it and search with the structured parameters alone.',
+    },
+  ],
+
   // Agent-facing context: the query the API received, total match count, and empty-result
   // guidance. Reaches both structuredContent and content[] without a format() entry.
   enrichment: {
@@ -172,10 +184,32 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
       start: input.start,
     });
 
-    const response = await service.expandedSearch(
-      { q: effectiveQuery, rows: input.rows, start: input.start },
-      ctx,
-    );
+    let response: ExpandedSearchResponse;
+    try {
+      response = await service.expandedSearch(
+        { q: effectiveQuery, rows: input.rows, start: input.start },
+        ctx,
+      );
+    } catch (err) {
+      // Transient upstream conditions keep their original code so the client retains the
+      // retryable signal — the service layer has already exhausted its retry budget.
+      // Everything else is a request that will not succeed as submitted; the raw `query`
+      // passthrough is the usual cause, so route it to the contract's recovery hint.
+      if (
+        err instanceof McpError &&
+        (err.code === JsonRpcErrorCode.ServiceUnavailable ||
+          err.code === JsonRpcErrorCode.Timeout ||
+          err.code === JsonRpcErrorCode.RateLimited)
+      ) {
+        throw err;
+      }
+      throw ctx.fail(
+        'query_failed',
+        `ORCID could not complete the search for query: ${effectiveQuery}`,
+        { ...ctx.recoveryFor('query_failed') },
+        { cause: err },
+      );
+    }
 
     ctx.log.info('orcid_search_researchers completed', {
       numFound: response.numFound,

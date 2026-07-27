@@ -1,9 +1,10 @@
 /**
  * @fileoverview Extended coverage for orcidResolveResearcher: pmid anchor, credit name
- * matching, other-name matching, institution overlap token filtering, edge cases.
+ * matching, other-name matching, institution overlap matching, error contract, edge cases.
  * @module tests/tools/resolve-researcher-extended.tool.test
  */
 
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidResolveResearcher } from '@/mcp-server/tools/definitions/resolve-researcher.tool.js';
@@ -421,5 +422,145 @@ describe('orcidResolveResearcher — format edge cases', () => {
     const blocks = orcidResolveResearcher.format!(output);
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('Candidates (1)');
+  });
+});
+
+describe('orcidResolveResearcher — institution overlap needs a whole shared name (#27)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function overlapFor(affiliation: string, institution: string): Promise<boolean> {
+    // numFound: 1 keeps the handler on the primary query — no relaxed fallback call.
+    mockExpandedSearch.mockResolvedValueOnce({
+      numFound: 1,
+      results: [{ ...baseCandidate, institutionNames: [institution] }],
+    });
+
+    const ctx = createMockContext();
+    const input = orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna', affiliation });
+    const result = await orcidResolveResearcher.handler(input, ctx);
+    return result.candidates[0].institutionOverlap;
+  }
+
+  it.each([
+    ['University of Washington', 'George Washington University'],
+    ['University of Washington', 'Washington State University'],
+    ['University of Washington', 'Washington University in St. Louis'],
+    ['Miami University', 'University of Miami'],
+  ])('does not report overlap for "%s" against "%s"', async (affiliation, institution) => {
+    expect(await overlapFor(affiliation, institution)).toBe(false);
+  });
+
+  it.each([
+    ['University of Washington', 'University of Washington'],
+    ['Washington University in St. Louis', 'Washington University'],
+    ['Innovative Genomics Institute', 'Innovative Genomics Institute'],
+    ['UC Berkeley', 'University of California, Berkeley'],
+  ])('still reports overlap for "%s" against "%s"', async (affiliation, institution) => {
+    expect(await overlapFor(affiliation, institution)).toBe(true);
+  });
+
+  it('clears the reported case: Howard Eisner at George Washington University', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({
+      numFound: 1,
+      results: [
+        {
+          ...baseCandidate,
+          orcidId: '0000-0002-5176-5500',
+          givenNames: 'Howard',
+          familyNames: 'Eisner',
+          institutionNames: ['George Washington University', 'The George Washington University'],
+        },
+      ],
+    });
+
+    const ctx = createMockContext();
+    const input = orcidResolveResearcher.input.parse({
+      name: 'Howard Eisner',
+      affiliation: 'University of Washington',
+      rows: 5,
+    });
+    const result = await orcidResolveResearcher.handler(input, ctx);
+
+    expect(result.candidates[0].institutionOverlap).toBe(false);
+  });
+
+  it('documents the residual: a shorter name that is a whole run of a longer one matches', async () => {
+    // "Washington University" is a contiguous run of "George Washington University".
+    // Anchoring the run would close this, but would also reject "UC Berkeley" against
+    // "University of California, Berkeley" — see sharesWholeRun for the reasoning.
+    expect(await overlapFor('Washington University', 'George Washington University')).toBe(true);
+  });
+});
+
+describe('orcidResolveResearcher — query_failed contract (#31)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('carries reason and a recovery hint naming the input fields on a non-transient failure', async () => {
+    mockExpandedSearch.mockRejectedValueOnce(
+      new McpError(
+        JsonRpcErrorCode.InternalError,
+        'ORCID returned HTTP 500 Internal Server Error.',
+      ),
+    );
+
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
+    const input = orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna' });
+    const err = (await orcidResolveResearcher
+      .handler(input, ctx)
+      .catch((e: unknown) => e)) as McpError;
+
+    expect(err).toBeInstanceOf(McpError);
+    expect(err.code).toBe(JsonRpcErrorCode.InvalidParams);
+    const data = err.data as Record<string, unknown>;
+    expect(data.reason).toBe('query_failed');
+    // This tool has no raw query field — the hint points at the inputs it does have.
+    const hint = (data.recovery as { hint: string }).hint;
+    expect(hint).toContain('name');
+    expect(hint).toContain('doi');
+    expect(hint).toContain('pmid');
+    expect(hint).toContain('affiliation');
+    expect(JSON.stringify(data)).not.toContain('orcid.org');
+  });
+
+  it('covers a failure in the anchor-only fallback, not just the primary search', async () => {
+    mockExpandedSearch
+      .mockResolvedValueOnce({ numFound: 0, results: [] }) // primary: name + doi + affiliation
+      .mockResolvedValueOnce({ numFound: 0, results: [] }) // relaxed: affiliation dropped
+      .mockRejectedValueOnce(
+        new McpError(JsonRpcErrorCode.InvalidParams, 'ORCID returned HTTP 400 Bad Request.'),
+      ); // anchor-only
+
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
+    const input = orcidResolveResearcher.input.parse({
+      name: 'Jennifer Doudna',
+      affiliation: 'UC Berkeley',
+      doi: '10.1126/science.1225829',
+    });
+    const err = (await orcidResolveResearcher
+      .handler(input, ctx)
+      .catch((e: unknown) => e)) as McpError;
+
+    expect(mockExpandedSearch).toHaveBeenCalledTimes(3);
+    expect(err.data?.reason).toBe('query_failed');
+    expect(err.message).toContain('doi-self:');
+  });
+
+  it('rethrows a transient upstream failure unchanged so the retryable signal survives', async () => {
+    const upstream = new McpError(
+      JsonRpcErrorCode.ServiceUnavailable,
+      'ORCID returned HTTP 503 Service Unavailable.',
+      { status: 503, retryAfter: '30' },
+    );
+    mockExpandedSearch.mockRejectedValueOnce(upstream);
+
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
+    const input = orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna' });
+    const err = await orcidResolveResearcher.handler(input, ctx).catch((e: unknown) => e);
+
+    expect(err).toBe(upstream);
   });
 });

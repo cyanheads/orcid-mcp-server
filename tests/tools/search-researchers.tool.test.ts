@@ -3,6 +3,7 @@
  * @module tests/tools/search-researchers.tool.test
  */
 
+import { McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidSearchResearchers } from '@/mcp-server/tools/definitions/search-researchers.tool.js';
@@ -120,12 +121,19 @@ describe('orcidSearchResearchers', () => {
     expect(enrichment.notice).toContain('Offset 100 exceeds numFound');
   });
 
-  it('propagates service errors', async () => {
-    mockExpandedSearch.mockRejectedValueOnce(new Error('Service unavailable'));
+  it('surfaces a service error as the query_failed contract, keeping the original as cause', async () => {
+    const upstream = new Error('Connection refused');
+    mockExpandedSearch.mockRejectedValueOnce(upstream);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({ family_name: 'Smith' });
-    await expect(orcidSearchResearchers.handler(input, ctx)).rejects.toThrow('Service unavailable');
+    const err = (await orcidSearchResearchers
+      .handler(input, ctx)
+      .catch((e: unknown) => e)) as McpError;
+
+    expect(err).toBeInstanceOf(McpError);
+    expect(err.data?.reason).toBe('query_failed');
+    expect(err.cause).toBe(upstream);
   });
 
   it('formats output with ORCID IDs and institution info', () => {
