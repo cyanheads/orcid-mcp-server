@@ -47,6 +47,69 @@ describe('OrcidService — upstream error-body redaction (#18)', () => {
   });
 });
 
+describe('OrcidService — upstream URL redaction on non-2xx (#31)', () => {
+  const realFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    vi.restoreAllMocks();
+  });
+
+  // A 400 keeps the run to a single upstream call — InvalidParams is non-transient, so
+  // withRetry fails fast instead of sleeping through its backoff schedule.
+  // `new Response()` leaves `url` empty, so it is pinned explicitly: that getter is the
+  // field httpErrorFromResponse copies into `data.url`, independent of anything the
+  // caller passes.
+  function stubBadRequest(url: string): void {
+    globalThis.fetch = vi.fn().mockImplementation(() => {
+      const res = new Response('bad request', { status: 400, statusText: 'Bad Request' });
+      Object.defineProperty(res, 'url', { value: url });
+      return Promise.resolve(res);
+    }) as typeof fetch;
+  }
+
+  const url = 'https://pub.orcid.org/v3.0/0000-0002-1825-0097/person';
+
+  it('strips url from the thrown error data while keeping the status fields', async () => {
+    stubBadRequest(url);
+
+    const service = new OrcidService({} as unknown as AppConfig, {} as unknown as StorageService);
+    const err = (await service
+      .getPerson('0000-0002-1825-0097', createMockContext())
+      .catch((e: unknown) => e)) as McpError;
+
+    expect(err).toBeInstanceOf(McpError);
+    // The defect: httpErrorFromResponse seeds data.url from response.url unconditionally.
+    expect(err.data).toBeDefined();
+    expect(Object.keys(err.data as Record<string, unknown>)).not.toContain('url');
+    expect(JSON.stringify(err.data)).not.toContain('pub.orcid.org');
+    // Everything withRetry and the framework classify on survives the redaction.
+    expect(err.code).toBe(JsonRpcErrorCode.InvalidParams);
+    expect(err.data?.status).toBe(400);
+    expect(err.data?.statusText).toBe('Bad Request');
+    expect(err.data?.statusCode).toBe(400);
+    // The message was already clean via `service: 'ORCID'` — assert it stays that way.
+    expect(err.message).toBe('ORCID returned HTTP 400 Bad Request.');
+  });
+
+  it('still logs the URL server-side for operators', async () => {
+    stubBadRequest(url);
+
+    const service = new OrcidService({} as unknown as AppConfig, {} as unknown as StorageService);
+    const ctx = createMockContext();
+    const log = ctx.log as MockContextLogger;
+
+    await service.getPerson('0000-0002-1825-0097', ctx).catch(() => undefined);
+
+    expect(
+      log.calls.some(
+        (c) =>
+          c.level === 'warning' && (c.data as Record<string, unknown> | undefined)?.url === url,
+      ),
+    ).toBe(true);
+  });
+});
+
 describe('OrcidService — assertNotHtml message redaction (#28)', () => {
   // assertNotHtml is private; access it through a narrow structural cast rather than `any`.
   // Exercised directly (not via fetchJson) — the code it throws is transient, so routing

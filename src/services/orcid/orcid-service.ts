@@ -6,7 +6,7 @@
 
 import type { Context } from '@cyanheads/mcp-ts-core';
 import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
-import { serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
+import { McpError, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import {
   httpErrorFromResponse,
@@ -84,7 +84,7 @@ export class OrcidService {
   private headers(): Record<string, string> {
     return {
       Accept: 'application/json',
-      'User-Agent': 'orcid-mcp-server/0.2.12 (https://github.com/cyanheads/orcid-mcp-server)',
+      'User-Agent': 'orcid-mcp-server/0.2.13 (https://github.com/cyanheads/orcid-mcp-server)',
     };
   }
 
@@ -107,6 +107,27 @@ export class OrcidService {
     }
   }
 
+  /**
+   * Convert a non-2xx ORCID response into a client-safe `McpError`.
+   *
+   * `httpErrorFromResponse` seeds `data.url` from `response.url` before it merges any
+   * caller-supplied `data`, so the upstream endpoint reaches the client whether or not a
+   * `url` is passed in — omitting the passthrough is not enough to close the leak (#31).
+   * The URL is logged for operators, then dropped from a copy of the error's `data`.
+   * Everything the framework and `withRetry` classify on survives: the status → JSON-RPC
+   * code mapping, `status`/`statusText`/`statusCode`, and any `retryAfter`/`retryable`
+   * signal. Stripping the one key (rather than rebuilding an allow-list) keeps future
+   * retry-relevant fields intact.
+   */
+  private async upstreamError(response: Response, url: string, ctx: Context): Promise<McpError> {
+    // captureBody: false — ORCID's Solr error body echoes its internal Solr host
+    // and Java exception classes; keep that upstream diagnostic text off the wire.
+    const error = await httpErrorFromResponse(response, { service: 'ORCID', captureBody: false });
+    ctx.log.warning('ORCID request failed.', { url, status: response.status });
+    const { url: _upstreamUrl, ...safeData } = error.data ?? {};
+    return new McpError(error.code, error.message, safeData);
+  }
+
   /** Fetch a URL with retry and timeout, returning parsed JSON. */
   private fetchJson<T>(url: string, ctx: Context, options?: FetchOptions): Promise<T> {
     const signal = options?.signal ?? ctx.signal;
@@ -122,13 +143,7 @@ export class OrcidService {
           signal,
         });
         if (!response.ok) {
-          // captureBody: false — ORCID's Solr error body echoes its internal Solr host
-          // and Java exception classes; keep that upstream diagnostic text off the wire.
-          throw await httpErrorFromResponse(response, {
-            service: 'ORCID',
-            data: { url },
-            captureBody: false,
-          });
+          throw await this.upstreamError(response, url, ctx);
         }
         const text = await response.text();
         this.assertNotHtml(text, url, ctx);
