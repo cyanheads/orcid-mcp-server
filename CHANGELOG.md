@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.12](changelog/0.2.x/0.2.12.md) — 2026-07-27
+
+orcid_get_affiliations returned only { type } for every record, unwrapping the live ORCID activities payload's singular-type keys (#29); orcid_get_works gained workType (#30); orcid_get_peer_reviews gained groupIssn (#32); a dateless affiliation no longer renders a fabricated 'Dates: present' (#33).
+
 ## [0.2.11](changelog/0.2.x/0.2.11.md) — 2026-07-16
 
 orcid_search_researchers discloses the ORCID Public API's 10,000-offset retrieval ceiling via a truncated flag and nextStart cursor (#23); the researcher-profile resource now returns researcherUrls (#24); tool and resource descriptions corrected to match actual field names and limits (#26).
