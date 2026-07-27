@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.13](changelog/0.2.x/0.2.13.md) — 2026-07-27 · 🛡️ Security
+
+Non-404 upstream failures no longer leak the raw ORCID API URL to clients, and orcid_search_researchers / orcid_resolve_researcher now declare a query_failed error contract (#31); orcid_resolve_researcher's institution overlap match no longer false-positives on a single shared proper noun across differently-named institutions (#27).
+
 ## [0.2.12](changelog/0.2.x/0.2.12.md) — 2026-07-27
 
 orcid_get_affiliations returned only { type } for every record, unwrapping the live ORCID activities payload's singular-type keys (#29); orcid_get_works gained workType (#30); orcid_get_peer_reviews gained groupIssn (#32); a dateless affiliation no longer renders a fabricated 'Dates: present' (#33).
