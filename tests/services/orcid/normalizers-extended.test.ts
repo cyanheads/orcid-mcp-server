@@ -196,11 +196,13 @@ describe('normalizeActivities — multiple types', () => {
     employments: {
       'affiliation-group': [
         {
-          'affiliation-summary': [
+          summaries: [
             {
-              'role-title': 'Professor',
-              organization: { name: 'UC Berkeley' },
-              'start-date': { year: { value: '2002' } },
+              'employment-summary': {
+                'role-title': 'Professor',
+                organization: { name: 'UC Berkeley' },
+                'start-date': { year: { value: '2002' } },
+              },
             },
           ],
         },
@@ -209,12 +211,14 @@ describe('normalizeActivities — multiple types', () => {
     educations: {
       'affiliation-group': [
         {
-          'affiliation-summary': [
+          summaries: [
             {
-              'role-title': 'PhD',
-              organization: { name: 'Harvard University' },
-              'start-date': { year: { value: '1985' } },
-              'end-date': { year: { value: '1989' } },
+              'education-summary': {
+                'role-title': 'PhD',
+                organization: { name: 'Harvard University' },
+                'start-date': { year: { value: '1985' } },
+                'end-date': { year: { value: '1989' } },
+              },
             },
           ],
         },
@@ -223,10 +227,12 @@ describe('normalizeActivities — multiple types', () => {
     memberships: {
       'affiliation-group': [
         {
-          'affiliation-summary': [
+          summaries: [
             {
-              'role-title': 'Member',
-              organization: { name: 'National Academy of Sciences' },
+              'membership-summary': {
+                'role-title': 'Research Scholar',
+                organization: { name: 'Ronin Institute' },
+              },
             },
           ],
         },
@@ -246,7 +252,8 @@ describe('normalizeActivities — multiple types', () => {
     const result = normalizeActivities(fullRaw, ['memberships']);
     expect(result).toHaveLength(1);
     expect(result[0].type).toBe('memberships');
-    expect(result[0].role).toBe('Member');
+    expect(result[0].role).toBe('Research Scholar');
+    expect(result[0].organization?.name).toBe('Ronin Institute');
   });
 
   it('returns all types when "all" is in types array', () => {
@@ -267,11 +274,13 @@ describe('normalizeActivities — multiple types', () => {
       employments: {
         'affiliation-group': [
           {
-            'affiliation-summary': [
+            summaries: [
               {
-                'role-title': 'Researcher',
-                organization: { name: 'Example Org' },
-                url: { value: 'https://example.org/researcher' },
+                'employment-summary': {
+                  'role-title': 'Researcher',
+                  organization: { name: 'Example Org' },
+                  url: { value: 'https://example.org/researcher' },
+                },
               },
             ],
           },
@@ -284,17 +293,20 @@ describe('normalizeActivities — multiple types', () => {
 
   it('normalizes affiliation with ROR disambiguated organization', () => {
     const raw: RawActivities = {
-      employments: {
+      services: {
         'affiliation-group': [
           {
-            'affiliation-summary': [
+            summaries: [
               {
-                organization: {
-                  name: 'University of Washington',
-                  address: { city: 'Seattle', country: 'US' },
-                  'disambiguated-organization': {
-                    'disambiguated-organization-identifier': 'https://ror.org/00cvxb145',
-                    'disambiguation-source': 'ROR',
+                'service-summary': {
+                  'role-title': 'Director',
+                  organization: {
+                    name: 'Phoenix Bioinformatics',
+                    address: { city: 'Fremont', region: 'California', country: 'US' },
+                    'disambiguated-organization': {
+                      'disambiguated-organization-identifier': 'https://ror.org/0018yg518',
+                      'disambiguation-source': 'ROR',
+                    },
                   },
                 },
               },
@@ -303,10 +315,37 @@ describe('normalizeActivities — multiple types', () => {
         ],
       },
     };
-    const result = normalizeActivities(raw, ['employment']);
-    expect(result[0].organization?.disambiguatedId).toBe('https://ror.org/00cvxb145');
+    const result = normalizeActivities(raw, ['services']);
+    expect(result[0].organization?.disambiguatedId).toBe('https://ror.org/0018yg518');
     expect(result[0].organization?.disambiguationSource).toBe('ROR');
-    expect(result[0].organization?.city).toBe('Seattle');
+    expect(result[0].organization?.city).toBe('Fremont');
+  });
+
+  it('collects every summary across multiple groups in one section', () => {
+    const raw: RawActivities = {
+      distinctions: {
+        'affiliation-group': [
+          {
+            summaries: [
+              {
+                'distinction-summary': {
+                  'role-title': 'Medal of Honour',
+                  organization: { name: 'Vietsch Foundation' },
+                },
+              },
+            ],
+          },
+          {
+            summaries: [
+              { 'distinction-summary': { 'role-title': 'Fellow', organization: { name: 'AAAS' } } },
+            ],
+          },
+        ],
+      },
+    };
+    const result = normalizeActivities(raw, ['distinctions']);
+    expect(result).toHaveLength(2);
+    expect(result.map((a) => a.role)).toEqual(['Medal of Honour', 'Fellow']);
   });
 });
 
@@ -426,7 +465,9 @@ describe('normalizePeerReviews — edge cases', () => {
       group: [
         {
           'external-ids': {
-            'external-id': [{ 'external-id-type': 'issn', 'external-id-value': '0036-8075' }],
+            'external-id': [
+              { 'external-id-type': 'peer-review', 'external-id-value': 'issn:0036-8075' },
+            ],
           },
           'peer-review-group': [
             {

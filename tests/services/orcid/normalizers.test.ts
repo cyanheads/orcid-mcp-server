@@ -117,20 +117,38 @@ describe('normalizePerson', () => {
 // ---------------------------------------------------------------------------
 
 describe('normalizeWorks', () => {
+  // Key names and nesting mirror a captured GET /v3.0/0000-0001-9161-999X/works
+  // work-summary: the type is a bare `type`, and unset siblings arrive as null.
   it('extracts the preferred (first) summary per work group', () => {
     const raw: RawWorksResponse = {
       group: [
         {
           'work-summary': [
             {
-              title: { title: { value: 'CRISPR-Cas9 Mechanism' } },
-              'work-type': 'journal-article',
-              'publication-date': { year: { value: '2012' }, month: { value: '8' } },
+              'put-code': 220823089,
+              title: {
+                title: {
+                  value: 'Structure and evolution-guided design of minimal RNA-guided nucleases',
+                },
+                subtitle: null,
+                'translated-title': null,
+              },
+              type: 'journal-article',
+              'publication-date': {
+                year: { value: '2026' },
+                month: { value: '07' },
+                day: { value: '16' },
+              },
               'journal-title': { value: 'Science' },
-              url: { value: 'https://doi.org/10.1126/science.1225829' },
+              url: { value: 'https://www.science.org/doi/10.1126/science.aed6123' },
               'external-ids': {
                 'external-id': [
-                  { 'external-id-type': 'doi', 'external-id-value': '10.1126/science.1225829' },
+                  {
+                    'external-id-type': 'doi',
+                    'external-id-value': '10.1126/science.aed6123',
+                    'external-id-url': { value: 'https://doi.org/10.1126/science.aed6123' },
+                    'external-id-relationship': 'self',
+                  },
                 ],
               },
             },
@@ -142,14 +160,38 @@ describe('normalizeWorks', () => {
     const works = normalizeWorks(raw);
 
     expect(works).toHaveLength(1);
-    expect(works[0].title).toBe('CRISPR-Cas9 Mechanism');
+    expect(works[0].putCode).toBe(220823089);
+    expect(works[0].title).toBe(
+      'Structure and evolution-guided design of minimal RNA-guided nucleases',
+    );
     expect(works[0].workType).toBe('journal-article');
-    expect(works[0].publicationDate).toBe('2012-08');
+    expect(works[0].publicationDate).toBe('2026-07-16');
     expect(works[0].journalTitle).toBe('Science');
-    expect(works[0].url).toBe('https://doi.org/10.1126/science.1225829');
+    expect(works[0].url).toBe('https://www.science.org/doi/10.1126/science.aed6123');
     expect(works[0].externalIds).toHaveLength(1);
     expect(works[0].externalIds[0].type).toBe('doi');
-    expect(works[0].externalIds[0].value).toBe('10.1126/science.1225829');
+    expect(works[0].externalIds[0].value).toBe('10.1126/science.aed6123');
+  });
+
+  it('reads workType from the bare `type` key ORCID emits, not `work-type`', () => {
+    const raw = {
+      group: [
+        {
+          'work-summary': [{ type: 'dataset', 'work-type': 'journal-article', 'external-ids': {} }],
+        },
+      ],
+    } as unknown as RawWorksResponse;
+
+    // The legacy `work-type` key is decoy data: no live payload carries it, and reading
+    // it would silently mistype every work summary.
+    expect(normalizeWorks(raw)[0].workType).toBe('dataset');
+  });
+
+  it('omits workType when the summary carries no type', () => {
+    const raw: RawWorksResponse = {
+      group: [{ 'work-summary': [{ title: { title: { value: 'Untyped' } }, 'external-ids': {} }] }],
+    };
+    expect(normalizeWorks(raw)[0].workType).toBeUndefined();
   });
 
   it('returns empty array for empty group list', () => {
@@ -203,16 +245,35 @@ describe('normalizeWorks', () => {
 // ---------------------------------------------------------------------------
 
 describe('normalizeActivities', () => {
+  // Shape mirrors a captured GET /v3.0/0000-0002-7635-3473/activities: every
+  // `summaries[]` entry is a single-key object wrapping the summary under its
+  // singular-type key, and unset fields arrive as explicit null.
   const raw: RawActivities = {
     employments: {
       'affiliation-group': [
         {
-          'affiliation-summary': [
+          summaries: [
             {
-              'role-title': 'Professor',
-              'department-name': 'Chemistry',
-              organization: { name: 'UC Berkeley', address: { country: 'US', city: 'Berkeley' } },
-              'start-date': { year: { value: '2002' } },
+              'employment-summary': {
+                'put-code': 1310507,
+                'department-name': 'Faculty of Biology',
+                'role-title': 'Professor, Chair of Genetics & Genomics of Plants',
+                'start-date': {
+                  year: { value: '2003' },
+                  month: { value: '02' },
+                  day: { value: '01' },
+                },
+                'end-date': null,
+                organization: {
+                  name: 'Universität Bielefeld',
+                  address: { city: 'Bielefeld', region: 'Nordrhein-Westfalen', country: 'DE' },
+                  'disambiguated-organization': {
+                    'disambiguated-organization-identifier': '235712',
+                    'disambiguation-source': 'RINGGOLD',
+                  },
+                },
+                url: { value: 'https://www.uni-bielefeld.de/biologie/ggp/' },
+              },
             },
           ],
         },
@@ -221,12 +282,32 @@ describe('normalizeActivities', () => {
     educations: {
       'affiliation-group': [
         {
-          'affiliation-summary': [
+          summaries: [
             {
-              'role-title': 'PhD',
-              organization: { name: 'Harvard University' },
-              'start-date': { year: { value: '1985' } },
-              'end-date': { year: { value: '1989' } },
+              'education-summary': {
+                'put-code': 1309856,
+                'department-name': 'Botany Department',
+                'role-title': 'Visiting scientist / postdoc',
+                'start-date': {
+                  year: { value: '1994' },
+                  month: { value: '01' },
+                  day: { value: '01' },
+                },
+                'end-date': {
+                  year: { value: '1994' },
+                  month: { value: '12' },
+                  day: { value: '31' },
+                },
+                organization: {
+                  name: 'University of Glasgow',
+                  address: { city: 'Glasgow', region: 'Glasgow', country: 'GB' },
+                  'disambiguated-organization': {
+                    'disambiguated-organization-identifier': '3526',
+                    'disambiguation-source': 'RINGGOLD',
+                  },
+                },
+                url: null,
+              },
             },
           ],
         },
@@ -234,16 +315,20 @@ describe('normalizeActivities', () => {
     },
   };
 
-  it('returns employment affiliations when requested', () => {
+  it('unwraps the singular-type key and returns employment fields', () => {
     const result = normalizeActivities(raw, ['employment']);
     expect(result).toHaveLength(1);
     expect(result[0].type).toBe('employment');
-    expect(result[0].role).toBe('Professor');
-    expect(result[0].department).toBe('Chemistry');
-    expect(result[0].organization?.name).toBe('UC Berkeley');
-    expect(result[0].organization?.country).toBe('US');
-    expect(result[0].startDate).toBe('2002');
+    expect(result[0].role).toBe('Professor, Chair of Genetics & Genomics of Plants');
+    expect(result[0].department).toBe('Faculty of Biology');
+    expect(result[0].organization?.name).toBe('Universität Bielefeld');
+    expect(result[0].organization?.city).toBe('Bielefeld');
+    expect(result[0].organization?.country).toBe('DE');
+    expect(result[0].organization?.disambiguatedId).toBe('235712');
+    expect(result[0].organization?.disambiguationSource).toBe('RINGGOLD');
+    expect(result[0].startDate).toBe('2003-02-01');
     expect(result[0].endDate).toBeUndefined();
+    expect(result[0].url).toBe('https://www.uni-bielefeld.de/biologie/ggp/');
   });
 
   it('returns all types when "all" is requested', () => {
@@ -257,12 +342,92 @@ describe('normalizeActivities', () => {
     const result = normalizeActivities(raw, ['education']);
     expect(result).toHaveLength(1);
     expect(result[0].type).toBe('education');
-    expect(result[0].endDate).toBe('1989');
+    expect(result[0].organization?.name).toBe('University of Glasgow');
+    expect(result[0].endDate).toBe('1994-12-31');
   });
 
   it('returns empty array when activities section is empty', () => {
     const result = normalizeActivities({}, ['employment', 'education']);
     expect(result).toEqual([]);
+  });
+
+  it('unwraps every section under its own singular key', () => {
+    // The section names are plural-ish while the wrapper keys are singular, so this
+    // mapping cannot be derived by trimming an `s` — each pairing is asserted.
+    const sections: Array<[keyof RawActivities, string, string]> = [
+      ['employments', 'employment-summary', 'employment'],
+      ['educations', 'education-summary', 'education'],
+      ['invited-positions', 'invited-position-summary', 'invited-positions'],
+      ['distinctions', 'distinction-summary', 'distinctions'],
+      ['memberships', 'membership-summary', 'memberships'],
+      ['qualifications', 'qualification-summary', 'qualifications'],
+      ['services', 'service-summary', 'services'],
+    ];
+
+    for (const [section, wrapperKey, requestedType] of sections) {
+      const payload = {
+        [section]: {
+          'affiliation-group': [
+            { summaries: [{ [wrapperKey]: { 'role-title': `role-${requestedType}` } }] },
+          ],
+        },
+      } as RawActivities;
+
+      const result = normalizeActivities(payload, [requestedType as 'employment']);
+      expect(result).toHaveLength(1);
+      expect(result[0].type).toBe(requestedType);
+      expect(result[0].role).toBe(`role-${requestedType}`);
+    }
+  });
+
+  it('skips a summaries entry wrapped under a different key', () => {
+    const payload = {
+      employments: {
+        'affiliation-group': [
+          { summaries: [{ 'education-summary': { 'role-title': 'Wrong section' } }] },
+        ],
+      },
+    } as RawActivities;
+
+    // A mis-keyed entry yields nothing rather than a stub carrying only `type`.
+    expect(normalizeActivities(payload, ['employment'])).toEqual([]);
+  });
+
+  it('preserves absence for a summary with no dates or department', () => {
+    // Captured from a live qualification record — ORCID sends explicit nulls.
+    const payload: RawActivities = {
+      qualifications: {
+        'affiliation-group': [
+          {
+            summaries: [
+              {
+                'qualification-summary': {
+                  'department-name': null,
+                  'role-title': null,
+                  'start-date': null,
+                  'end-date': null,
+                  organization: {
+                    name: 'University of Oxford ',
+                    address: { city: 'Oxford', region: null, country: 'GB' },
+                    'disambiguated-organization': null,
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const result = normalizeActivities(payload, ['qualifications']);
+    expect(result).toHaveLength(1);
+    expect(result[0].organization?.name).toBe('University of Oxford ');
+    expect(result[0].organization?.country).toBe('GB');
+    expect(result[0].organization?.disambiguatedId).toBeUndefined();
+    expect(result[0].department).toBeUndefined();
+    expect(result[0].role).toBeUndefined();
+    expect(result[0].startDate).toBeUndefined();
+    expect(result[0].endDate).toBeUndefined();
   });
 });
 
@@ -347,25 +512,37 @@ describe('normalizeFundings', () => {
 // ---------------------------------------------------------------------------
 
 describe('normalizePeerReviews', () => {
-  it('extracts peer review records with ISSN from group', () => {
+  // Shape mirrors a captured GET /v3.0/0000-0002-7635-3473/peer-reviews: the group
+  // identifier is typed `peer-review` and carries the ISSN inside the value.
+  it('strips the issn: prefix off the peer-review-typed group identifier', () => {
     const raw: RawPeerReviewsResponse = {
       group: [
         {
           'external-ids': {
-            'external-id': [{ 'external-id-type': 'issn', 'external-id-value': '0036-8075' }],
+            'external-id': [
+              {
+                'external-id-type': 'peer-review',
+                'external-id-value': 'issn:1476-4687',
+              },
+            ],
           },
           'peer-review-group': [
             {
               'peer-review-summary': [
                 {
+                  'put-code': 8060938,
                   'reviewer-role': 'reviewer',
                   'review-type': 'review',
-                  'completion-date': { year: { value: '2021' }, month: { value: '3' } },
+                  'completion-date': { year: { value: '2023' }, month: null, day: null },
                   'convening-organization': {
-                    name: 'Science',
-                    address: { country: 'US', city: 'Washington' },
+                    name: 'SpringerNature',
+                    address: { city: 'London', region: 'England', country: 'GB' },
+                    'disambiguated-organization': {
+                      'disambiguated-organization-identifier': 'grid.497262.c',
+                      'disambiguation-source': 'GRID',
+                    },
                   },
-                  'review-url': { value: 'https://publons.com/review/123' },
+                  'review-url': null,
                 },
               ],
             },
@@ -379,11 +556,46 @@ describe('normalizePeerReviews', () => {
     expect(reviews).toHaveLength(1);
     expect(reviews[0].reviewerRole).toBe('reviewer');
     expect(reviews[0].reviewType).toBe('review');
-    expect(reviews[0].completionDate).toBe('2021-03');
-    expect(reviews[0].conveningOrganization?.name).toBe('Science');
-    expect(reviews[0].conveningOrganization?.country).toBe('US');
-    expect(reviews[0].reviewUrl).toBe('https://publons.com/review/123');
-    expect(reviews[0].groupIssn).toBe('0036-8075');
+    expect(reviews[0].completionDate).toBe('2023');
+    expect(reviews[0].conveningOrganization?.name).toBe('SpringerNature');
+    expect(reviews[0].conveningOrganization?.country).toBe('GB');
+    expect(reviews[0].reviewUrl).toBeUndefined();
+    expect(reviews[0].groupIssn).toBe('1476-4687');
+  });
+
+  it('leaves groupIssn absent for a non-ISSN group identifier', () => {
+    // Captured from 0000-0001-5531-9244: ORCID also issues `orcid-generated:` group
+    // keys, which are not ISSNs and must not be reported as one.
+    const raw: RawPeerReviewsResponse = {
+      group: [
+        {
+          'external-ids': {
+            'external-id': [
+              {
+                'external-id-type': 'peer-review',
+                'external-id-value': 'orcid-generated:F1000Prime-Recommendations',
+              },
+            ],
+          },
+          'peer-review-group': [
+            {
+              'peer-review-summary': [
+                {
+                  'reviewer-role': 'reviewer',
+                  'review-type': 'evaluation',
+                  'convening-organization': { name: 'F1000' },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    const reviews = normalizePeerReviews(raw);
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0].conveningOrganization?.name).toBe('F1000');
+    expect(reviews[0].groupIssn).toBeUndefined();
   });
 
   it('returns empty array for sparse peer reviews response', () => {
@@ -391,7 +603,7 @@ describe('normalizePeerReviews', () => {
     expect(normalizePeerReviews({ group: [] })).toEqual([]);
   });
 
-  it('omits groupIssn when no issn external-id in group', () => {
+  it('omits groupIssn when the group carries no external ids', () => {
     const raw: RawPeerReviewsResponse = {
       group: [
         {

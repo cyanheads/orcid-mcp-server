@@ -7,6 +7,7 @@
 import type { AffiliationType } from './orcid-service.js';
 import type {
   Affiliation,
+  AffiliationSummaryKey,
   BulkWorkResult,
   ExpandedSearchResponse,
   ExpandedSearchResult,
@@ -47,7 +48,10 @@ import type {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function normalizeDate(d: OrcidDate | undefined): NormalizedDate | undefined {
+/** Prefix ORCID uses on a peer-review group identifier whose value is an ISSN. */
+const ISSN_PREFIX = 'issn:';
+
+function normalizeDate(d: OrcidDate | null | undefined): NormalizedDate | undefined {
   if (!d?.year?.value) return;
   const y = d.year.value;
   const m = d.month?.value?.padStart(2, '0');
@@ -57,7 +61,7 @@ function normalizeDate(d: OrcidDate | undefined): NormalizedDate | undefined {
   return y;
 }
 
-function normalizeOrg(raw: RawOrganization | undefined): Organization | undefined {
+function normalizeOrg(raw: RawOrganization | null | undefined): Organization | undefined {
   if (!raw) return;
   const dis = raw['disambiguated-organization'];
   const result: Organization = {};
@@ -88,6 +92,40 @@ function normalizeExternalIds(raw: RawWorkExternalId[] | undefined): ExternalIde
   return raw.map(normalizeExternalId).filter((id): id is ExternalIdentifier => id !== undefined);
 }
 
+type NonAllAffiliationType = Exclude<AffiliationType, 'all'>;
+
+const ALL_AFFILIATION_TYPES: NonAllAffiliationType[] = [
+  'employment',
+  'education',
+  'invited-positions',
+  'distinctions',
+  'memberships',
+  'qualifications',
+  'services',
+];
+
+/** Requested section type → the `activities` key that holds it. */
+const AFFILIATION_TYPE_KEYS: Record<NonAllAffiliationType, string> = {
+  employment: 'employments',
+  education: 'educations',
+  'invited-positions': 'invited-positions',
+  distinctions: 'distinctions',
+  memberships: 'memberships',
+  qualifications: 'qualifications',
+  services: 'services',
+};
+
+/** Requested section type → the singular key each summary is wrapped under. */
+const AFFILIATION_SUMMARY_KEYS: Record<NonAllAffiliationType, AffiliationSummaryKey> = {
+  employment: 'employment-summary',
+  education: 'education-summary',
+  'invited-positions': 'invited-position-summary',
+  distinctions: 'distinction-summary',
+  memberships: 'membership-summary',
+  qualifications: 'qualification-summary',
+  services: 'service-summary',
+};
+
 function normalizeSummary(raw: RawAffiliationSummary, type: string): Affiliation {
   const org = normalizeOrg(raw.organization);
   const aff: Affiliation = { type };
@@ -102,18 +140,25 @@ function normalizeSummary(raw: RawAffiliationSummary, type: string): Affiliation
   return aff;
 }
 
+/**
+ * Unwrap a group's summaries. ORCID nests each entry under its singular-type key
+ * (`{ "employment-summary": { ... } }`), so the wrapper must be opened before the
+ * fields are readable.
+ */
 function extractSummariesFromGroup(
   group: RawAffiliationGroup | undefined,
-  type: string,
+  type: NonAllAffiliationType,
 ): Affiliation[] {
-  if (!group) return [];
-  const summaries = group['affiliation-summary'] ?? group.summaries ?? [];
-  return summaries.map((s) => normalizeSummary(s, type));
+  const key = AFFILIATION_SUMMARY_KEYS[type];
+  return (group?.summaries ?? []).flatMap((entry) => {
+    const summary = entry[key];
+    return summary ? [normalizeSummary(summary, type)] : [];
+  });
 }
 
 function extractGroupSummaries(
   groups: RawAffiliationGroup[] | undefined,
-  type: string,
+  type: NonAllAffiliationType,
 ): Affiliation[] {
   return (groups ?? []).flatMap((g) => extractSummariesFromGroup(g, type));
 }
@@ -192,7 +237,7 @@ function normalizeWorkSummary(raw: RawWorkSummary): Work {
   if (raw['put-code'] != null) work.putCode = raw['put-code'];
   const title = raw.title?.title?.value;
   if (title) work.title = title;
-  if (raw['work-type']) work.workType = raw['work-type'];
+  if (raw.type) work.workType = raw.type;
   const pubDate = normalizeDate(raw['publication-date']);
   if (pubDate) work.publicationDate = pubDate;
   if (raw['journal-title']?.value) work.journalTitle = raw['journal-title'].value;
@@ -208,28 +253,6 @@ export function normalizeWorks(raw: RawWorksResponse): Work[] {
     return [normalizeWorkSummary(preferred)];
   });
 }
-
-type NonAllAffiliationType = Exclude<AffiliationType, 'all'>;
-
-const ALL_AFFILIATION_TYPES: NonAllAffiliationType[] = [
-  'employment',
-  'education',
-  'invited-positions',
-  'distinctions',
-  'memberships',
-  'qualifications',
-  'services',
-];
-
-const AFFILIATION_TYPE_KEYS: Record<NonAllAffiliationType, string> = {
-  employment: 'employments',
-  education: 'educations',
-  'invited-positions': 'invited-positions',
-  distinctions: 'distinctions',
-  memberships: 'memberships',
-  qualifications: 'qualifications',
-  services: 'services',
-};
 
 export function normalizeActivities(raw: RawActivities, types: AffiliationType[]): Affiliation[] {
   const resolvedTypes = types.includes('all')
@@ -270,10 +293,13 @@ export function normalizeFundings(raw: RawFundingsResponse): FundingRecord[] {
 
 export function normalizePeerReviews(raw: RawPeerReviewsResponse): PeerReview[] {
   return (raw.group ?? []).flatMap((g: RawPeerReviewGroup) => {
-    // Extract ISSN from group-level external IDs
-    const issn = g['external-ids']?.['external-id']?.find(
-      (id) => id['external-id-type'] === 'issn',
+    // ORCID types the group identifier `peer-review` and carries the ISSN inside the
+    // value as `issn:1476-4687`. Non-journal groups use other prefixes (`orcid-generated:`),
+    // so the prefix — not the type — is what gates an ISSN.
+    const groupId = g['external-ids']?.['external-id']?.find((id) =>
+      id['external-id-value']?.startsWith(ISSN_PREFIX),
     )?.['external-id-value'];
+    const issn = groupId?.slice(ISSN_PREFIX.length);
 
     return (g['peer-review-group'] ?? []).flatMap((prg) =>
       (prg['peer-review-summary'] ?? []).map((s): PeerReview => {

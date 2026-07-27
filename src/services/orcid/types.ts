@@ -10,9 +10,9 @@
 
 /** A date value returned by ORCID (year, month, day all optional). */
 export type OrcidDate = {
-  year?: { value?: string };
-  month?: { value?: string };
-  day?: { value?: string };
+  year?: { value?: string } | null;
+  month?: { value?: string } | null;
+  day?: { value?: string } | null;
 };
 
 /** Disambiguated organization (may carry GRID, ROR, or Ringgold ID). */
@@ -21,32 +21,53 @@ export type RawDisambiguatedOrg = {
   'disambiguation-source'?: string;
 };
 
-/** Organization as returned in affiliation records. */
+/**
+ * Organization as returned in affiliation records.
+ * ORCID emits explicit `null` for unset fields rather than omitting them.
+ */
 export type RawOrganization = {
   name?: string;
   address?: {
-    city?: string;
-    region?: string;
-    country?: string;
-  };
-  'disambiguated-organization'?: RawDisambiguatedOrg;
+    city?: string | null;
+    region?: string | null;
+    country?: string | null;
+  } | null;
+  'disambiguated-organization'?: RawDisambiguatedOrg | null;
 };
 
 /** Affiliation entry (employment, education, etc.). */
 export type RawAffiliationSummary = {
   'put-code'?: number;
-  'department-name'?: string;
-  'role-title'?: string;
-  'start-date'?: OrcidDate;
-  'end-date'?: OrcidDate;
-  organization?: RawOrganization;
-  url?: { value?: string };
+  'department-name'?: string | null;
+  'role-title'?: string | null;
+  'start-date'?: OrcidDate | null;
+  'end-date'?: OrcidDate | null;
+  organization?: RawOrganization | null;
+  url?: { value?: string } | null;
 };
+
+/**
+ * Singular wrapper key ORCID nests each affiliation summary under, one per section.
+ * The section names are plural-ish (`invited-positions`, `distinctions`, `services`)
+ * while the wrapper keys are singular, so the two never line up by string surgery.
+ */
+export type AffiliationSummaryKey =
+  | 'employment-summary'
+  | 'education-summary'
+  | 'invited-position-summary'
+  | 'distinction-summary'
+  | 'membership-summary'
+  | 'qualification-summary'
+  | 'service-summary';
+
+/** One `summaries[]` entry — a single-key object wrapping the summary. */
+export type RawAffiliationSummaryEntry = Partial<
+  Record<AffiliationSummaryKey, RawAffiliationSummary>
+>;
 
 /** Container for a group of affiliation summaries. */
 export type RawAffiliationGroup = {
-  'affiliation-summary'?: RawAffiliationSummary[];
-  summaries?: RawAffiliationSummary[];
+  summaries?: RawAffiliationSummaryEntry[];
 };
 
 /** Activities response sections. */
@@ -132,10 +153,11 @@ export type RawPerson = {
 export type RawWorkSummary = {
   'put-code'?: number;
   title?: {
-    title?: { value?: string };
-    subtitle?: { value?: string };
+    title?: { value?: string } | null;
+    subtitle?: { value?: string } | null;
+    'translated-title'?: { value?: string } | null;
   };
-  'work-type'?: string;
+  type?: string;
   'publication-date'?: OrcidDate;
   'journal-title'?: { value?: string } | null;
   url?: { value?: string } | null;
@@ -233,11 +255,14 @@ export type RawPeerReviewSummary = {
   'reviewer-role'?: string;
   'review-type'?: string;
   'completion-date'?: OrcidDate;
-  'convening-organization'?: RawOrganization;
-  'review-url'?: { value?: string };
+  'convening-organization'?: RawOrganization | null;
+  'review-url'?: { value?: string } | null;
 };
 
-/** Peer review group (keyed by ISSN). */
+/**
+ * Peer review group. The group-level external id is typed `peer-review`; its value
+ * carries the key, prefixed — `issn:1476-4687` for journals, `orcid-generated:…` otherwise.
+ */
 export type RawPeerReviewGroup = {
   'peer-review-group'?: Array<{
     'peer-review-summary'?: RawPeerReviewSummary[];
