@@ -187,9 +187,9 @@ export const orcidGetAffiliations = tool('orcid_get_affiliations', {
         lines.push(`**${orgName}**`);
         if (a.department) lines.push(`  Department: ${a.department}`);
         if (a.role) lines.push(`  Role: ${a.role}`);
-        const dateRange = [a.startDate, a.endDate ? a.endDate : 'present']
-          .filter(Boolean)
-          .join(' – ');
+        // `present` is an open end, not a standalone claim — it renders only when a
+        // start date anchors it. With neither date, ORCID stated nothing; render nothing.
+        const dateRange = a.startDate ? `${a.startDate} – ${a.endDate ?? 'present'}` : a.endDate;
         if (dateRange) lines.push(`  Dates: ${dateRange}`);
         if (a.organization?.city) lines.push(`  City: ${a.organization.city}`);
         if (a.organization?.country) lines.push(`  Country: ${a.organization.country}`);

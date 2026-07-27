@@ -169,6 +169,62 @@ describe('orcidGetAffiliations', () => {
     expect(text).toContain('**Total Affiliations:** 2');
   });
 
+  it('omits the date line entirely for an affiliation with neither date', () => {
+    const output = orcidGetAffiliations.output.parse({
+      orcidId: '0000-0002-1825-0097',
+      orcidUri: 'https://orcid.org/0000-0002-1825-0097',
+      affiliationCount: 1,
+      affiliations: [{ type: 'qualifications', organization: { name: 'University of Oxford' } }],
+      requestedTypes: ['qualifications'],
+    });
+
+    const text = (orcidGetAffiliations.format!(output)[0] as { text: string }).text;
+    // `present` here would assert an ongoing appointment ORCID never stated.
+    expect(text).toContain('University of Oxford');
+    expect(text).not.toContain('Dates:');
+    expect(text).not.toContain('present');
+  });
+
+  it('renders present as the open end only when a start date anchors it', () => {
+    const output = orcidGetAffiliations.output.parse({
+      orcidId: '0000-0002-1825-0097',
+      orcidUri: 'https://orcid.org/0000-0002-1825-0097',
+      affiliationCount: 1,
+      affiliations: [
+        {
+          type: 'employment',
+          organization: { name: 'Universität Bielefeld' },
+          startDate: '2003-02-01',
+        },
+      ],
+      requestedTypes: ['employment'],
+    });
+
+    const text = (orcidGetAffiliations.format!(output)[0] as { text: string }).text;
+    expect(text).toContain('Dates: 2003-02-01 – present');
+  });
+
+  it('renders a closed range when both dates are present', () => {
+    const output = orcidGetAffiliations.output.parse({
+      orcidId: '0000-0002-1825-0097',
+      orcidUri: 'https://orcid.org/0000-0002-1825-0097',
+      affiliationCount: 1,
+      affiliations: [
+        {
+          type: 'education',
+          organization: { name: 'Harvard University' },
+          startDate: '1985',
+          endDate: '1989',
+        },
+      ],
+      requestedTypes: ['education'],
+    });
+
+    const text = (orcidGetAffiliations.format!(output)[0] as { text: string }).text;
+    expect(text).toContain('Dates: 1985 – 1989');
+    expect(text).not.toContain('present');
+  });
+
   it('formats empty affiliations', () => {
     const output = orcidGetAffiliations.output.parse({
       orcidId: '0000-0002-1825-0097',
