@@ -1,5 +1,5 @@
-/.env*
-/.mcpregistry_*
+.env*
+.mcpregistry_*
 /.claude/
 /.agents/
 /skills/
