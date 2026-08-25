@@ -41,13 +41,14 @@ describe('security: injection attempts are forwarded as query strings, not execu
   it('search_researchers: Solr injection in family_name is phrase-quoted, not structurally expanded', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({
       family_name: 'Smith OR 1=1',
     });
     await orcidSearchResearchers.handler(input, ctx);
 
-    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(mockExpandedSearch).toHaveBeenCalled();
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
     // The injection is phrase-quoted in the field clause — the OR token is not a
     // structural boolean operator from our side; it is part of the quoted literal.
     expect(callParams.q).toContain('family-name:"Smith OR 1=1"');
@@ -56,13 +57,14 @@ describe('security: injection attempts are forwarded as query strings, not execu
   it('search_researchers: raw query field with boolean injection is forwarded unchanged', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({
       query: 'given-names:Jennifer AND (family-name:Doudna OR family-name:*)',
     });
     await orcidSearchResearchers.handler(input, ctx);
 
-    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(mockExpandedSearch).toHaveBeenCalled();
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
     expect(callParams.q).toContain(
       'given-names:Jennifer AND (family-name:Doudna OR family-name:*)',
     );
@@ -71,13 +73,14 @@ describe('security: injection attempts are forwarded as query strings, not execu
   it('resolve_researcher: injection in name is forwarded as-is to expandedSearch', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Jennifer Doudna"; DELETE FROM records --',
     });
     await orcidResolveResearcher.handler(input, ctx);
 
-    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(mockExpandedSearch).toHaveBeenCalled();
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
     // The injected string is wrapped in a Solr field clause, and its embedded quote is
     // escaped, so the DELETE suffix stays inside the phrase literal rather than breaking out.
     expect(callParams.q).toContain('given-and-family-names:');
@@ -91,14 +94,15 @@ describe('security: injection attempts are forwarded as query strings, not execu
       .mockResolvedValueOnce({ numFound: 0, results: [] })
       .mockResolvedValueOnce({ numFound: 0, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Jennifer Doudna',
       affiliation: 'UC Berkeley" OR *:*',
     });
     await orcidResolveResearcher.handler(input, ctx);
 
-    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(mockExpandedSearch).toHaveBeenCalled();
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
     // The injected quote and operator chars are backslash-escaped inside the phrase, so the
     // value cannot break out of its quotes into a structural `OR *:*` clause.
     expect(callParams.q).toContain('affiliation-org-name:"UC Berkeley\\" OR \\*\\:\\*"');
@@ -149,9 +153,10 @@ describe('security: no secrets or env values appear in tool output or error mess
       new Error('Connection failed to https://sandbox.orcid.org'),
     );
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetProfile.errors });
     const input = orcidGetProfile.input.parse({ orcid_id: '0000-0002-1825-0097' });
-    const err = await orcidGetProfile.handler(input, ctx).catch((e: unknown) => e as Error);
+    const err = await Promise.resolve(orcidGetProfile.handler(input, ctx)).catch((e: unknown) => e);
+    if (!(err instanceof Error)) throw new Error('Expected the handler to reject.');
 
     // The error message is the service's, propagated as-is — but no env-var keys appear
     expect(err.message).not.toMatch(/process\.env\./);
@@ -173,7 +178,7 @@ describe('security: no secrets or env values appear in tool output or error mess
       ],
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({ family_name: 'Doudna' });
     const result = await orcidSearchResearchers.handler(input, ctx);
     const blocks = orcidSearchResearchers.format!(result);

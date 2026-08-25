@@ -5,7 +5,7 @@
  * @module tests/services/orcid/normalizers-extended.test
  */
 
-import { describe, expect, it } from 'vitest';
+import { assert, describe, expect, it } from 'vitest';
 import {
   normalizeActivities,
   normalizeExpandedSearch,
@@ -67,11 +67,14 @@ describe('normalizePerson — edge cases', () => {
     };
     const result = normalizePerson(raw);
     expect(result.externalIdentifiers).toHaveLength(2);
-    expect(result.externalIdentifiers[0].type).toBe('Scopus Author ID');
-    expect(result.externalIdentifiers[0].url).toBe('https://scopus.com/123');
-    expect(result.externalIdentifiers[0].relationship).toBe('self');
-    expect(result.externalIdentifiers[1].type).toBe('ResearcherID');
-    expect(result.externalIdentifiers[1].url).toBeUndefined();
+    const [scopusId, researcherId] = result.externalIdentifiers;
+    assert(scopusId);
+    assert(researcherId);
+    expect(scopusId.type).toBe('Scopus Author ID');
+    expect(scopusId.url).toBe('https://scopus.com/123');
+    expect(scopusId.relationship).toBe('self');
+    expect(researcherId.type).toBe('ResearcherID');
+    expect(researcherId.url).toBeUndefined();
   });
 
   it('handles non-primary addresses (multiple countries)', () => {
@@ -94,8 +97,10 @@ describe('normalizePerson — edge cases', () => {
       },
     };
     const result = normalizePerson(raw);
-    expect(result.emails[0].email).toBe('test@example.com');
-    expect(result.emails[0].primary).toBeUndefined();
+    const [email] = result.emails;
+    assert(email);
+    expect(email.email).toBe('test@example.com');
+    expect(email.primary).toBeUndefined();
   });
 });
 
@@ -121,8 +126,9 @@ describe('normalizeWorks — date normalization', () => {
         },
       ],
     };
-    const works = normalizeWorks(raw);
-    expect(works[0].publicationDate).toBe('2012-08-17');
+    const [work] = normalizeWorks(raw);
+    assert(work);
+    expect(work.publicationDate).toBe('2012-08-17');
   });
 
   it('normalizes year + month without day', () => {
@@ -141,8 +147,9 @@ describe('normalizeWorks — date normalization', () => {
         },
       ],
     };
-    const works = normalizeWorks(raw);
-    expect(works[0].publicationDate).toBe('2020-03');
+    const [work] = normalizeWorks(raw);
+    assert(work);
+    expect(work.publicationDate).toBe('2020-03');
   });
 
   it('preserves url field on work', () => {
@@ -158,8 +165,9 @@ describe('normalizeWorks — date normalization', () => {
         },
       ],
     };
-    const works = normalizeWorks(raw);
-    expect(works[0].url).toBe('https://doi.org/10.1/test');
+    const [work] = normalizeWorks(raw);
+    assert(work);
+    expect(work.url).toBe('https://doi.org/10.1/test');
   });
 
   it('handles work with external-id url field', () => {
@@ -182,8 +190,11 @@ describe('normalizeWorks — date normalization', () => {
         },
       ],
     };
-    const works = normalizeWorks(raw);
-    expect(works[0].externalIds[0].url).toBe('https://doi.org/10.1/test');
+    const [work] = normalizeWorks(raw);
+    assert(work);
+    const [doi] = work.externalIds;
+    assert(doi);
+    expect(doi.url).toBe('https://doi.org/10.1/test');
   });
 });
 
@@ -251,9 +262,11 @@ describe('normalizeActivities — multiple types', () => {
   it('returns memberships when memberships type requested', () => {
     const result = normalizeActivities(fullRaw, ['memberships']);
     expect(result).toHaveLength(1);
-    expect(result[0].type).toBe('memberships');
-    expect(result[0].role).toBe('Research Scholar');
-    expect(result[0].organization?.name).toBe('Ronin Institute');
+    const [membership] = result;
+    assert(membership);
+    expect(membership.type).toBe('memberships');
+    expect(membership.role).toBe('Research Scholar');
+    expect(membership.organization?.name).toBe('Ronin Institute');
   });
 
   it('returns all types when "all" is in types array', () => {
@@ -287,8 +300,9 @@ describe('normalizeActivities — multiple types', () => {
         ],
       },
     };
-    const result = normalizeActivities(raw, ['employment']);
-    expect(result[0].url).toBe('https://example.org/researcher');
+    const [employment] = normalizeActivities(raw, ['employment']);
+    assert(employment);
+    expect(employment.url).toBe('https://example.org/researcher');
   });
 
   it('normalizes affiliation with ROR disambiguated organization', () => {
@@ -315,10 +329,11 @@ describe('normalizeActivities — multiple types', () => {
         ],
       },
     };
-    const result = normalizeActivities(raw, ['services']);
-    expect(result[0].organization?.disambiguatedId).toBe('https://ror.org/0018yg518');
-    expect(result[0].organization?.disambiguationSource).toBe('ROR');
-    expect(result[0].organization?.city).toBe('Fremont');
+    const [service] = normalizeActivities(raw, ['services']);
+    assert(service);
+    expect(service.organization?.disambiguatedId).toBe('https://ror.org/0018yg518');
+    expect(service.organization?.disambiguationSource).toBe('ROR');
+    expect(service.organization?.city).toBe('Fremont');
   });
 
   it('collects every summary across multiple groups in one section', () => {
@@ -368,8 +383,9 @@ describe('normalizeFundings — edge cases', () => {
         },
       ],
     };
-    const records = normalizeFundings(raw);
-    expect(records[0].url).toBe('https://grantome.com/test');
+    const [record] = normalizeFundings(raw);
+    assert(record);
+    expect(record.url).toBe('https://grantome.com/test');
   });
 
   it('handles multiple funding groups with multiple summaries', () => {
@@ -404,9 +420,10 @@ describe('normalizeFundings — edge cases', () => {
         },
       ],
     };
-    const records = normalizeFundings(raw);
-    expect(records[0].startDate).toBe('2015-06');
-    expect(records[0].endDate).toBe('2020-12');
+    const [record] = normalizeFundings(raw);
+    assert(record);
+    expect(record.startDate).toBe('2015-06');
+    expect(record.endDate).toBe('2020-12');
   });
 
   it('returns empty grantNumbers when external-ids is empty', () => {
@@ -417,8 +434,9 @@ describe('normalizeFundings — edge cases', () => {
         },
       ],
     };
-    const records = normalizeFundings(raw);
-    expect(records[0].grantNumbers).toEqual([]);
+    const [record] = normalizeFundings(raw);
+    assert(record);
+    expect(record.grantNumbers).toEqual([]);
   });
 
   it('skips groups with empty funding-summary', () => {
@@ -456,8 +474,9 @@ describe('normalizePeerReviews — edge cases', () => {
         },
       ],
     };
-    const reviews = normalizePeerReviews(raw);
-    expect(reviews[0].completionDate).toBe('2021-03-15');
+    const [review] = normalizePeerReviews(raw);
+    assert(review);
+    expect(review.completionDate).toBe('2021-03-15');
   });
 
   it('handles peer review with disambiguated convening organization', () => {
@@ -489,10 +508,11 @@ describe('normalizePeerReviews — edge cases', () => {
         },
       ],
     };
-    const reviews = normalizePeerReviews(raw);
-    expect(reviews[0].conveningOrganization?.disambiguatedId).toBe('https://ror.org/00abcd');
-    expect(reviews[0].conveningOrganization?.disambiguationSource).toBe('ROR');
-    expect(reviews[0].groupIssn).toBe('0036-8075');
+    const [review] = normalizePeerReviews(raw);
+    assert(review);
+    expect(review.conveningOrganization?.disambiguatedId).toBe('https://ror.org/00abcd');
+    expect(review.conveningOrganization?.disambiguationSource).toBe('ROR');
+    expect(review.groupIssn).toBe('0036-8075');
   });
 
   it('handles multiple peer review groups in a single group', () => {
@@ -513,8 +533,11 @@ describe('normalizePeerReviews — edge cases', () => {
     };
     const reviews = normalizePeerReviews(raw);
     expect(reviews).toHaveLength(2);
-    expect(reviews[0].reviewerRole).toBe('reviewer');
-    expect(reviews[1].reviewerRole).toBe('editor');
+    const [reviewer, editor] = reviews;
+    assert(reviewer);
+    assert(editor);
+    expect(reviewer.reviewerRole).toBe('reviewer');
+    expect(editor.reviewerRole).toBe('editor');
   });
 
   it('handles group with no peer-review-group key', () => {
@@ -548,8 +571,10 @@ describe('normalizeExpandedSearch — unicode and encoding', () => {
       ],
     };
     const result = normalizeExpandedSearch(raw);
-    expect(result.results[0].givenNames).toBe('Björn');
-    expect(result.results[0].familyNames).toBe('Ångström');
+    const [match] = result.results;
+    assert(match);
+    expect(match.givenNames).toBe('Björn');
+    expect(match.familyNames).toBe('Ångström');
   });
 
   it('preserves unicode in institution names', () => {
@@ -563,8 +588,10 @@ describe('normalizeExpandedSearch — unicode and encoding', () => {
       ],
     };
     const result = normalizeExpandedSearch(raw);
-    expect(result.results[0].institutionNames).toContain('Université de Paris');
-    expect(result.results[0].institutionNames).toContain('École Polytechnique');
+    const [match] = result.results;
+    assert(match);
+    expect(match.institutionNames).toContain('Université de Paris');
+    expect(match.institutionNames).toContain('École Polytechnique');
   });
 
   it('handles large numFound value', () => {

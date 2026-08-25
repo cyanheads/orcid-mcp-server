@@ -5,7 +5,7 @@
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { assert, beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetWorkDetail } from '@/mcp-server/tools/definitions/get-work-detail.tool.js';
 
 const mockGetWorkDetails = vi.fn();
@@ -100,7 +100,7 @@ describe('orcidGetWorkDetail', () => {
   it('returns full work detail for a single put-code', async () => {
     mockGetWorkDetails.mockResolvedValueOnce([{ type: 'work', detail: workDetailA }]);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetWorkDetail.errors });
     const input = orcidGetWorkDetail.input.parse({
       orcid_id: '0000-0001-9161-999X',
       put_codes: [215949386],
@@ -113,6 +113,7 @@ describe('orcidGetWorkDetail', () => {
     expect(result.errors).toHaveLength(0);
 
     const work = result.works[0];
+    assert(work);
     expect(work.putCode).toBe(215949386);
     expect(work.title).toBe('CRISPR-Cas9 Programmable Genome Editing');
     expect(work.subtitle).toBe('A Versatile Tool for Genome Engineering');
@@ -124,14 +125,14 @@ describe('orcidGetWorkDetail', () => {
     expect(work.url).toBe('https://doi.org/10.1126/science.1225829');
     expect(work.externalIds).toHaveLength(2);
     expect(work.contributors).toHaveLength(3);
-    expect(work.contributors[2].orcidId).toBe('0000-0001-9161-999X');
+    expect(work.contributors[2]!.orcidId).toBe('0000-0001-9161-999X');
     expect(work.languageCode).toBe('en');
   });
 
   it('strips ORCID URI prefix from input', async () => {
     mockGetWorkDetails.mockResolvedValueOnce([{ type: 'work', detail: workDetailA }]);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetWorkDetail.errors });
     const input = orcidGetWorkDetail.input.parse({
       orcid_id: 'https://orcid.org/0000-0001-9161-999X',
       put_codes: [215949386],
@@ -150,7 +151,7 @@ describe('orcidGetWorkDetail', () => {
       { type: 'work', detail: workDetailB },
     ]);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetWorkDetail.errors });
     const input = orcidGetWorkDetail.input.parse({
       orcid_id: '0000-0001-9161-999X',
       put_codes: [215949386, 99999],
@@ -159,8 +160,8 @@ describe('orcidGetWorkDetail', () => {
 
     expect(result.works).toHaveLength(2);
     expect(result.errors).toHaveLength(0);
-    expect(result.works[0].putCode).toBe(215949386);
-    expect(result.works[1].putCode).toBe(99999);
+    expect(result.works[0]!.putCode).toBe(215949386);
+    expect(result.works[1]!.putCode).toBe(99999);
   });
 
   // ---------------------------------------------------------------------------
@@ -170,7 +171,7 @@ describe('orcidGetWorkDetail', () => {
   it('handles sparse work (no abstract, no contributors, no citation)', async () => {
     mockGetWorkDetails.mockResolvedValueOnce([{ type: 'work', detail: workDetailB }]);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetWorkDetail.errors });
     const input = orcidGetWorkDetail.input.parse({
       orcid_id: '0000-0002-1825-0097',
       put_codes: [99999],
@@ -180,6 +181,7 @@ describe('orcidGetWorkDetail', () => {
     expect(result.works).toHaveLength(1);
     expect(result.errors).toHaveLength(0);
     const work = result.works[0];
+    assert(work);
     expect(work.putCode).toBe(99999);
     expect(work.title).toBeUndefined();
     expect(work.abstract).toBeUndefined();
@@ -200,7 +202,7 @@ describe('orcidGetWorkDetail', () => {
       { type: 'error', putCode: 999, message: '404 Not Found — put-code 999 does not exist' },
     ]);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetWorkDetail.errors });
     const input = orcidGetWorkDetail.input.parse({
       orcid_id: '0000-0001-9161-999X',
       put_codes: [215949386, 999],
@@ -208,10 +210,10 @@ describe('orcidGetWorkDetail', () => {
     const result = await orcidGetWorkDetail.handler(input, ctx);
 
     expect(result.works).toHaveLength(1);
-    expect(result.works[0].putCode).toBe(215949386);
+    expect(result.works[0]!.putCode).toBe(215949386);
     expect(result.errors).toHaveLength(1);
-    expect(result.errors[0].putCode).toBe(999);
-    expect(result.errors[0].message).toContain('Not Found');
+    expect(result.errors[0]!.putCode).toBe(999);
+    expect(result.errors[0]!.message).toContain('Not Found');
   });
 
   it('returns all errors when all put-codes fail', async () => {
@@ -220,7 +222,7 @@ describe('orcidGetWorkDetail', () => {
       { type: 'error', putCode: 2, message: 'Access denied' },
     ]);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetWorkDetail.errors });
     const input = orcidGetWorkDetail.input.parse({
       orcid_id: '0000-0001-9161-999X',
       put_codes: [1, 2],
@@ -229,8 +231,8 @@ describe('orcidGetWorkDetail', () => {
 
     expect(result.works).toHaveLength(0);
     expect(result.errors).toHaveLength(2);
-    expect(result.errors[0].putCode).toBe(1);
-    expect(result.errors[1].putCode).toBe(2);
+    expect(result.errors[0]!.putCode).toBe(1);
+    expect(result.errors[1]!.putCode).toBe(2);
   });
 
   it('handles error entries without a put-code', async () => {
@@ -238,7 +240,7 @@ describe('orcidGetWorkDetail', () => {
       { type: 'error', message: 'Unexpected server error' },
     ]);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetWorkDetail.errors });
     const input = orcidGetWorkDetail.input.parse({
       orcid_id: '0000-0001-9161-999X',
       put_codes: [123],
@@ -247,8 +249,8 @@ describe('orcidGetWorkDetail', () => {
 
     expect(result.works).toHaveLength(0);
     expect(result.errors).toHaveLength(1);
-    expect(result.errors[0].putCode).toBeUndefined();
-    expect(result.errors[0].message).toBe('Unexpected server error');
+    expect(result.errors[0]!.putCode).toBeUndefined();
+    expect(result.errors[0]!.message).toBe('Unexpected server error');
   });
 
   // ---------------------------------------------------------------------------
@@ -271,7 +273,9 @@ describe('orcidGetWorkDetail', () => {
       orcid_id: '9999-9999-9999-9994',
       put_codes: [1],
     });
-    const error = await orcidGetWorkDetail.handler(input, ctx).catch((e: unknown) => e);
+    const error = await Promise.resolve(orcidGetWorkDetail.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    );
 
     expect(error).toBeInstanceOf(McpError);
     expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
@@ -310,7 +314,9 @@ describe('orcidGetWorkDetail', () => {
       orcid_id: '0000-0001-9161-999X',
       put_codes: [1],
     });
-    const error = await orcidGetWorkDetail.handler(input, ctx).catch((e: unknown) => e);
+    const error = await Promise.resolve(orcidGetWorkDetail.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    );
 
     expect(error).toBeInstanceOf(McpError);
     // Code preserved — NOT downgraded to fetch_failed/InternalError.
@@ -333,7 +339,9 @@ describe('orcidGetWorkDetail', () => {
       orcid_id: '0000-0001-9161-999X',
       put_codes: [215949386],
     });
-    const error = await orcidGetWorkDetail.handler(input, ctx).catch((e: unknown) => e);
+    const error = await Promise.resolve(orcidGetWorkDetail.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    );
 
     expect(error).toBeInstanceOf(McpError);
     expect((error as McpError).code).toBe(JsonRpcErrorCode.InternalError);
@@ -358,7 +366,9 @@ describe('orcidGetWorkDetail', () => {
       orcid_id: '0000-0001-9161-999X',
       put_codes: [1],
     });
-    const error = await orcidGetWorkDetail.handler(input, ctx).catch((e: unknown) => e);
+    const error = await Promise.resolve(orcidGetWorkDetail.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    );
 
     expect(error).toBeInstanceOf(McpError);
     const data = (error as McpError).data as { reason?: string };

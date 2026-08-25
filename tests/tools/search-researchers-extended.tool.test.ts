@@ -23,13 +23,14 @@ describe('orcidSearchResearchers — Solr clause building', () => {
   it('builds ror-org-id clause with quotes for ror_id param', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({
       ror_id: 'https://ror.org/01an7q238',
     });
     await orcidSearchResearchers.handler(input, ctx);
 
-    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(mockExpandedSearch).toHaveBeenCalled();
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
     // ROR colons and slashes are Solr-reserved — escaped inside the phrase quote.
     expect(callParams.q).toBe('ror-org-id:"https\\:\\/\\/ror.org\\/01an7q238"');
   });
@@ -37,13 +38,14 @@ describe('orcidSearchResearchers — Solr clause building', () => {
   it('builds doi-self clause for doi param', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({
       doi: '10.1126/science.1225829',
     });
     await orcidSearchResearchers.handler(input, ctx);
 
-    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(mockExpandedSearch).toHaveBeenCalled();
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
     // DOI slash is Solr-reserved — escaped so the value stays a literal, not a regex.
     expect(callParams.q).toBe('doi-self:10.1126\\/science.1225829');
   });
@@ -51,27 +53,29 @@ describe('orcidSearchResearchers — Solr clause building', () => {
   it('builds pmid-self clause for pmid param', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({
       pmid: '22745249',
     });
     await orcidSearchResearchers.handler(input, ctx);
 
-    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(mockExpandedSearch).toHaveBeenCalled();
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
     expect(callParams.q).toBe('pmid-self:22745249');
   });
 
   it('appends raw query field with AND to structured clauses', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({
       family_name: 'Doudna',
       query: 'email:*berkeley.edu',
     });
     await orcidSearchResearchers.handler(input, ctx);
 
-    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(mockExpandedSearch).toHaveBeenCalled();
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
     expect(callParams.q).toContain('family-name:"Doudna"');
     expect(callParams.q).toContain('AND');
     expect(callParams.q).toContain('email:*berkeley.edu');
@@ -80,43 +84,46 @@ describe('orcidSearchResearchers — Solr clause building', () => {
   it('phrase-quotes given_name so multi-word names phrase-match (#9)', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({ given_name: 'Mary Ann' });
     await orcidSearchResearchers.handler(input, ctx);
 
-    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(mockExpandedSearch).toHaveBeenCalled();
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
     expect(callParams.q).toBe('given-names:"Mary Ann"');
   });
 
   it('phrase-quotes family_name so compound surnames phrase-match (#9)', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({ family_name: 'Van Damme' });
     await orcidSearchResearchers.handler(input, ctx);
 
-    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(mockExpandedSearch).toHaveBeenCalled();
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
     expect(callParams.q).toBe('family-name:"Van Damme"');
   });
 
   it('uses *:* when only whitespace-only params are provided', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({
       given_name: '   ',
       family_name: '  ',
     });
     await orcidSearchResearchers.handler(input, ctx);
 
-    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(mockExpandedSearch).toHaveBeenCalled();
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
     expect(callParams.q).toBe('*:*');
   });
 
   it('passes rows and start to the service call', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 50, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({
       family_name: 'Smith',
       rows: 50,
@@ -124,7 +131,8 @@ describe('orcidSearchResearchers — Solr clause building', () => {
     });
     await orcidSearchResearchers.handler(input, ctx);
 
-    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(mockExpandedSearch).toHaveBeenCalled();
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
     expect(callParams.rows).toBe(50);
     expect(callParams.start).toBe(100);
   });
@@ -243,35 +251,38 @@ describe('orcidSearchResearchers — Solr value escaping (#18)', () => {
   it('escapes an embedded quote in family_name so it cannot break the phrase', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({ family_name: 'O"Connor' });
     await orcidSearchResearchers.handler(input, ctx);
 
-    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(mockExpandedSearch).toHaveBeenCalled();
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
     expect(callParams.q).toBe('family-name:"O\\"Connor"');
   });
 
   it('escapes a backslash in a structured value', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({ keyword: 'a\\b' });
     await orcidSearchResearchers.handler(input, ctx);
 
-    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(mockExpandedSearch).toHaveBeenCalled();
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
     expect(callParams.q).toBe('keyword:"a\\\\b"');
   });
 
   it('escapes punctuation-heavy DOI reserved chars, leaving non-reserved chars intact', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({
       doi: '10.1002/(SICI)1099-0844(199912)17:4<290::AID-CBF849>3.0.CO;2-P',
     });
     await orcidSearchResearchers.handler(input, ctx);
 
-    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(mockExpandedSearch).toHaveBeenCalled();
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
     // Reserved chars (/ ( ) - :) escaped; non-reserved (< > ;) left literal.
     expect(callParams.q).toBe(
       'doi-self:10.1002\\/\\(SICI\\)1099\\-0844\\(199912\\)17\\:4<290\\:\\:AID\\-CBF849>3.0.CO;2\\-P',
@@ -281,13 +292,14 @@ describe('orcidSearchResearchers — Solr value escaping (#18)', () => {
   it('leaves the raw query passthrough unescaped', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({
       query: 'given-names:Jennifer AND (family-name:Doudna OR family-name:*)',
     });
     await orcidSearchResearchers.handler(input, ctx);
 
-    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(mockExpandedSearch).toHaveBeenCalled();
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
     // The raw query field is forwarded verbatim — its Solr operators are intentional.
     expect(callParams.q).toBe('given-names:Jennifer AND (family-name:Doudna OR family-name:*)');
   });
@@ -309,9 +321,9 @@ describe('orcidSearchResearchers — query_failed contract (#31)', () => {
 
     const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({ query: 'family-name:[unclosed' });
-    const err = (await orcidSearchResearchers
-      .handler(input, ctx)
-      .catch((e: unknown) => e)) as McpError;
+    const err = (await Promise.resolve(orcidSearchResearchers.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    )) as McpError;
 
     expect(err).toBeInstanceOf(McpError);
     expect(err.code).toBe(JsonRpcErrorCode.InvalidParams);
@@ -334,7 +346,9 @@ describe('orcidSearchResearchers — query_failed contract (#31)', () => {
 
     const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({ family_name: 'Doudna' });
-    const err = await orcidSearchResearchers.handler(input, ctx).catch((e: unknown) => e);
+    const err = await Promise.resolve(orcidSearchResearchers.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    );
 
     expect(err).toBe(upstream);
   });

@@ -5,7 +5,7 @@
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { assert, beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetResearchResources } from '@/mcp-server/tools/definitions/get-research-resources.tool.js';
 
 const mockGetResearchResources = vi.fn();
@@ -60,21 +60,23 @@ describe('orcidGetResearchResources', () => {
   it('returns resources with all fields', async () => {
     mockGetResearchResources.mockResolvedValueOnce(sampleResources);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetResearchResources.errors });
     const input = orcidGetResearchResources.input.parse({ orcid_id: '0000-0002-4788-2309' });
     const result = await orcidGetResearchResources.handler(input, ctx);
 
     expect(result.orcidId).toBe('0000-0002-4788-2309');
     expect(result.orcidUri).toBe('https://orcid.org/0000-0002-4788-2309');
     expect(result.resourceCount).toBe(1);
-    expect(result.resources[0].putCode).toBe(8093);
-    expect(result.resources[0].title).toContain('Deep Learning');
-    expect(result.resources[0].hostOrganization?.name).toContain('Cyberinfrastructure');
-    expect(result.resources[0].hostOrganization?.country).toBe('US');
-    expect(result.resources[0].externalIds).toHaveLength(1);
-    expect(result.resources[0].startDate).toBe('2025-01-24');
-    expect(result.resources[0].endDate).toBe('2026-01-23');
-    expect(result.resources[0].url).toContain('xras.org');
+    const resource = result.resources[0];
+    assert(resource);
+    expect(resource.putCode).toBe(8093);
+    expect(resource.title).toContain('Deep Learning');
+    expect(resource.hostOrganization?.name).toContain('Cyberinfrastructure');
+    expect(resource.hostOrganization?.country).toBe('US');
+    expect(resource.externalIds).toHaveLength(1);
+    expect(resource.startDate).toBe('2025-01-24');
+    expect(resource.endDate).toBe('2026-01-23');
+    expect(resource.url).toContain('xras.org');
     expect(getEnrichment(ctx).notice).toBeUndefined();
   });
 
@@ -84,7 +86,7 @@ describe('orcidGetResearchResources', () => {
     mockGetResearchResources.mockResolvedValueOnce([]);
     mockGetPerson.mockResolvedValueOnce(existingPerson);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetResearchResources.errors });
     const input = orcidGetResearchResources.input.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await orcidGetResearchResources.handler(input, ctx);
 
@@ -106,7 +108,9 @@ describe('orcidGetResearchResources', () => {
 
     const ctx = createMockContext({ errors: orcidGetResearchResources.errors });
     const input = orcidGetResearchResources.input.parse({ orcid_id: '0000-0000-0000-0001' });
-    const error = await orcidGetResearchResources.handler(input, ctx).catch((e: unknown) => e);
+    const error = await Promise.resolve(orcidGetResearchResources.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    );
 
     expect(error).toBeInstanceOf(McpError);
     expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
@@ -120,7 +124,7 @@ describe('orcidGetResearchResources', () => {
   it('does not call getPerson when resources are present', async () => {
     mockGetResearchResources.mockResolvedValueOnce(sampleResources);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetResearchResources.errors });
     const input = orcidGetResearchResources.input.parse({ orcid_id: '0000-0002-4788-2309' });
     await orcidGetResearchResources.handler(input, ctx);
 
@@ -135,25 +139,27 @@ describe('orcidGetResearchResources', () => {
     };
     mockGetResearchResources.mockResolvedValueOnce([sparseResource]);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetResearchResources.errors });
     const input = orcidGetResearchResources.input.parse({ orcid_id: '0000-0002-4788-2309' });
     const result = await orcidGetResearchResources.handler(input, ctx);
 
     expect(result.resourceCount).toBe(1);
-    expect(result.resources[0].putCode).toBe(1234);
-    expect(result.resources[0].title).toBeUndefined();
-    expect(result.resources[0].hostOrganization).toBeUndefined();
-    expect(result.resources[0].startDate).toBeUndefined();
-    expect(result.resources[0].endDate).toBeUndefined();
-    expect(result.resources[0].url).toBeUndefined();
-    expect(result.resources[0].externalIds).toEqual([]);
+    const resource = result.resources[0];
+    assert(resource);
+    expect(resource.putCode).toBe(1234);
+    expect(resource.title).toBeUndefined();
+    expect(resource.hostOrganization).toBeUndefined();
+    expect(resource.startDate).toBeUndefined();
+    expect(resource.endDate).toBeUndefined();
+    expect(resource.url).toBeUndefined();
+    expect(resource.externalIds).toEqual([]);
     expect(() => orcidGetResearchResources.output.parse(result)).not.toThrow();
   });
 
   it('strips ORCID URI prefix from input', async () => {
     mockGetResearchResources.mockResolvedValueOnce(sampleResources);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetResearchResources.errors });
     const input = orcidGetResearchResources.input.parse({
       orcid_id: 'https://orcid.org/0000-0002-4788-2309',
     });
@@ -168,7 +174,9 @@ describe('orcidGetResearchResources', () => {
 
     const ctx = createMockContext({ errors: orcidGetResearchResources.errors });
     const input = orcidGetResearchResources.input.parse({ orcid_id: '0000-0000-0000-0001' });
-    const error = await orcidGetResearchResources.handler(input, ctx).catch((e: unknown) => e);
+    const error = await Promise.resolve(orcidGetResearchResources.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    );
     expect(error).toBeInstanceOf(McpError);
     expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
     const data = (error as McpError).data as { reason?: string; recovery?: { hint?: string } };
@@ -179,7 +187,7 @@ describe('orcidGetResearchResources', () => {
   it('propagates non-404 service errors', async () => {
     mockGetResearchResources.mockRejectedValueOnce(new Error('ORCID API unavailable'));
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetResearchResources.errors });
     const input = orcidGetResearchResources.input.parse({ orcid_id: '0000-0002-4788-2309' });
     await expect(orcidGetResearchResources.handler(input, ctx)).rejects.toThrow(
       'ORCID API unavailable',

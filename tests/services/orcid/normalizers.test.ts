@@ -3,7 +3,7 @@
  * @module tests/services/orcid/normalizers.test
  */
 
-import { describe, expect, it } from 'vitest';
+import { assert, describe, expect, it } from 'vitest';
 import {
   normalizeActivities,
   normalizeBulkWorks,
@@ -69,9 +69,11 @@ describe('normalizePerson', () => {
     expect(result.keywords).toEqual(['CRISPR', 'RNA biology']);
     expect(result.researcherUrls).toEqual([{ name: 'Lab', url: 'https://doudnalab.org' }]);
     expect(result.externalIdentifiers).toHaveLength(1);
-    expect(result.externalIdentifiers[0].type).toBe('Scopus Author ID');
-    expect(result.externalIdentifiers[0].value).toBe('6603342255');
-    expect(result.externalIdentifiers[0].relationship).toBe('self');
+    const [scopusId] = result.externalIdentifiers;
+    assert(scopusId);
+    expect(scopusId.type).toBe('Scopus Author ID');
+    expect(scopusId.value).toBe('6603342255');
+    expect(scopusId.relationship).toBe('self');
     expect(result.emails).toEqual([{ email: 'jdoudna@berkeley.edu', primary: true }]);
     expect(result.countries).toEqual(['US']);
   });
@@ -101,8 +103,10 @@ describe('normalizePerson', () => {
     };
     const result = normalizePerson(raw);
     expect(result.researcherUrls).toHaveLength(1);
-    expect(result.researcherUrls[0].url).toBe('https://example.com');
-    expect(result.researcherUrls[0].name).toBeUndefined();
+    const [researcherUrl] = result.researcherUrls;
+    assert(researcherUrl);
+    expect(researcherUrl.url).toBe('https://example.com');
+    expect(researcherUrl.name).toBeUndefined();
   });
 
   it('trims whitespace-only biography to undefined', () => {
@@ -160,17 +164,21 @@ describe('normalizeWorks', () => {
     const works = normalizeWorks(raw);
 
     expect(works).toHaveLength(1);
-    expect(works[0].putCode).toBe(220823089);
-    expect(works[0].title).toBe(
+    const [work] = works;
+    assert(work);
+    expect(work.putCode).toBe(220823089);
+    expect(work.title).toBe(
       'Structure and evolution-guided design of minimal RNA-guided nucleases',
     );
-    expect(works[0].workType).toBe('journal-article');
-    expect(works[0].publicationDate).toBe('2026-07-16');
-    expect(works[0].journalTitle).toBe('Science');
-    expect(works[0].url).toBe('https://www.science.org/doi/10.1126/science.aed6123');
-    expect(works[0].externalIds).toHaveLength(1);
-    expect(works[0].externalIds[0].type).toBe('doi');
-    expect(works[0].externalIds[0].value).toBe('10.1126/science.aed6123');
+    expect(work.workType).toBe('journal-article');
+    expect(work.publicationDate).toBe('2026-07-16');
+    expect(work.journalTitle).toBe('Science');
+    expect(work.url).toBe('https://www.science.org/doi/10.1126/science.aed6123');
+    expect(work.externalIds).toHaveLength(1);
+    const [doi] = work.externalIds;
+    assert(doi);
+    expect(doi.type).toBe('doi');
+    expect(doi.value).toBe('10.1126/science.aed6123');
   });
 
   it('reads workType from the bare `type` key ORCID emits, not `work-type`', () => {
@@ -184,14 +192,18 @@ describe('normalizeWorks', () => {
 
     // The legacy `work-type` key is decoy data: no live payload carries it, and reading
     // it would silently mistype every work summary.
-    expect(normalizeWorks(raw)[0].workType).toBe('dataset');
+    const [work] = normalizeWorks(raw);
+    assert(work);
+    expect(work.workType).toBe('dataset');
   });
 
   it('omits workType when the summary carries no type', () => {
     const raw: RawWorksResponse = {
       group: [{ 'work-summary': [{ title: { title: { value: 'Untyped' } }, 'external-ids': {} }] }],
     };
-    expect(normalizeWorks(raw)[0].workType).toBeUndefined();
+    const [work] = normalizeWorks(raw);
+    assert(work);
+    expect(work.workType).toBeUndefined();
   });
 
   it('returns empty array for empty group list', () => {
@@ -212,8 +224,9 @@ describe('normalizeWorks', () => {
         },
       ],
     };
-    const works = normalizeWorks(raw);
-    expect(works[0].publicationDate).toBe('2020');
+    const [work] = normalizeWorks(raw);
+    assert(work);
+    expect(work.publicationDate).toBe('2020');
   });
 
   it('omits external ids with missing type or value', () => {
@@ -234,9 +247,12 @@ describe('normalizeWorks', () => {
         },
       ],
     };
-    const works = normalizeWorks(raw);
-    expect(works[0].externalIds).toHaveLength(1);
-    expect(works[0].externalIds[0].type).toBe('pmid');
+    const [work] = normalizeWorks(raw);
+    assert(work);
+    expect(work.externalIds).toHaveLength(1);
+    const [pmid] = work.externalIds;
+    assert(pmid);
+    expect(pmid.type).toBe('pmid');
   });
 });
 
@@ -318,17 +334,19 @@ describe('normalizeActivities', () => {
   it('unwraps the singular-type key and returns employment fields', () => {
     const result = normalizeActivities(raw, ['employment']);
     expect(result).toHaveLength(1);
-    expect(result[0].type).toBe('employment');
-    expect(result[0].role).toBe('Professor, Chair of Genetics & Genomics of Plants');
-    expect(result[0].department).toBe('Faculty of Biology');
-    expect(result[0].organization?.name).toBe('Universität Bielefeld');
-    expect(result[0].organization?.city).toBe('Bielefeld');
-    expect(result[0].organization?.country).toBe('DE');
-    expect(result[0].organization?.disambiguatedId).toBe('235712');
-    expect(result[0].organization?.disambiguationSource).toBe('RINGGOLD');
-    expect(result[0].startDate).toBe('2003-02-01');
-    expect(result[0].endDate).toBeUndefined();
-    expect(result[0].url).toBe('https://www.uni-bielefeld.de/biologie/ggp/');
+    const [employment] = result;
+    assert(employment);
+    expect(employment.type).toBe('employment');
+    expect(employment.role).toBe('Professor, Chair of Genetics & Genomics of Plants');
+    expect(employment.department).toBe('Faculty of Biology');
+    expect(employment.organization?.name).toBe('Universität Bielefeld');
+    expect(employment.organization?.city).toBe('Bielefeld');
+    expect(employment.organization?.country).toBe('DE');
+    expect(employment.organization?.disambiguatedId).toBe('235712');
+    expect(employment.organization?.disambiguationSource).toBe('RINGGOLD');
+    expect(employment.startDate).toBe('2003-02-01');
+    expect(employment.endDate).toBeUndefined();
+    expect(employment.url).toBe('https://www.uni-bielefeld.de/biologie/ggp/');
   });
 
   it('returns all types when "all" is requested', () => {
@@ -341,9 +359,11 @@ describe('normalizeActivities', () => {
   it('returns only requested types', () => {
     const result = normalizeActivities(raw, ['education']);
     expect(result).toHaveLength(1);
-    expect(result[0].type).toBe('education');
-    expect(result[0].organization?.name).toBe('University of Glasgow');
-    expect(result[0].endDate).toBe('1994-12-31');
+    const [education] = result;
+    assert(education);
+    expect(education.type).toBe('education');
+    expect(education.organization?.name).toBe('University of Glasgow');
+    expect(education.endDate).toBe('1994-12-31');
   });
 
   it('returns empty array when activities section is empty', () => {
@@ -375,8 +395,10 @@ describe('normalizeActivities', () => {
 
       const result = normalizeActivities(payload, [requestedType as 'employment']);
       expect(result).toHaveLength(1);
-      expect(result[0].type).toBe(requestedType);
-      expect(result[0].role).toBe(`role-${requestedType}`);
+      const [affiliation] = result;
+      assert(affiliation);
+      expect(affiliation.type).toBe(requestedType);
+      expect(affiliation.role).toBe(`role-${requestedType}`);
     }
   });
 
@@ -421,13 +443,15 @@ describe('normalizeActivities', () => {
 
     const result = normalizeActivities(payload, ['qualifications']);
     expect(result).toHaveLength(1);
-    expect(result[0].organization?.name).toBe('University of Oxford ');
-    expect(result[0].organization?.country).toBe('GB');
-    expect(result[0].organization?.disambiguatedId).toBeUndefined();
-    expect(result[0].department).toBeUndefined();
-    expect(result[0].role).toBeUndefined();
-    expect(result[0].startDate).toBeUndefined();
-    expect(result[0].endDate).toBeUndefined();
+    const [qualification] = result;
+    assert(qualification);
+    expect(qualification.organization?.name).toBe('University of Oxford ');
+    expect(qualification.organization?.country).toBe('GB');
+    expect(qualification.organization?.disambiguatedId).toBeUndefined();
+    expect(qualification.department).toBeUndefined();
+    expect(qualification.role).toBeUndefined();
+    expect(qualification.startDate).toBeUndefined();
+    expect(qualification.endDate).toBeUndefined();
   });
 });
 
@@ -469,16 +493,18 @@ describe('normalizeFundings', () => {
     const records = normalizeFundings(raw);
 
     expect(records).toHaveLength(1);
-    expect(records[0].title).toBe('CRISPR Development Grant');
-    expect(records[0].type).toBe('grant');
-    expect(records[0].funder?.name).toBe('NIH');
-    expect(records[0].funder?.country).toBe('US');
-    expect(records[0].funder?.disambiguatedId).toBe('https://doi.org/10.13039/100000002');
-    expect(records[0].funder?.disambiguationSource).toBe('FUNDREF');
-    expect(records[0].grantNumbers).toEqual(['R01GM123456']);
-    expect(records[0].startDate).toBe('2015');
-    expect(records[0].endDate).toBe('2020');
-    expect(records[0].url).toBe('https://grantome.com/grant/NIH/R01-GM123456');
+    const [record] = records;
+    assert(record);
+    expect(record.title).toBe('CRISPR Development Grant');
+    expect(record.type).toBe('grant');
+    expect(record.funder?.name).toBe('NIH');
+    expect(record.funder?.country).toBe('US');
+    expect(record.funder?.disambiguatedId).toBe('https://doi.org/10.13039/100000002');
+    expect(record.funder?.disambiguationSource).toBe('FUNDREF');
+    expect(record.grantNumbers).toEqual(['R01GM123456']);
+    expect(record.startDate).toBe('2015');
+    expect(record.endDate).toBe('2020');
+    expect(record.url).toBe('https://grantome.com/grant/NIH/R01-GM123456');
   });
 
   it('returns empty grantNumbers when no grant_number external ids', () => {
@@ -497,8 +523,9 @@ describe('normalizeFundings', () => {
       ],
     };
 
-    const records = normalizeFundings(raw);
-    expect(records[0].grantNumbers).toEqual([]);
+    const [record] = normalizeFundings(raw);
+    assert(record);
+    expect(record.grantNumbers).toEqual([]);
   });
 
   it('returns empty array for empty funding response', () => {
@@ -554,13 +581,15 @@ describe('normalizePeerReviews', () => {
     const reviews = normalizePeerReviews(raw);
 
     expect(reviews).toHaveLength(1);
-    expect(reviews[0].reviewerRole).toBe('reviewer');
-    expect(reviews[0].reviewType).toBe('review');
-    expect(reviews[0].completionDate).toBe('2023');
-    expect(reviews[0].conveningOrganization?.name).toBe('SpringerNature');
-    expect(reviews[0].conveningOrganization?.country).toBe('GB');
-    expect(reviews[0].reviewUrl).toBeUndefined();
-    expect(reviews[0].groupIssn).toBe('1476-4687');
+    const [review] = reviews;
+    assert(review);
+    expect(review.reviewerRole).toBe('reviewer');
+    expect(review.reviewType).toBe('review');
+    expect(review.completionDate).toBe('2023');
+    expect(review.conveningOrganization?.name).toBe('SpringerNature');
+    expect(review.conveningOrganization?.country).toBe('GB');
+    expect(review.reviewUrl).toBeUndefined();
+    expect(review.groupIssn).toBe('1476-4687');
   });
 
   it('leaves groupIssn absent for a non-ISSN group identifier', () => {
@@ -594,8 +623,10 @@ describe('normalizePeerReviews', () => {
 
     const reviews = normalizePeerReviews(raw);
     expect(reviews).toHaveLength(1);
-    expect(reviews[0].conveningOrganization?.name).toBe('F1000');
-    expect(reviews[0].groupIssn).toBeUndefined();
+    const [review] = reviews;
+    assert(review);
+    expect(review.conveningOrganization?.name).toBe('F1000');
+    expect(review.groupIssn).toBeUndefined();
   });
 
   it('returns empty array for sparse peer reviews response', () => {
@@ -612,8 +643,9 @@ describe('normalizePeerReviews', () => {
         },
       ],
     };
-    const reviews = normalizePeerReviews(raw);
-    expect(reviews[0].groupIssn).toBeUndefined();
+    const [review] = normalizePeerReviews(raw);
+    assert(review);
+    expect(review.groupIssn).toBeUndefined();
   });
 });
 
@@ -642,7 +674,8 @@ describe('normalizeExpandedSearch', () => {
 
     expect(result.numFound).toBe(3);
     expect(result.results).toHaveLength(1);
-    const r = result.results[0];
+    const [r] = result.results;
+    assert(r);
     expect(r.orcidId).toBe('0000-0001-9522-8779');
     expect(r.givenNames).toBe('Jennifer');
     expect(r.familyNames).toBe('Doudna');
@@ -662,7 +695,9 @@ describe('normalizeExpandedSearch', () => {
     };
     const result = normalizeExpandedSearch(raw);
     expect(result.results).toHaveLength(1);
-    expect(result.results[0].orcidId).toBe('0000-0002-1825-0097');
+    const [match] = result.results;
+    assert(match);
+    expect(match.orcidId).toBe('0000-0002-1825-0097');
   });
 
   it('defaults numFound to 0 and arrays to empty for minimal response', () => {
@@ -677,7 +712,8 @@ describe('normalizeExpandedSearch', () => {
       'expanded-result': [{ 'orcid-id': '0000-0002-1825-0097' }],
     };
     const result = normalizeExpandedSearch(raw);
-    const r = result.results[0];
+    const [r] = result.results;
+    assert(r);
     expect(r.orcidId).toBe('0000-0002-1825-0097');
     expect(r.givenNames).toBeUndefined();
     expect(r.otherNames).toEqual([]);
@@ -719,14 +755,16 @@ describe('normalizeBulkWorks', () => {
     const results = normalizeBulkWorks(raw);
 
     expect(results).toHaveLength(2);
-    expect(results[0]).toEqual({
+    const [first, second] = results;
+    assert(second);
+    expect(first).toEqual({
       type: 'error',
       putCode: 999999999,
       message:
         "400 Bad Request: The put code provided is not valid. Full validation error: '999999999' is not a valid put code",
     });
-    expect(results[1].type).toBe('error');
-    expect((results[1] as { putCode?: number }).putCode).toBe(888888888);
+    expect(second.type).toBe('error');
+    expect((second as { putCode?: number }).putCode).toBe(888888888);
   });
 
   it('leaves putCode absent when the message carries no extractable code', () => {
@@ -746,9 +784,11 @@ describe('normalizeBulkWorks', () => {
     const results = normalizeBulkWorks(raw);
 
     expect(results).toHaveLength(1);
-    expect(results[0].type).toBe('error');
-    expect((results[0] as { putCode?: number }).putCode).toBeUndefined();
-    expect((results[0] as { message: string }).message).toContain('not public');
+    const [entry] = results;
+    assert(entry);
+    expect(entry.type).toBe('error');
+    expect((entry as { putCode?: number }).putCode).toBeUndefined();
+    expect((entry as { message: string }).message).toContain('not public');
   });
 
   it('normalizes a mixed work + error bulk array, associating the code with its entry', () => {
@@ -775,10 +815,13 @@ describe('normalizeBulkWorks', () => {
     const results = normalizeBulkWorks(raw);
 
     expect(results).toHaveLength(2);
-    expect(results[0].type).toBe('work');
-    expect((results[0] as { detail: { putCode: number } }).detail.putCode).toBe(215949386);
-    expect(results[1].type).toBe('error');
-    expect((results[1] as { putCode?: number }).putCode).toBe(777777777);
+    const [workEntry, errorEntry] = results;
+    assert(workEntry);
+    assert(errorEntry);
+    expect(workEntry.type).toBe('work');
+    expect((workEntry as { detail: { putCode: number } }).detail.putCode).toBe(215949386);
+    expect(errorEntry.type).toBe('error');
+    expect((errorEntry as { putCode?: number }).putCode).toBe(777777777);
   });
 
   it('prefers an explicit upstream put-code field over message extraction', () => {
@@ -805,10 +848,11 @@ describe('normalizeBulkWorks', () => {
       bulk: [{ error: { 'error-code': 9042 } }],
     };
 
-    const results = normalizeBulkWorks(raw);
-    expect(results[0].type).toBe('error');
-    expect((results[0] as { message: string }).message).toContain('9042');
-    expect((results[0] as { putCode?: number }).putCode).toBeUndefined();
+    const [entry] = normalizeBulkWorks(raw);
+    assert(entry);
+    expect(entry.type).toBe('error');
+    expect((entry as { message: string }).message).toContain('9042');
+    expect((entry as { putCode?: number }).putCode).toBeUndefined();
   });
 
   it('returns an empty array for an empty bulk response', () => {

@@ -52,7 +52,7 @@ describe('orcidGetWorks', () => {
   it('returns works list with counts, offset, and truncation flags', async () => {
     mockGetWorks.mockResolvedValueOnce(sampleWorks);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetWorks.errors });
     const input = orcidGetWorks.input.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await orcidGetWorks.handler(input, ctx);
 
@@ -64,15 +64,15 @@ describe('orcidGetWorks', () => {
     expect(result.truncated).toBe(false);
     expect(result.nextOffset).toBeUndefined();
     expect(result.works).toHaveLength(2);
-    expect(result.works[0].title).toBe('CRISPR-Cas9 Mechanism');
-    expect(result.works[0].externalIds?.[0].type).toBe('doi');
+    expect(result.works[0]!.title).toBe('CRISPR-Cas9 Mechanism');
+    expect(result.works[0]!.externalIds?.[0]?.type).toBe('doi');
     expect(getEnrichment(ctx).notice).toBeUndefined();
   });
 
   it('strips ORCID URI prefix', async () => {
     mockGetWorks.mockResolvedValueOnce(sampleWorks);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetWorks.errors });
     const input = orcidGetWorks.input.parse({
       orcid_id: 'https://orcid.org/0000-0002-1825-0097',
     });
@@ -83,7 +83,7 @@ describe('orcidGetWorks', () => {
   it('slices a prolific record to the default limit and reports truncation', async () => {
     mockGetWorks.mockResolvedValueOnce(prolificWorks);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetWorks.errors });
     // 0000-0001-9161-999X is the real prolific record (524 works in production).
     const input = orcidGetWorks.input.parse({ orcid_id: '0000-0001-9161-999X' });
     const result = await orcidGetWorks.handler(input, ctx);
@@ -94,14 +94,14 @@ describe('orcidGetWorks', () => {
     expect(result.truncated).toBe(true);
     expect(result.nextOffset).toBe(50);
     expect(result.works).toHaveLength(50);
-    expect(result.works[0].title).toBe('Work 0');
-    expect(result.works[49].title).toBe('Work 49');
+    expect(result.works[0]!.title).toBe('Work 0');
+    expect(result.works[49]!.title).toBe('Work 49');
   });
 
   it('pages the tail with offset and clears truncation on the final page', async () => {
     mockGetWorks.mockResolvedValueOnce(prolificWorks);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetWorks.errors });
     const input = orcidGetWorks.input.parse({ orcid_id: '0000-0001-9161-999X', offset: 50 });
     const result = await orcidGetWorks.handler(input, ctx);
 
@@ -110,13 +110,13 @@ describe('orcidGetWorks', () => {
     expect(result.offset).toBe(50);
     expect(result.truncated).toBe(false);
     expect(result.nextOffset).toBeUndefined();
-    expect(result.works[0].title).toBe('Work 50');
+    expect(result.works[0]!.title).toBe('Work 50');
   });
 
   it('respects an explicit limit smaller than the record', async () => {
     mockGetWorks.mockResolvedValueOnce(sampleWorks);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetWorks.errors });
     const input = orcidGetWorks.input.parse({ orcid_id: '0000-0002-1825-0097', limit: 1 });
     const result = await orcidGetWorks.handler(input, ctx);
 
@@ -130,11 +130,11 @@ describe('orcidGetWorks', () => {
   it('includes external identifiers by default', async () => {
     mockGetWorks.mockResolvedValueOnce(sampleWorks);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetWorks.errors });
     const input = orcidGetWorks.input.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await orcidGetWorks.handler(input, ctx);
 
-    expect(result.works[0].externalIds).toEqual([
+    expect(result.works[0]!.externalIds).toEqual([
       { type: 'doi', value: '10.1126/science.1225829' },
     ]);
   });
@@ -142,21 +142,21 @@ describe('orcidGetWorks', () => {
   it('omits external identifiers when include_external_ids is false', async () => {
     mockGetWorks.mockResolvedValueOnce(sampleWorks);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetWorks.errors });
     const input = orcidGetWorks.input.parse({
       orcid_id: '0000-0002-1825-0097',
       include_external_ids: false,
     });
     const result = await orcidGetWorks.handler(input, ctx);
 
-    expect(result.works[0].externalIds).toBeUndefined();
-    expect(result.works[0].title).toBe('CRISPR-Cas9 Mechanism');
+    expect(result.works[0]!.externalIds).toBeUndefined();
+    expect(result.works[0]!.title).toBe('CRISPR-Cas9 Mechanism');
   });
 
   it('adds notice enrichment when works list is empty', async () => {
     mockGetWorks.mockResolvedValueOnce([]);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetWorks.errors });
     const input = orcidGetWorks.input.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await orcidGetWorks.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
@@ -172,19 +172,19 @@ describe('orcidGetWorks', () => {
   it('handles a sparse work entry (no title, no date)', async () => {
     mockGetWorks.mockResolvedValueOnce([{ externalIds: [] }]);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetWorks.errors });
     const input = orcidGetWorks.input.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await orcidGetWorks.handler(input, ctx);
 
     expect(result.workCount).toBe(1);
-    expect(result.works[0].title).toBeUndefined();
-    expect(result.works[0].externalIds).toEqual([]);
+    expect(result.works[0]!.title).toBeUndefined();
+    expect(result.works[0]!.externalIds).toEqual([]);
   });
 
   it('propagates non-404 service errors', async () => {
     mockGetWorks.mockRejectedValueOnce(new Error('Upstream timeout'));
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetWorks.errors });
     const input = orcidGetWorks.input.parse({ orcid_id: '0000-0002-1825-0097' });
     await expect(orcidGetWorks.handler(input, ctx)).rejects.toThrow('Upstream timeout');
   });
@@ -215,7 +215,7 @@ describe('orcidGetWorks', () => {
     const ctx = createMockContext({ errors: orcidGetWorks.errors });
     // Checksum-valid but unregistered iD — passes local validation, 404s upstream.
     const input = orcidGetWorks.input.parse({ orcid_id: '0000-0000-0000-0001' });
-    const error = await orcidGetWorks.handler(input, ctx).catch((e: unknown) => e);
+    const error = await Promise.resolve(orcidGetWorks.handler(input, ctx)).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(McpError);
     expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
     const data = (error as McpError).data as { reason?: string; recovery?: { hint?: string } };
@@ -237,7 +237,7 @@ describe('orcidGetWorks', () => {
 
     const blocks = orcidGetWorks.format!(output);
     expect(blocks).toHaveLength(1);
-    expect(blocks[0].type).toBe('text');
+    expect(blocks[0]!.type).toBe('text');
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('0000-0002-1825-0097');
     expect(text).toContain('https://orcid.org/0000-0002-1825-0097');

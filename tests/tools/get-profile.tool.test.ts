@@ -42,7 +42,7 @@ describe('orcidGetProfile', () => {
   it('returns the researcher profile for a bare ORCID iD', async () => {
     mockGetPerson.mockResolvedValueOnce(fullPerson);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetProfile.errors });
     const input = orcidGetProfile.input.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await orcidGetProfile.handler(input, ctx);
 
@@ -62,7 +62,7 @@ describe('orcidGetProfile', () => {
   it('strips ORCID URI prefix from orcid_id', async () => {
     mockGetPerson.mockResolvedValueOnce(fullPerson);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetProfile.errors });
     const input = orcidGetProfile.input.parse({
       orcid_id: 'https://orcid.org/0000-0002-1825-0097',
     });
@@ -83,7 +83,7 @@ describe('orcidGetProfile', () => {
       countries: [],
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetProfile.errors });
     const input = orcidGetProfile.input.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await orcidGetProfile.handler(input, ctx);
 
@@ -96,7 +96,7 @@ describe('orcidGetProfile', () => {
   it('propagates non-404 service errors', async () => {
     mockGetPerson.mockRejectedValueOnce(new Error('Network error'));
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetProfile.errors });
     const input = orcidGetProfile.input.parse({ orcid_id: '0000-0002-1825-0097' });
     await expect(orcidGetProfile.handler(input, ctx)).rejects.toThrow('Network error');
   });
@@ -123,7 +123,9 @@ describe('orcidGetProfile', () => {
 
     const ctx = createMockContext({ errors: orcidGetProfile.errors });
     const input = orcidGetProfile.input.parse({ orcid_id: '0000-0000-0000-0001' });
-    const error = await orcidGetProfile.handler(input, ctx).catch((e: unknown) => e);
+    const error = await Promise.resolve(orcidGetProfile.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    );
     expect(error).toBeInstanceOf(McpError);
     expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
     const data = (error as McpError).data as { reason?: string; recovery?: { hint?: string } };
@@ -150,7 +152,7 @@ describe('orcidGetProfile', () => {
 
     const blocks = orcidGetProfile.format!(output);
     expect(blocks).toHaveLength(1);
-    expect(blocks[0].type).toBe('text');
+    expect(blocks[0]!.type).toBe('text');
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('0000-0002-1825-0097');
     expect(text).toContain('https://orcid.org/0000-0002-1825-0097');

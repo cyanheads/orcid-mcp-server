@@ -5,7 +5,7 @@
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { assert, beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetPeerReviews } from '@/mcp-server/tools/definitions/get-peer-reviews.tool.js';
 
 const mockGetPeerReviews = vi.fn();
@@ -39,7 +39,7 @@ describe('orcidGetPeerReviews', () => {
   it('returns peer review records with all fields', async () => {
     mockGetPeerReviews.mockResolvedValueOnce(sampleReviews);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetPeerReviews.errors });
     const input = orcidGetPeerReviews.input.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await orcidGetPeerReviews.handler(input, ctx);
 
@@ -48,6 +48,7 @@ describe('orcidGetPeerReviews', () => {
     expect(result.reviewCount).toBe(1);
     expect(result.peerReviews).toHaveLength(1);
     const r = result.peerReviews[0];
+    assert(r);
     expect(r.reviewerRole).toBe('reviewer');
     expect(r.reviewType).toBe('review');
     expect(r.completionDate).toBe('2021-03');
@@ -60,7 +61,7 @@ describe('orcidGetPeerReviews', () => {
   it('strips ORCID URI prefix', async () => {
     mockGetPeerReviews.mockResolvedValueOnce(sampleReviews);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetPeerReviews.errors });
     const input = orcidGetPeerReviews.input.parse({
       orcid_id: 'https://orcid.org/0000-0002-1825-0097',
     });
@@ -71,7 +72,7 @@ describe('orcidGetPeerReviews', () => {
   it('adds notice enrichment when no peer reviews found', async () => {
     mockGetPeerReviews.mockResolvedValueOnce([]);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetPeerReviews.errors });
     const input = orcidGetPeerReviews.input.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await orcidGetPeerReviews.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
@@ -84,19 +85,21 @@ describe('orcidGetPeerReviews', () => {
   it('handles sparse review with no optional fields', async () => {
     mockGetPeerReviews.mockResolvedValueOnce([{}]);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetPeerReviews.errors });
     const input = orcidGetPeerReviews.input.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await orcidGetPeerReviews.handler(input, ctx);
 
-    expect(result.peerReviews[0].reviewerRole).toBeUndefined();
-    expect(result.peerReviews[0].conveningOrganization).toBeUndefined();
-    expect(result.peerReviews[0].groupIssn).toBeUndefined();
+    const sparse = result.peerReviews[0];
+    assert(sparse);
+    expect(sparse.reviewerRole).toBeUndefined();
+    expect(sparse.conveningOrganization).toBeUndefined();
+    expect(sparse.groupIssn).toBeUndefined();
   });
 
   it('propagates non-404 service errors', async () => {
     mockGetPeerReviews.mockRejectedValueOnce(new Error('Rate limited'));
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetPeerReviews.errors });
     const input = orcidGetPeerReviews.input.parse({ orcid_id: '0000-0002-1825-0097' });
     await expect(orcidGetPeerReviews.handler(input, ctx)).rejects.toThrow('Rate limited');
   });
@@ -122,7 +125,9 @@ describe('orcidGetPeerReviews', () => {
 
     const ctx = createMockContext({ errors: orcidGetPeerReviews.errors });
     const input = orcidGetPeerReviews.input.parse({ orcid_id: '0000-0000-0000-0001' });
-    const error = await orcidGetPeerReviews.handler(input, ctx).catch((e: unknown) => e);
+    const error = await Promise.resolve(orcidGetPeerReviews.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    );
     expect(error).toBeInstanceOf(McpError);
     expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
     const data = (error as McpError).data as { reason?: string; recovery?: { hint?: string } };
@@ -140,7 +145,7 @@ describe('orcidGetPeerReviews', () => {
 
     const blocks = orcidGetPeerReviews.format!(output);
     expect(blocks).toHaveLength(1);
-    expect(blocks[0].type).toBe('text');
+    expect(blocks[0]!.type).toBe('text');
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('0000-0002-1825-0097');
     expect(text).toContain('https://orcid.org/0000-0002-1825-0097');

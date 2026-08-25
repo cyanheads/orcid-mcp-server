@@ -36,7 +36,7 @@ describe('orcidResolveResearcher — pmid anchor', () => {
       results: [baseCandidate],
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Jennifer Doudna',
       pmid: '22745249',
@@ -44,7 +44,7 @@ describe('orcidResolveResearcher — pmid anchor', () => {
     const result = await orcidResolveResearcher.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
 
-    expect(result.candidates[0].anchorType).toBe('pmid');
+    expect(result.candidates[0]!.anchorType).toBe('pmid');
     expect(enrichment.queryUsed).toContain('pmid-self:22745249');
   });
 
@@ -53,7 +53,7 @@ describe('orcidResolveResearcher — pmid anchor', () => {
       .mockResolvedValueOnce({ numFound: 0, results: [] }) // name + pmid returns nothing
       .mockResolvedValueOnce({ numFound: 1, results: [baseCandidate] }); // pmid-only fallback
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Jennifer Doudna',
       pmid: '22745249',
@@ -80,11 +80,11 @@ describe('orcidResolveResearcher — name match types', () => {
       results: [candidateWithCredit],
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({ name: 'Jennifer A. Doudna' });
     const result = await orcidResolveResearcher.handler(input, ctx);
 
-    expect(result.candidates[0].nameMatchType).toBe('exact');
+    expect(result.candidates[0]!.nameMatchType).toBe('exact');
   });
 
   it('detects other-name match when input matches an alternate name', async () => {
@@ -99,11 +99,11 @@ describe('orcidResolveResearcher — name match types', () => {
       results: [candidateWithOtherName],
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna' });
     const result = await orcidResolveResearcher.handler(input, ctx);
 
-    expect(result.candidates[0].nameMatchType).toBe('other-name');
+    expect(result.candidates[0]!.nameMatchType).toBe('other-name');
   });
 
   it('returns none when no tokens match', async () => {
@@ -121,11 +121,11 @@ describe('orcidResolveResearcher — name match types', () => {
       results: [unrelatedCandidate],
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna' });
     const result = await orcidResolveResearcher.handler(input, ctx);
 
-    expect(result.candidates[0].nameMatchType).toBe('none');
+    expect(result.candidates[0]!.nameMatchType).toBe('none');
   });
 });
 
@@ -141,14 +141,14 @@ describe('orcidResolveResearcher — institution overlap scoring', () => {
       results: [{ ...baseCandidate, institutionNames: ['UC Berkeley'] }],
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Jennifer Doudna',
       affiliation: 'UC', // all tokens <= 3 chars — no overlap possible
     });
     const result = await orcidResolveResearcher.handler(input, ctx);
 
-    expect(result.candidates[0].institutionOverlap).toBe(false);
+    expect(result.candidates[0]!.institutionOverlap).toBe(false);
   });
 
   it('returns false overlap when affiliation is empty', async () => {
@@ -157,14 +157,14 @@ describe('orcidResolveResearcher — institution overlap scoring', () => {
       results: [baseCandidate],
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Jennifer Doudna',
       // no affiliation
     });
     const result = await orcidResolveResearcher.handler(input, ctx);
 
-    expect(result.candidates[0].institutionOverlap).toBe(false);
+    expect(result.candidates[0]!.institutionOverlap).toBe(false);
   });
 
   it('returns true overlap for partial institution name match', async () => {
@@ -173,14 +173,14 @@ describe('orcidResolveResearcher — institution overlap scoring', () => {
       results: [{ ...baseCandidate, institutionNames: ['Innovative Genomics Institute'] }],
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Jennifer Doudna',
       affiliation: 'Genomics Institute',
     });
     const result = await orcidResolveResearcher.handler(input, ctx);
 
-    expect(result.candidates[0].institutionOverlap).toBe(true);
+    expect(result.candidates[0]!.institutionOverlap).toBe(true);
   });
 
   it('ignores generic org stopwords so unrelated institutions do not falsely overlap (#20)', async () => {
@@ -207,7 +207,7 @@ describe('orcidResolveResearcher — institution overlap scoring', () => {
       ],
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Bob Smith',
       affiliation: 'University of California Berkeley',
@@ -226,7 +226,7 @@ describe('orcidResolveResearcher — institution overlap scoring', () => {
       results: [{ ...baseCandidate, institutionNames: ['University of California Berkeley'] }],
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Bob Smith',
       affiliation: 'University of California Berkeley',
@@ -235,7 +235,7 @@ describe('orcidResolveResearcher — institution overlap scoring', () => {
     const result = await orcidResolveResearcher.handler(input, ctx);
 
     // 'california'/'berkeley' are distinctive and present in the candidate institution.
-    expect(result.candidates[0].institutionOverlap).toBe(true);
+    expect(result.candidates[0]!.institutionOverlap).toBe(true);
   });
 });
 
@@ -247,11 +247,12 @@ describe('orcidResolveResearcher — Solr value escaping (#18)', () => {
   it('escapes embedded quotes in the name phrase clause', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({ name: 'Jean "Bob" Smith' });
     await orcidResolveResearcher.handler(input, ctx);
 
-    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(mockExpandedSearch).toHaveBeenCalled();
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
     // Embedded quotes are escaped so they cannot break out of the phrase into a raw clause.
     expect(callParams.q).toBe('given-and-family-names:"Jean \\"Bob\\" Smith"');
   });
@@ -262,28 +263,30 @@ describe('orcidResolveResearcher — Solr value escaping (#18)', () => {
       .mockResolvedValueOnce({ numFound: 0, results: [] })
       .mockResolvedValueOnce({ numFound: 0, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Jane Roe',
       affiliation: 'Foo & Bar (Institute)',
     });
     await orcidResolveResearcher.handler(input, ctx);
 
-    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(mockExpandedSearch).toHaveBeenCalled();
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
     expect(callParams.q).toContain('affiliation-org-name:"Foo \\& Bar \\(Institute\\)"');
   });
 
   it('escapes the slash in a DOI anchor clause', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 1, results: [baseCandidate] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Jennifer Doudna',
       doi: '10.1126/science.1225829',
     });
     await orcidResolveResearcher.handler(input, ctx);
 
-    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(mockExpandedSearch).toHaveBeenCalled();
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
     expect(callParams.q).toContain('doi-self:10.1126\\/science.1225829');
   });
 });
@@ -296,7 +299,7 @@ describe('orcidResolveResearcher — empty-result notice content', () => {
   it('notice for doi anchor references DOI in message', async () => {
     mockExpandedSearch.mockResolvedValue({ numFound: 0, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Jennifer Doudna',
       doi: '10.1126/science.9999999',
@@ -311,7 +314,7 @@ describe('orcidResolveResearcher — empty-result notice content', () => {
   it('notice for pmid anchor references PMID in message', async () => {
     mockExpandedSearch.mockResolvedValue({ numFound: 0, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Jennifer Doudna',
       pmid: '00000000',
@@ -348,7 +351,7 @@ describe('orcidResolveResearcher — sorting with institution overlap tiebreak',
       results: [exactNoOverlap, exactWithOverlap], // overlap candidate second in response
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Jennifer Doudna',
       affiliation: 'Berkeley',
@@ -356,9 +359,9 @@ describe('orcidResolveResearcher — sorting with institution overlap tiebreak',
     const result = await orcidResolveResearcher.handler(input, ctx);
 
     // Both are exact matches; overlap one should sort first
-    expect(result.candidates[0].orcidId).toBe('0000-0001-9522-8779'); // UC Berkeley match
-    expect(result.candidates[0].institutionOverlap).toBe(true);
-    expect(result.candidates[1].institutionOverlap).toBe(false);
+    expect(result.candidates[0]!.orcidId).toBe('0000-0001-9522-8779'); // UC Berkeley match
+    expect(result.candidates[0]!.institutionOverlap).toBe(true);
+    expect(result.candidates[1]!.institutionOverlap).toBe(false);
   });
 });
 
@@ -437,10 +440,10 @@ describe('orcidResolveResearcher — institution overlap needs a whole shared na
       results: [{ ...baseCandidate, institutionNames: [institution] }],
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna', affiliation });
     const result = await orcidResolveResearcher.handler(input, ctx);
-    return result.candidates[0].institutionOverlap;
+    return result.candidates[0]!.institutionOverlap;
   }
 
   it.each([
@@ -475,7 +478,7 @@ describe('orcidResolveResearcher — institution overlap needs a whole shared na
       ],
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Howard Eisner',
       affiliation: 'University of Washington',
@@ -483,7 +486,7 @@ describe('orcidResolveResearcher — institution overlap needs a whole shared na
     });
     const result = await orcidResolveResearcher.handler(input, ctx);
 
-    expect(result.candidates[0].institutionOverlap).toBe(false);
+    expect(result.candidates[0]!.institutionOverlap).toBe(false);
   });
 
   it('documents the residual: a shorter name that is a whole run of a longer one matches', async () => {
@@ -509,9 +512,9 @@ describe('orcidResolveResearcher — query_failed contract (#31)', () => {
 
     const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna' });
-    const err = (await orcidResolveResearcher
-      .handler(input, ctx)
-      .catch((e: unknown) => e)) as McpError;
+    const err = (await Promise.resolve(orcidResolveResearcher.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    )) as McpError;
 
     expect(err).toBeInstanceOf(McpError);
     expect(err.code).toBe(JsonRpcErrorCode.InvalidParams);
@@ -540,9 +543,9 @@ describe('orcidResolveResearcher — query_failed contract (#31)', () => {
       affiliation: 'UC Berkeley',
       doi: '10.1126/science.1225829',
     });
-    const err = (await orcidResolveResearcher
-      .handler(input, ctx)
-      .catch((e: unknown) => e)) as McpError;
+    const err = (await Promise.resolve(orcidResolveResearcher.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    )) as McpError;
 
     expect(mockExpandedSearch).toHaveBeenCalledTimes(3);
     expect(err.data?.reason).toBe('query_failed');
@@ -559,7 +562,9 @@ describe('orcidResolveResearcher — query_failed contract (#31)', () => {
 
     const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna' });
-    const err = await orcidResolveResearcher.handler(input, ctx).catch((e: unknown) => e);
+    const err = await Promise.resolve(orcidResolveResearcher.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    );
 
     expect(err).toBe(upstream);
   });

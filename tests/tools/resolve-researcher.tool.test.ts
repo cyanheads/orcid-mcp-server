@@ -35,17 +35,18 @@ describe('orcidResolveResearcher', () => {
       results: [doudnaResult],
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna' });
     const result = await orcidResolveResearcher.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
 
     expect(result.candidates).toHaveLength(1);
-    expect(result.candidates[0].orcidId).toBe('0000-0001-9522-8779');
-    expect(result.candidates[0].orcidUri).toBe('https://orcid.org/0000-0001-9522-8779');
-    expect(result.candidates[0].nameMatchType).toBe('exact');
-    expect(result.candidates[0].institutionOverlap).toBe(false); // no affiliation provided
-    expect(result.candidates[0].anchorType).toBe('none');
+    const candidate = result.candidates[0]!;
+    expect(candidate.orcidId).toBe('0000-0001-9522-8779');
+    expect(candidate.orcidUri).toBe('https://orcid.org/0000-0001-9522-8779');
+    expect(candidate.nameMatchType).toBe('exact');
+    expect(candidate.institutionOverlap).toBe(false); // no affiliation provided
+    expect(candidate.anchorType).toBe('none');
     expect(enrichment.totalFound).toBe(1);
     expect(enrichment.notice).toBeUndefined();
   });
@@ -56,14 +57,14 @@ describe('orcidResolveResearcher', () => {
       results: [doudnaResult],
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Jennifer Doudna',
       affiliation: 'UC Berkeley',
     });
     const result = await orcidResolveResearcher.handler(input, ctx);
 
-    expect(result.candidates[0].institutionOverlap).toBe(true);
+    expect(result.candidates[0]!.institutionOverlap).toBe(true);
   });
 
   it('sets anchorType to doi when doi is provided', async () => {
@@ -72,7 +73,7 @@ describe('orcidResolveResearcher', () => {
       results: [doudnaResult],
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Jennifer Doudna',
       doi: '10.1126/science.1225829',
@@ -80,7 +81,7 @@ describe('orcidResolveResearcher', () => {
     const result = await orcidResolveResearcher.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
 
-    expect(result.candidates[0].anchorType).toBe('doi');
+    expect(result.candidates[0]!.anchorType).toBe('doi');
     // DOI slash is Solr-reserved, so the executed clause carries the escaped form.
     expect(enrichment.queryUsed).toContain('doi-self:10.1126\\/science.1225829');
   });
@@ -91,7 +92,7 @@ describe('orcidResolveResearcher', () => {
     // Relaxed (without affiliation) returns 1
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 1, results: [doudnaResult] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Jennifer Doudna',
       affiliation: 'MIT',
@@ -110,7 +111,7 @@ describe('orcidResolveResearcher', () => {
       results: [doudnaResult],
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Jennifer Doudna',
       doi: '10.1126/science.1225829',
@@ -124,7 +125,7 @@ describe('orcidResolveResearcher', () => {
   it('adds notice enrichment when no candidates found and returns empty list', async () => {
     mockExpandedSearch.mockResolvedValue({ numFound: 0, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({ name: 'Extremely Rare Name XYZ' });
     const result = await orcidResolveResearcher.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
@@ -151,23 +152,24 @@ describe('orcidResolveResearcher', () => {
       results: [partialMatch, doudnaResult], // partial first in API response
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna' });
     const result = await orcidResolveResearcher.handler(input, ctx);
 
-    expect(result.candidates[0].orcidId).toBe('0000-0001-9522-8779'); // exact match first
-    expect(result.candidates[0].nameMatchType).toBe('exact');
-    expect(result.candidates[1].nameMatchType).toBe('partial');
+    expect(result.candidates[0]!.orcidId).toBe('0000-0001-9522-8779'); // exact match first
+    expect(result.candidates[0]!.nameMatchType).toBe('exact');
+    expect(result.candidates[1]!.nameMatchType).toBe('partial');
   });
 
   it('phrase-quotes the full name in the primary Solr clause (#4)', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 1, results: [doudnaResult] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna' });
     await orcidResolveResearcher.handler(input, ctx);
 
-    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(mockExpandedSearch).toHaveBeenCalled();
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
     // Name must be phrase-quoted so Solr matches the full name, not individual tokens
     expect(callParams.q).toContain('given-and-family-names:"Jennifer Doudna"');
     expect(callParams.q).not.toContain('given-and-family-names:Jennifer Doudna');
@@ -176,11 +178,12 @@ describe('orcidResolveResearcher', () => {
   it('phrase-quotes multi-word name in the primary Solr clause (#4)', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 1, results: [doudnaResult] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({ name: 'Mary Ann Smith' });
     await orcidResolveResearcher.handler(input, ctx);
 
-    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(mockExpandedSearch).toHaveBeenCalled();
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
     expect(callParams.q).toBe('given-and-family-names:"Mary Ann Smith"');
   });
 
@@ -190,9 +193,9 @@ describe('orcidResolveResearcher', () => {
 
     const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna' });
-    const err = (await orcidResolveResearcher
-      .handler(input, ctx)
-      .catch((e: unknown) => e)) as McpError;
+    const err = (await Promise.resolve(orcidResolveResearcher.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    )) as McpError;
 
     expect(err).toBeInstanceOf(McpError);
     expect(err.data?.reason).toBe('query_failed');
@@ -217,7 +220,7 @@ describe('orcidResolveResearcher', () => {
 
     const blocks = orcidResolveResearcher.format!(output);
     expect(blocks).toHaveLength(1);
-    expect(blocks[0].type).toBe('text');
+    expect(blocks[0]!.type).toBe('text');
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('0000-0001-9522-8779');
     expect(text).toContain('https://orcid.org/0000-0001-9522-8779');
@@ -247,7 +250,7 @@ describe('orcidResolveResearcher — count/query pairing (#15)', () => {
   it('reports primaryQuery/primaryTotalFound equal to queryUsed/totalFound when no fallback runs', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 3, results: [doudnaResult] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna' });
     await orcidResolveResearcher.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
@@ -264,7 +267,7 @@ describe('orcidResolveResearcher — count/query pairing (#15)', () => {
       .mockResolvedValueOnce({ numFound: 0, results: [] })
       .mockResolvedValueOnce({ numFound: 5, results: [doudnaResult] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Jennifer Doudna',
       affiliation: 'University of California Berkeley',
@@ -291,7 +294,7 @@ describe('orcidResolveResearcher — count/query pairing (#15)', () => {
       .mockResolvedValueOnce({ numFound: 0, results: [] })
       .mockResolvedValueOnce({ numFound: 4, results: [doudnaResult] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Jennifer Doudna',
       affiliation: 'University of California Berkeley',
@@ -329,7 +332,7 @@ describe('orcidResolveResearcher — dual DOI+PMID anchor fallback (#19)', () =>
       .mockResolvedValueOnce({ numFound: 0, results: [] })
       .mockResolvedValueOnce({ numFound: 1, results: [doudnaResult] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Jennifer Doudna',
       doi: '10.0000/not-real',
@@ -343,7 +346,7 @@ describe('orcidResolveResearcher — dual DOI+PMID anchor fallback (#19)', () =>
     expect(mockExpandedSearch).toHaveBeenCalledTimes(3);
     // The valid PMID anchor produced the candidate and is reported as the anchor used.
     expect(result.candidates).toHaveLength(1);
-    expect(result.candidates[0].anchorType).toBe('pmid');
+    expect(result.candidates[0]!.anchorType).toBe('pmid');
     expect(enrichment.queryUsed).toBe('pmid-self:41961593');
     expect(enrichment.relaxedQuery).toBe('pmid-self:41961593');
   });
@@ -355,7 +358,7 @@ describe('orcidResolveResearcher — dual DOI+PMID anchor fallback (#19)', () =>
       .mockResolvedValueOnce({ numFound: 0, results: [] })
       .mockResolvedValueOnce({ numFound: 2, results: [doudnaResult] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Jennifer Doudna',
       doi: '10.1126/science.1225829',
@@ -365,7 +368,7 @@ describe('orcidResolveResearcher — dual DOI+PMID anchor fallback (#19)', () =>
     const enrichment = getEnrichment(ctx);
 
     expect(mockExpandedSearch).toHaveBeenCalledTimes(2); // combined, DOI-only (PMID skipped)
-    expect(result.candidates[0].anchorType).toBe('doi');
+    expect(result.candidates[0]!.anchorType).toBe('doi');
     expect(enrichment.relaxedQuery).toBe('doi-self:10.1126\\/science.1225829');
   });
 });

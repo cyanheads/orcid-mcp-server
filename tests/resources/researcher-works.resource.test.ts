@@ -44,32 +44,32 @@ describe('researcherWorksResource', () => {
     mockGetWorks.mockResolvedValueOnce(sampleWorks);
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0002-1825-0097' });
+    const params = researcherWorksResource.params!.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await researcherWorksResource.handler(params, ctx);
 
     expect(result.orcidId).toBe('0000-0002-1825-0097');
     expect(result.orcidUri).toBe('https://orcid.org/0000-0002-1825-0097');
     expect(result.workCount).toBe(1);
     expect(result.works).toHaveLength(1);
-    expect(result.works[0].title).toBe('CRISPR-Cas9 Mechanism');
-    expect(result.works[0].workType).toBe('journal-article');
-    expect(result.works[0].publicationDate).toBe('2012-08');
-    expect(result.works[0].journalTitle).toBe('Science');
+    const work = result.works[0]!;
+    expect(work.title).toBe('CRISPR-Cas9 Mechanism');
+    expect(work.workType).toBe('journal-article');
+    expect(work.publicationDate).toBe('2012-08');
+    expect(work.journalTitle).toBe('Science');
     // externalIds are projected to type+value only
-    expect(result.works[0].externalIds).toHaveLength(2);
-    expect(result.works[0].externalIds[0].type).toBe('doi');
-    expect(result.works[0].externalIds[0].value).toBe('10.1126/science.1225829');
+    expect(work.externalIds).toHaveLength(2);
+    const externalId = work.externalIds[0]!;
+    expect(externalId.type).toBe('doi');
+    expect(externalId.value).toBe('10.1126/science.1225829');
     // relationship is stripped (not in resource output schema)
-    expect(
-      (result.works[0].externalIds[0] as Record<string, unknown>).relationship,
-    ).toBeUndefined();
+    expect((externalId as Record<string, unknown>).relationship).toBeUndefined();
   });
 
   it('strips ORCID URI prefix', async () => {
     mockGetWorks.mockResolvedValueOnce(sampleWorks);
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherWorksResource.params.parse({
+    const params = researcherWorksResource.params!.parse({
       orcid_id: 'https://orcid.org/0000-0002-1825-0097',
     });
     const result = await researcherWorksResource.handler(params, ctx);
@@ -81,20 +81,20 @@ describe('researcherWorksResource', () => {
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
     // 0000-0001-9161-999X is the real prolific record (524 works in production).
-    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0001-9161-999X' });
+    const params = researcherWorksResource.params!.parse({ orcid_id: '0000-0001-9161-999X' });
     const result = await researcherWorksResource.handler(params, ctx);
 
     expect(result.workCount).toBe(60); // total available, not the page size
     expect(result.works).toHaveLength(25); // conservative compact cap
-    expect(result.works[0].title).toBe('Work 0');
-    expect(result.works[24].title).toBe('Work 24');
+    expect(result.works[0]!.title).toBe('Work 0');
+    expect(result.works[24]!.title).toBe('Work 24');
   });
 
   it('returns empty works with workCount 0 when no works', async () => {
     mockGetWorks.mockResolvedValueOnce([]);
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0002-1825-0097' });
+    const params = researcherWorksResource.params!.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await researcherWorksResource.handler(params, ctx);
 
     expect(result.workCount).toBe(0);
@@ -105,27 +105,29 @@ describe('researcherWorksResource', () => {
     mockGetWorks.mockResolvedValueOnce([{ externalIds: [] }]);
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0002-1825-0097' });
+    const params = researcherWorksResource.params!.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await researcherWorksResource.handler(params, ctx);
 
     expect(result.workCount).toBe(1);
-    expect(result.works[0].title).toBeUndefined();
-    expect(result.works[0].externalIds).toEqual([]);
+    expect(result.works[0]!.title).toBeUndefined();
+    expect(result.works[0]!.externalIds).toEqual([]);
   });
 
   it('propagates service errors', async () => {
     mockGetWorks.mockRejectedValueOnce(new Error('API unavailable'));
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0002-1825-0097' });
+    const params = researcherWorksResource.params!.parse({ orcid_id: '0000-0002-1825-0097' });
     await expect(researcherWorksResource.handler(params, ctx)).rejects.toThrow('API unavailable');
   });
 
   it('rejects a checksum-invalid ORCID iD with InvalidParams before any upstream request', async () => {
     const ctx = createMockContext({ tenantId: 'test-tenant' });
     // Well-shaped but checksum-invalid: passes the regex-only param schema, rejected in-handler.
-    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0000-0000-0000' });
-    const err = await researcherWorksResource.handler(params, ctx).catch((e: unknown) => e);
+    const params = researcherWorksResource.params!.parse({ orcid_id: '0000-0000-0000-0000' });
+    const err = await Promise.resolve(researcherWorksResource.handler(params, ctx)).catch(
+      (e: unknown) => e,
+    );
 
     expect(err).toBeInstanceOf(McpError);
     expect((err as McpError).code).toBe(JsonRpcErrorCode.InvalidParams);
@@ -144,8 +146,10 @@ describe('researcherWorksResource', () => {
     );
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0000-0000-0001' });
-    const err = await researcherWorksResource.handler(params, ctx).catch((e: unknown) => e);
+    const params = researcherWorksResource.params!.parse({ orcid_id: '0000-0000-0000-0001' });
+    const err = await Promise.resolve(researcherWorksResource.handler(params, ctx)).catch(
+      (e: unknown) => e,
+    );
 
     expect(err).toBeInstanceOf(McpError);
     expect((err as McpError).code).toBe(JsonRpcErrorCode.NotFound);
@@ -158,8 +162,10 @@ describe('researcherWorksResource', () => {
     mockGetWorks.mockRejectedValueOnce(serviceError);
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0002-1825-0097' });
-    const err = await researcherWorksResource.handler(params, ctx).catch((e: unknown) => e);
+    const params = researcherWorksResource.params!.parse({ orcid_id: '0000-0002-1825-0097' });
+    const err = await Promise.resolve(researcherWorksResource.handler(params, ctx)).catch(
+      (e: unknown) => e,
+    );
 
     expect(err).toBe(serviceError);
   });
@@ -176,10 +182,10 @@ describe('researcherWorksResource', () => {
     ]);
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherWorksResource.params.parse({ orcid_id: '0000-0002-1825-0097' });
+    const params = researcherWorksResource.params!.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await researcherWorksResource.handler(params, ctx);
 
-    const ids = result.works[0].externalIds;
+    const ids = result.works[0]!.externalIds;
     expect(ids.some((id) => id.type === 'arxiv')).toBe(true);
     expect(ids.some((id) => id.type === 'doi')).toBe(true);
   });

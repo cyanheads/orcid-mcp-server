@@ -5,7 +5,7 @@
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { assert, beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetAffiliations } from '@/mcp-server/tools/definitions/get-affiliations.tool.js';
 
 const mockGetAffiliations = vi.fn();
@@ -45,7 +45,7 @@ describe('orcidGetAffiliations', () => {
   it('returns affiliations for default types (employment + education)', async () => {
     mockGetAffiliations.mockResolvedValueOnce(sampleAffiliations);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetAffiliations.errors });
     const input = orcidGetAffiliations.input.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await orcidGetAffiliations.handler(input, ctx);
 
@@ -55,6 +55,7 @@ describe('orcidGetAffiliations', () => {
     expect(result.requestedTypes).toEqual(['employment', 'education']);
     expect(result.affiliations).toHaveLength(2);
     const emp = result.affiliations[0];
+    assert(emp);
     expect(emp.type).toBe('employment');
     expect(emp.organization?.name).toBe('UC Berkeley');
     expect(emp.organization?.disambiguatedId).toBe('https://ror.org/01an7q238');
@@ -66,21 +67,22 @@ describe('orcidGetAffiliations', () => {
   it('passes requested types to the service', async () => {
     mockGetAffiliations.mockResolvedValueOnce([]);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetAffiliations.errors });
     const input = orcidGetAffiliations.input.parse({
       orcid_id: '0000-0002-1825-0097',
       types: ['all'],
     });
     await orcidGetAffiliations.handler(input, ctx);
 
-    const [, types] = mockGetAffiliations.mock.calls[0];
+    expect(mockGetAffiliations).toHaveBeenCalled();
+    const [, types] = mockGetAffiliations.mock.calls[0]!;
     expect(types).toEqual(['all']);
   });
 
   it('adds notice enrichment when no affiliations found', async () => {
     mockGetAffiliations.mockResolvedValueOnce([]);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetAffiliations.errors });
     const input = orcidGetAffiliations.input.parse({
       orcid_id: '0000-0002-1825-0097',
       types: ['employment'],
@@ -96,22 +98,24 @@ describe('orcidGetAffiliations', () => {
   it('handles sparse affiliation with no organization details', async () => {
     mockGetAffiliations.mockResolvedValueOnce([{ type: 'memberships' }]);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetAffiliations.errors });
     const input = orcidGetAffiliations.input.parse({
       orcid_id: '0000-0002-1825-0097',
       types: ['memberships'],
     });
     const result = await orcidGetAffiliations.handler(input, ctx);
 
-    expect(result.affiliations[0].type).toBe('memberships');
-    expect(result.affiliations[0].organization).toBeUndefined();
-    expect(result.affiliations[0].role).toBeUndefined();
+    const membership = result.affiliations[0];
+    assert(membership);
+    expect(membership.type).toBe('memberships');
+    expect(membership.organization).toBeUndefined();
+    expect(membership.role).toBeUndefined();
   });
 
   it('propagates non-404 service errors', async () => {
     mockGetAffiliations.mockRejectedValueOnce(new Error('API error'));
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidGetAffiliations.errors });
     const input = orcidGetAffiliations.input.parse({ orcid_id: '0000-0002-1825-0097' });
     await expect(orcidGetAffiliations.handler(input, ctx)).rejects.toThrow('API error');
   });
@@ -137,7 +141,9 @@ describe('orcidGetAffiliations', () => {
 
     const ctx = createMockContext({ errors: orcidGetAffiliations.errors });
     const input = orcidGetAffiliations.input.parse({ orcid_id: '0000-0000-0000-0001' });
-    const error = await orcidGetAffiliations.handler(input, ctx).catch((e: unknown) => e);
+    const error = await Promise.resolve(orcidGetAffiliations.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    );
     expect(error).toBeInstanceOf(McpError);
     expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
     const data = (error as McpError).data as { reason?: string; recovery?: { hint?: string } };
@@ -156,7 +162,7 @@ describe('orcidGetAffiliations', () => {
 
     const blocks = orcidGetAffiliations.format!(output);
     expect(blocks).toHaveLength(1);
-    expect(blocks[0].type).toBe('text');
+    expect(blocks[0]!.type).toBe('text');
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('0000-0002-1825-0097');
     expect(text).toContain('UC Berkeley');

@@ -45,7 +45,7 @@ describe('orcidSearchResearchers', () => {
       ],
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({
       family_name: 'Doudna',
       rows: 10,
@@ -59,18 +59,19 @@ describe('orcidSearchResearchers', () => {
     expect(result.start).toBe(0);
     expect(enrichment.effectiveQuery).toBe('family-name:"Doudna"');
     expect(result.results).toHaveLength(2);
-    expect(result.results[0].orcidId).toBe('0000-0001-9522-8779');
-    expect(result.results[0].orcidUri).toBe('https://orcid.org/0000-0001-9522-8779');
-    expect(result.results[0].givenNames).toBe('Jennifer');
-    expect(result.results[0].familyNames).toBe('Doudna');
-    expect(result.results[0].institutionNames).toEqual(['UC Berkeley']);
+    const researcher = result.results[0]!;
+    expect(researcher.orcidId).toBe('0000-0001-9522-8779');
+    expect(researcher.orcidUri).toBe('https://orcid.org/0000-0001-9522-8779');
+    expect(researcher.givenNames).toBe('Jennifer');
+    expect(researcher.familyNames).toBe('Doudna');
+    expect(researcher.institutionNames).toEqual(['UC Berkeley']);
     expect(enrichment.notice).toBeUndefined();
   });
 
   it('builds an ANDed query from multiple structured params', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 1, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({
       given_name: 'Jennifer',
       family_name: 'Doudna',
@@ -79,7 +80,8 @@ describe('orcidSearchResearchers', () => {
     });
     await orcidSearchResearchers.handler(input, ctx);
 
-    const [callParams] = mockExpandedSearch.mock.calls[0];
+    expect(mockExpandedSearch).toHaveBeenCalled();
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
     expect(callParams.q).toContain('given-names:"Jennifer"');
     expect(callParams.q).toContain('family-name:"Doudna"');
     expect(callParams.q).toContain('affiliation-org-name:"UC Berkeley"');
@@ -89,7 +91,7 @@ describe('orcidSearchResearchers', () => {
   it('enriches with wildcard query when no params provided', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 100, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({});
     await orcidSearchResearchers.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
@@ -100,7 +102,7 @@ describe('orcidSearchResearchers', () => {
   it('adds notice enrichment when no results found', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({ family_name: 'XyzNoMatch' });
     await orcidSearchResearchers.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
@@ -112,7 +114,7 @@ describe('orcidSearchResearchers', () => {
   it('adds notice enrichment when pagination overshoots numFound', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 5, results: [] });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({ family_name: 'Smith', start: 100 });
     await orcidSearchResearchers.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
@@ -127,9 +129,9 @@ describe('orcidSearchResearchers', () => {
 
     const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({ family_name: 'Smith' });
-    const err = (await orcidSearchResearchers
-      .handler(input, ctx)
-      .catch((e: unknown) => e)) as McpError;
+    const err = (await Promise.resolve(orcidSearchResearchers.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    )) as McpError;
 
     expect(err).toBeInstanceOf(McpError);
     expect(err.data?.reason).toBe('query_failed');
@@ -154,7 +156,7 @@ describe('orcidSearchResearchers', () => {
 
     const blocks = orcidSearchResearchers.format!(output);
     expect(blocks).toHaveLength(1);
-    expect(blocks[0].type).toBe('text');
+    expect(blocks[0]!.type).toBe('text');
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('0000-0001-9522-8779');
     expect(text).toContain('https://orcid.org/0000-0001-9522-8779');
@@ -197,7 +199,7 @@ describe('orcidSearchResearchers', () => {
   it('sets truncated false and omits nextStart when all matches fit below the cap', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 2, results: stubResults(2) });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({ family_name: 'Doudna', rows: 20, start: 0 });
     const result = await orcidSearchResearchers.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
@@ -210,7 +212,7 @@ describe('orcidSearchResearchers', () => {
   it('emits nextStart when more matches remain below the cap', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 100, results: stubResults(20) });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({ family_name: 'Smith', rows: 20, start: 0 });
     const result = await orcidSearchResearchers.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
@@ -223,7 +225,7 @@ describe('orcidSearchResearchers', () => {
   it('flags truncated with a ceiling notice and a still-reachable nextStart when numFound exceeds 10,000', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 24043, results: stubResults(20) });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({ family_name: 'Smith', rows: 20, start: 0 });
     const result = await orcidSearchResearchers.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
@@ -239,7 +241,7 @@ describe('orcidSearchResearchers', () => {
   it('keeps truncated true but omits nextStart on the final reachable page at start 10,000', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 24043, results: stubResults(20) });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({
       family_name: 'Smith',
       rows: 20,
@@ -258,7 +260,7 @@ describe('orcidSearchResearchers', () => {
   it('offers nextStart at the inclusive 10,000 boundary when it is the last legal page', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 24043, results: stubResults(20) });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({
       family_name: 'Smith',
       rows: 20,

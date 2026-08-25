@@ -42,7 +42,7 @@ describe('researcherProfileResource', () => {
     mockGetPerson.mockResolvedValueOnce(fullPerson);
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherProfileResource.params.parse({
+    const params = researcherProfileResource.params!.parse({
       orcid_id: '0000-0002-1825-0097',
     });
     const result = await researcherProfileResource.handler(params, ctx);
@@ -56,9 +56,10 @@ describe('researcherProfileResource', () => {
     expect(result.keywords).toEqual(['CRISPR']);
     expect(result.researcherUrls).toEqual([{ name: 'Lab', url: 'https://doudnalab.org' }]);
     expect(result.externalIdentifiers).toHaveLength(1);
-    expect(result.externalIdentifiers[0].type).toBe('Scopus Author ID');
-    expect(result.externalIdentifiers[0].value).toBe('6603342255');
-    expect(result.externalIdentifiers[0].url).toBe('https://scopus.com/...');
+    const externalId = result.externalIdentifiers[0]!;
+    expect(externalId.type).toBe('Scopus Author ID');
+    expect(externalId.value).toBe('6603342255');
+    expect(externalId.url).toBe('https://scopus.com/...');
     // relationship is not in the resource output schema — strips it
   });
 
@@ -66,7 +67,7 @@ describe('researcherProfileResource', () => {
     mockGetPerson.mockResolvedValueOnce(fullPerson);
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherProfileResource.params.parse({
+    const params = researcherProfileResource.params!.parse({
       orcid_id: 'https://orcid.org/0000-0002-1825-0097',
     });
     const result = await researcherProfileResource.handler(params, ctx);
@@ -76,8 +77,10 @@ describe('researcherProfileResource', () => {
   it('rejects a checksum-invalid ORCID iD with InvalidParams before any upstream request', async () => {
     const ctx = createMockContext({ tenantId: 'test-tenant' });
     // Well-shaped but checksum-invalid: passes the regex-only param schema, rejected in-handler.
-    const params = researcherProfileResource.params.parse({ orcid_id: '0000-0000-0000-0000' });
-    const err = await researcherProfileResource.handler(params, ctx).catch((e: unknown) => e);
+    const params = researcherProfileResource.params!.parse({ orcid_id: '0000-0000-0000-0000' });
+    const err = await Promise.resolve(researcherProfileResource.handler(params, ctx)).catch(
+      (e: unknown) => e,
+    );
 
     expect(err).toBeInstanceOf(McpError);
     expect((err as McpError).code).toBe(JsonRpcErrorCode.InvalidParams);
@@ -96,7 +99,7 @@ describe('researcherProfileResource', () => {
     });
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherProfileResource.params.parse({
+    const params = researcherProfileResource.params!.parse({
       orcid_id: '0000-0009-9999-9999',
     });
     await expect(researcherProfileResource.handler(params, ctx)).rejects.toThrow();
@@ -106,7 +109,7 @@ describe('researcherProfileResource', () => {
     mockGetPerson.mockRejectedValueOnce(new Error('Service down'));
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherProfileResource.params.parse({
+    const params = researcherProfileResource.params!.parse({
       orcid_id: '0000-0002-1825-0097',
     });
     await expect(researcherProfileResource.handler(params, ctx)).rejects.toThrow('Service down');
@@ -126,8 +129,10 @@ describe('researcherProfileResource', () => {
     );
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherProfileResource.params.parse({ orcid_id: '0000-0000-0000-0001' });
-    const error = await researcherProfileResource.handler(params, ctx).catch((e: unknown) => e);
+    const params = researcherProfileResource.params!.parse({ orcid_id: '0000-0000-0000-0001' });
+    const error = await Promise.resolve(researcherProfileResource.handler(params, ctx)).catch(
+      (e: unknown) => e,
+    );
 
     expect(error).toBeInstanceOf(McpError);
     expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
@@ -146,8 +151,10 @@ describe('researcherProfileResource', () => {
     );
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherProfileResource.params.parse({ orcid_id: '0000-0002-1825-0097' });
-    const error = await researcherProfileResource.handler(params, ctx).catch((e: unknown) => e);
+    const params = researcherProfileResource.params!.parse({ orcid_id: '0000-0002-1825-0097' });
+    const error = await Promise.resolve(researcherProfileResource.handler(params, ctx)).catch(
+      (e: unknown) => e,
+    );
 
     expect(error).toBeInstanceOf(McpError);
     expect((error as McpError).code).toBe(JsonRpcErrorCode.ServiceUnavailable);
@@ -164,7 +171,7 @@ describe('researcherProfileResource', () => {
     });
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherProfileResource.params.parse({ orcid_id: '0000-0009-0000-0007' });
+    const params = researcherProfileResource.params!.parse({ orcid_id: '0000-0009-0000-0007' });
     const result = await researcherProfileResource.handler(params, ctx);
     expect(result.creditName).toBe('Anonymous Researcher');
     expect(result.givenNames).toBeUndefined();
@@ -175,7 +182,7 @@ describe('researcherProfileResource', () => {
     mockGetPerson.mockResolvedValueOnce(fullPerson);
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = researcherProfileResource.params.parse({ orcid_id: '0000-0002-1825-0097' });
+    const params = researcherProfileResource.params!.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await researcherProfileResource.handler(params, ctx);
 
     // relationship is stripped — not part of the resource output schema
