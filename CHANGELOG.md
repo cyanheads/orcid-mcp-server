@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.14](changelog/0.2.x/0.2.14.md) — 2026-08-24
+
+Adopts @cyanheads/mcp-ts-core 0.12.3 — strict tool arguments, an error-envelope-aware outputSchema, JSON Schema 2020-12, and MCP protocol revision 2026-07-28 over HTTP. MCP_SESSION_MODE settles on stateless; the test suite adds smoke, integration, and fuzz lanes.
+
 ## [0.2.13](changelog/0.2.x/0.2.13.md) — 2026-07-27 · 🛡️ Security
 
 Non-404 upstream failures no longer leak the raw ORCID API URL to clients, and orcid_search_researchers / orcid_resolve_researcher now declare a query_failed error contract (#31); orcid_resolve_researcher's institution overlap match no longer false-positives on a single shared proper noun across differently-named institutions (#27).

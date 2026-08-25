@@ -1,11 +1,9 @@
 # orcid-mcp-server - Directory Structure
 
-Generated on: 2026-07-17 00:16:19
+Generated on: 2026-08-25 05:16:14
 
 ```text
 orcid-mcp-server/
-├── .agents/
-├── .claude/
 ├── .claude-plugin/
 │   └── plugin.json
 ├── .codex-plugin/
@@ -16,6 +14,8 @@ orcid-mcp-server/
 │   │   ├── bug_report.yml
 │   │   ├── config.yml
 │   │   └── feature_request.yml
+│   ├── CODE_OF_CONDUCT.md
+│   ├── CONTRIBUTING.md
 │   ├── FUNDING.yml
 │   └── SECURITY.md
 ├── .vscode/
@@ -159,6 +159,14 @@ orcid-mcp-server/
 │   │       └── types.ts
 │   └── index.ts
 ├── tests/
+│   ├── fuzz/
+│   │   ├── resources.fuzz.test.ts
+│   │   └── tools.fuzz.test.ts
+│   ├── integration/
+│   │   ├── activity-contracts.int.test.ts
+│   │   ├── orcid-api-fixtures.ts
+│   │   ├── record-contracts.int.test.ts
+│   │   └── search-contracts.int.test.ts
 │   ├── resources/
 │   │   ├── researcher-profile.resource.test.ts
 │   │   ├── researcher-works.resource.test.ts
@@ -170,6 +178,8 @@ orcid-mcp-server/
 │   │       ├── orcid-id.test.ts
 │   │       ├── orcid-service.test.ts
 │   │       └── solr-query.test.ts
+│   ├── smoke/
+│   │   └── definitions.smoke.test.ts
 │   └── tools/
 │       ├── get-affiliations.tool.test.ts
 │       ├── get-funding.tool.test.ts
