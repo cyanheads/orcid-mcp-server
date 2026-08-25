@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.15](changelog/0.2.x/0.2.15.md) — 2026-08-24
+
+Restores the multi-arch Docker image: the TypeScript build stage runs on the native build platform instead of under emulation, which had left 0.2.14 with nothing published to GHCR.
+
 ## [0.2.14](changelog/0.2.x/0.2.14.md) — 2026-08-24
 
 Adopts @cyanheads/mcp-ts-core 0.12.3 — strict tool arguments, an error-envelope-aware outputSchema, JSON Schema 2020-12, and MCP protocol revision 2026-07-28 over HTTP. MCP_SESSION_MODE settles on stateless; the test suite adds smoke, integration, and fuzz lanes.

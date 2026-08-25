@@ -4,7 +4,12 @@
 # This stage installs all dependencies (including dev), builds the TypeScript
 # source code into JavaScript, and prepares the production assets.
 # ==============================================================================
-FROM oven/bun:1.4.0 AS build
+# `--platform=$BUILDPLATFORM` pins this stage to the host's native architecture.
+# The stage emits plain JavaScript (tsc + tsc-alias) with no native artifacts, so
+# one build serves every target arch — and it never runs under emulation, where
+# Bun aborts (SIGABRT) on a qemu-emulated linux/amd64 leg. The production stage
+# below stays unpinned so its dependency install resolves per target platform.
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.0 AS build
 
 WORKDIR /usr/src/app
 
