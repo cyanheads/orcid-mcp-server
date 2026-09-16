@@ -4,7 +4,7 @@ All notable changes to this project. Each entry links to its full per-version fi
 
 ## [0.2.16](changelog/0.2.x/0.2.16.md) — 2026-09-16
 
-Adopts @cyanheads/mcp-ts-core 0.13.2 — tool argument rejections carry the structured error envelope and an upstream 5xx retries as ServiceUnavailable. Declares stateless session mode in source, and a malformed Solr query no longer retries as a transient outage.
+Adopts @cyanheads/mcp-ts-core 0.13.2 — tool argument rejections carry the structured error envelope and an upstream 5xx retries as ServiceUnavailable. Declares stateless session mode in source, and a malformed Solr query still fails fast instead of retrying as a transient outage.
 
 ## [0.2.15](changelog/0.2.x/0.2.15.md) — 2026-08-24
 
