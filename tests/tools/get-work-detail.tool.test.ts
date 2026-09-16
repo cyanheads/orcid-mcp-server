@@ -4,7 +4,7 @@
  */
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { assert, beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetWorkDetail } from '@/mcp-server/tools/definitions/get-work-detail.tool.js';
 
@@ -331,6 +331,42 @@ describe('orcidGetWorkDetail', () => {
     expect((error as McpError).cause).toBeInstanceOf(Error);
   });
 
+  it('keeps a 501 as ServiceUnavailable with retryable: false on both result surfaces', async () => {
+    // An upstream 501 classifies as ServiceUnavailable carrying the retryable opt-out.
+    // The tool must pass both through, so a client neither sees fetch_failed nor retries.
+    mockGetWorkDetails.mockRejectedValueOnce(
+      new McpError(
+        JsonRpcErrorCode.ServiceUnavailable,
+        'ORCID returned HTTP 501 Not Implemented.',
+        {
+          status: 501,
+          statusText: 'Not Implemented',
+          retryable: false,
+        },
+      ),
+    );
+
+    const result = await runToolContract(orcidGetWorkDetail, {
+      orcid_id: '0000-0001-9161-999X',
+      put_codes: [1],
+    });
+
+    expect(result.isError).toBe(true);
+    const envelope = (
+      result.structuredContent as {
+        error: { code: number; message: string; data?: Record<string, unknown> };
+      }
+    ).error;
+    expect(envelope.code).toBe(JsonRpcErrorCode.ServiceUnavailable);
+    expect(envelope.data?.retryable).toBe(false);
+    expect(envelope.data).not.toHaveProperty('reason');
+    expect(envelope.data).not.toHaveProperty('status');
+
+    const text = result.content.map((block) => (block.type === 'text' ? block.text : '')).join('');
+    expect(text).toContain('ORCID bulk works endpoint is unavailable for 0000-0001-9161-999X.');
+    expect(text).not.toContain('fetch_failed');
+  });
+
   it('wraps an unexpected (non-McpError) service failure as fetch_failed', async () => {
     mockGetWorkDetails.mockRejectedValueOnce(new Error('Network timeout'));
 
@@ -355,9 +391,9 @@ describe('orcidGetWorkDetail', () => {
 
   it('wraps a non-NotFound McpError from the service as fetch_failed with fresh data', async () => {
     mockGetWorkDetails.mockRejectedValueOnce(
-      new McpError(JsonRpcErrorCode.InternalError, 'Service unavailable', {
+      new McpError(JsonRpcErrorCode.InvalidParams, 'ORCID returned HTTP 400 Bad Request.', {
         url: 'https://pub.orcid.org/v3.0/x/works/1',
-        status: 500,
+        status: 400,
       }),
     );
 

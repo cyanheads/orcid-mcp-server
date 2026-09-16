@@ -311,10 +311,11 @@ describe('orcidSearchResearchers — query_failed contract (#31)', () => {
   });
 
   it('carries reason and a recovery hint naming the query field on a non-transient failure', async () => {
-    // ORCID answers malformed raw Solr with a 500, which maps to InternalError.
+    // ORCID answers malformed raw Solr with a 500 naming a Solr exception, which the service
+    // classifies as InvalidParams rather than a retryable outage.
     mockExpandedSearch.mockRejectedValueOnce(
       new McpError(
-        JsonRpcErrorCode.InternalError,
+        JsonRpcErrorCode.InvalidParams,
         'ORCID returned HTTP 500 Internal Server Error.',
       ),
     );

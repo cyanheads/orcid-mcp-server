@@ -6,7 +6,7 @@
 
 import type { Context } from '@cyanheads/mcp-ts-core';
 import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
-import { McpError, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, McpError, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import {
   httpErrorFromResponse,
@@ -46,6 +46,13 @@ import type {
   Work,
   WorkDetail,
 } from './types.js';
+
+/**
+ * Marker in ORCID's error body when its Solr backend rejected the query. ORCID relays a
+ * malformed or unknown-field query as HTTP 500 carrying this exception name, so the status
+ * alone cannot tell a bad query from an outage.
+ */
+const SOLR_QUERY_REJECTION = 'RemoteSolrException';
 
 /** Re-exported from the shared ORCID iD parser/validator (`./orcid-id.js`). */
 export { normalizeOrcidId };
@@ -118,11 +125,22 @@ export class OrcidService {
    * code mapping, `status`/`statusText`/`statusCode`, and any `retryAfter`/`retryable`
    * signal. Stripping the one key (rather than rebuilding an allow-list) keeps future
    * retry-relevant fields intact.
+   *
+   * A 500 classifies as transient `ServiceUnavailable`, which `withRetry` retries. A 500
+   * whose body names a Solr query rejection is reclassified `InvalidParams`: the same query
+   * fails on every attempt, so retrying it only delays the caller's recovery hint.
    */
   private async upstreamError(response: Response, url: string, ctx: Context): Promise<McpError> {
+    const queryRejected =
+      response.status === 500 &&
+      (await response.text().catch(() => '')).includes(SOLR_QUERY_REJECTION);
     // captureBody: false — ORCID's Solr error body echoes its internal Solr host
     // and Java exception classes; keep that upstream diagnostic text off the wire.
-    const error = await httpErrorFromResponse(response, { service: 'ORCID', captureBody: false });
+    const error = await httpErrorFromResponse(response, {
+      service: 'ORCID',
+      captureBody: false,
+      ...(queryRejected && { codeOverride: () => JsonRpcErrorCode.InvalidParams }),
+    });
     ctx.log.warning('ORCID request failed.', { url, status: response.status });
     const { url: _upstreamUrl, ...safeData } = error.data ?? {};
     return new McpError(error.code, error.message, safeData);

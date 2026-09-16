@@ -503,9 +503,10 @@ describe('orcidResolveResearcher — query_failed contract (#31)', () => {
   });
 
   it('carries reason and a recovery hint naming the input fields on a non-transient failure', async () => {
+    // The service's classification of ORCID's 500 Solr query rejection.
     mockExpandedSearch.mockRejectedValueOnce(
       new McpError(
-        JsonRpcErrorCode.InternalError,
+        JsonRpcErrorCode.InvalidParams,
         'ORCID returned HTTP 500 Internal Server Error.',
       ),
     );

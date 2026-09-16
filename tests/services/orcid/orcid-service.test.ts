@@ -1,6 +1,7 @@
 /**
- * @fileoverview Service-level test: upstream ORCID/Solr error bodies must not leak their
- * internal host or exception text into client-visible error data (#18 info-leak fix).
+ * @fileoverview Service-level tests: upstream ORCID/Solr error bodies must not leak their
+ * internal host or exception text into client-visible error data (#18 info-leak fix), and
+ * upstream 5xx responses classify and retry by whether a retry can succeed.
  * @module tests/services/orcid/orcid-service.test
  */
 
@@ -158,5 +159,88 @@ describe('OrcidService — assertNotHtml message redaction (#28)', () => {
           c.level === 'warning' && (c.data as Record<string, unknown> | undefined)?.url === url,
       ),
     ).toBe(true);
+  });
+});
+
+describe('OrcidService — upstream 5xx classification and retry', () => {
+  const realFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  /** ORCID's body for a query its Solr backend rejects — captured from the live API. */
+  const solrRejectionBody = JSON.stringify({
+    'response-code': 500,
+    'developer-message':
+      "org.apache.solr.client.solrj.impl.HttpSolrClient.RemoteSolrException Full validation error: Error from server at http://localhost:7983/solr/profile: org.apache.solr.search.SyntaxError: Cannot parse 'family-name:[unclosed'",
+    'user-message': 'Something went wrong in ORCID.',
+    'error-code': 9008,
+  });
+
+  function stubStatus(status: number, statusText: string, body: string) {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() => Promise.resolve(new Response(body, { status, statusText })));
+    globalThis.fetch = fetchMock as typeof fetch;
+    return fetchMock;
+  }
+
+  /** Run a service call to settlement while fake timers drain withRetry's backoff sleeps. */
+  async function settle(call: Promise<unknown>): Promise<McpError> {
+    const caught = call.catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(120_000);
+    return (await caught) as McpError;
+  }
+
+  const newService = () =>
+    new OrcidService({} as unknown as AppConfig, {} as unknown as StorageService);
+
+  it('retries an upstream 500 outage as ServiceUnavailable until the retry budget is spent', async () => {
+    vi.useFakeTimers();
+    const fetchMock = stubStatus(500, 'Internal Server Error', 'upstream exploded');
+
+    const err = await settle(newService().getPerson('0000-0002-1825-0097', createMockContext()));
+
+    expect(err).toBeInstanceOf(McpError);
+    expect(err.code).toBe(JsonRpcErrorCode.ServiceUnavailable);
+    // One initial attempt plus withRetry's default three retries.
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(err.data?.retryAttempts).toBe(4);
+    expect(err.data?.status).toBe(500);
+    expect(err.data).not.toHaveProperty('url');
+  });
+
+  it('classifies a 500 carrying a Solr query rejection as InvalidParams without retrying', async () => {
+    vi.useFakeTimers();
+    const fetchMock = stubStatus(500, 'Internal Server Error', solrRejectionBody);
+
+    const err = await settle(
+      newService().expandedSearch({ q: 'family-name:[unclosed', rows: 1 }, createMockContext()),
+    );
+
+    expect(err).toBeInstanceOf(McpError);
+    expect(err.code).toBe(JsonRpcErrorCode.InvalidParams);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(err.data?.status).toBe(500);
+    // The body is read to classify, never forwarded — its Solr host and exception stay server-side.
+    const dataStr = JSON.stringify(err.data ?? {});
+    expect(dataStr).not.toContain('localhost:7983');
+    expect(dataStr).not.toContain('SyntaxError');
+    expect(err.message).not.toContain('RemoteSolrException');
+  });
+
+  it('fails a 501 on the first attempt with retryable: false', async () => {
+    vi.useFakeTimers();
+    const fetchMock = stubStatus(501, 'Not Implemented', 'not implemented');
+
+    const err = await settle(newService().getWorks('0000-0002-1825-0097', createMockContext()));
+
+    expect(err).toBeInstanceOf(McpError);
+    expect(err.code).toBe(JsonRpcErrorCode.ServiceUnavailable);
+    expect(err.data?.retryable).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

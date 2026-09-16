@@ -309,6 +309,18 @@ const BULK_WORKS = {
 const notFound = () => new Response('Not Found', { status: 404, statusText: 'Not Found' });
 const badRequest = () => new Response('Bad Request', { status: 400, statusText: 'Bad Request' });
 
+/** ORCID relays a query its Solr backend rejects as HTTP 500 naming the Solr exception. */
+const solrQueryRejected = () =>
+  Response.json(
+    {
+      'response-code': 500,
+      'developer-message': `org.apache.solr.client.solrj.impl.HttpSolrClient.RemoteSolrException Full validation error: Error from server at http://localhost:7983/solr/profile: undefined field ${BROKEN_QUERY_MARKER}`,
+      'user-message': 'Something went wrong in ORCID.',
+      'error-code': 9008,
+    },
+    { status: 500, statusText: 'Internal Server Error' },
+  );
+
 const isBulkWorksUrl = (url: string, orcidId: string) =>
   url.startsWith(`${BASE}/${orcidId}/works/`);
 
@@ -322,7 +334,7 @@ function orcidApiRoutes(): FetchMockRoute[] {
       method: 'GET',
       match: (request) =>
         request.url.includes('/expanded-search/') && request.url.includes(BROKEN_QUERY_MARKER),
-      respond: badRequest,
+      respond: solrQueryRejected,
     },
     {
       method: 'GET',
