@@ -22,6 +22,7 @@ import { initOrcidService } from './services/orcid/orcid-service.js';
 await createApp({
   name: 'orcid-mcp-server',
   title: 'orcid-mcp-server',
+  sessionMode: 'stateless',
   tools: [
     orcidGetProfile,
     orcidSearchResearchers,
