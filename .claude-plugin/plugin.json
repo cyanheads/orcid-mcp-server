@@ -1,13 +1,25 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "orcid-mcp-server",
-  "version": "0.2.15",
+  "version": "0.2.16",
   "description": "Search and retrieve researcher profiles, works, affiliations, funding, and peer review records from the ORCID registry via MCP. STDIO or Streamable HTTP.",
   "author": {
-    "name": "cyanheads"
+    "name": "cyanheads",
+    "email": "casey@caseyjhand.com",
+    "url": "https://github.com/cyanheads"
   },
   "homepage": "https://github.com/cyanheads/orcid-mcp-server#readme",
   "repository": "https://github.com/cyanheads/orcid-mcp-server",
   "license": "Apache-2.0",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "orcid",
+    "researcher-identity",
+    "scholarly",
+    "academic"
+  ],
   "mcpServers": {
     "orcid-mcp-server": {
       "command": "npx",

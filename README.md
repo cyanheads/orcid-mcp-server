@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.2.15-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/orcid-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.0.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/orcid-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/orcid-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.2.16-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/orcid-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.0.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/orcid-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/orcid-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.0%2B-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -27,151 +27,146 @@
 
 ---
 
-## Tools
+## Overview
 
-Nine tools organized around three workflows — author disambiguation, researcher profiling, and cross-server identifier chaining:
+Researcher identity data from the ORCID registry. Search and disambiguate authors, build a researcher dossier from profile, works, affiliations, funding, and peer review records, and chain external identifiers to Crossref, PubMed, or arXiv from any MCP client. Runs as a stdio process, a local Streamable HTTP server, or the public hosted endpoint above.
+
+### Tools
 
 | Tool | Description |
 |:-----|:------------|
-| `orcid_search_researchers` | Search the ORCID registry using structured field params (name, affiliation, keyword, ROR ID, DOI, PMID). All params are ANDed into a Solr query against the expanded-search endpoint, returning ORCID iDs with inline name and institution data. |
-| `orcid_get_profile` | Fetch a researcher's public profile: name, biography, keywords, researcher URLs, and external identifiers (Scopus Author ID, ResearcherID, Loop, etc.). |
-| `orcid_get_works` | Retrieve works (publications, datasets, software, preprints) for a researcher. Returns summaries with put-codes, titles, types, dates, journal names, and external identifiers. Returns the first 50 by default with `workCount` and paging via `offset`/`nextOffset` (or `limit`); set `include_external_ids` false for a lighter payload. Pass put-codes to `orcid_get_work_detail` for abstracts and full contributor lists. |
-| `orcid_get_work_detail` | Fetch full detail records for 1–100 works by their put-codes in a single bulk request (from `orcid_get_works`). Returns abstracts, all contributors with CRediT roles, complete external IDs, citation metadata, journal title, and URL. Per-record errors are surfaced without failing the whole call. |
-| `orcid_get_affiliations` | Fetch affiliation records for a researcher. Accepts a `types` list to filter which sections to return: `employment`, `education`, `invited-positions`, `distinctions`, `memberships`, `qualifications`, `services`, or `all`. |
-| `orcid_get_funding` | Fetch funding records: grants, contracts, awards, and salary awards, with funder names, grant numbers, and funding periods. |
-| `orcid_get_peer_reviews` | Fetch peer review activity: convening organizations, reviewer role, review type, completion dates, and ISSN-keyed group identifiers. |
-| `orcid_get_research_resources` | List research resources associated with a researcher — compute allocations, equipment access, lab facilities, and data resources. Sparsely populated; most researchers have no entries. |
-| `orcid_resolve_researcher` | Disambiguate an ambiguous author name to a verified ORCID iD. Returns a ranked list of candidates (5 by default, up to 20 via `rows`) with transparent signals: name match type, institution overlap, and whether a DOI or PMID anchor was used. |
+| `orcid_search_researchers` | Search the ORCID registry using structured field params (name, affiliation, keyword, ROR ID, DOI, PMID) |
+| `orcid_get_profile` | Fetch a researcher's public profile — name, biography, keywords, researcher URLs, external identifiers |
+| `orcid_get_works` | Retrieve works (publications, datasets, software, preprints) for a researcher, paginated |
+| `orcid_get_work_detail` | Fetch full detail records — abstracts, contributors, citations — for 1–100 works by put-code |
+| `orcid_get_affiliations` | Fetch affiliation records: employment, education, memberships, and more |
+| `orcid_get_funding` | Fetch funding records: grants, contracts, awards, and salary awards |
+| `orcid_get_peer_reviews` | Fetch peer review activity: convening organizations, reviewer role, review type |
+| `orcid_get_research_resources` | List research resources — compute allocations, equipment access, lab facilities |
+| `orcid_resolve_researcher` | Disambiguate an ambiguous author name to a ranked list of verified ORCID iD candidates |
 
-### `orcid_search_researchers`
+### Resources
 
-Search the ORCID registry with structured field parameters mapped to Solr field queries.
+| Resource | Description |
+|:---|:---|
+| `orcid://researcher/{orcid_id}/profile` | Researcher profile (person section) — name, bio, keywords, external IDs |
+| `orcid://researcher/{orcid_id}/works` | Works list for a researcher — the first 25 plus the total count |
 
-- Structured params — `given_name`, `family_name`, `affiliation`, `keyword`, `ror_id`, `doi`, `pmid` — are ANDed into a Solr query automatically
-- `doi` and `pmid` translate to `doi-self` and `pmid-self` field queries: "who has linked this work to their ORCID record?"
-- `query` appends raw Solr to the generated clause for advanced use
-- `ror_id` values (full URLs like `https://ror.org/00f54p054`) are quoted internally to handle Solr's colon parsing
+All resource data is also reachable via tools. Use resources when injecting stable researcher context into a prompt; use tools when filtering or processing results is needed.
+
+## Capability reference
+
+### `orcid_search_researchers` <sub>tool</sub>
+
+- Structured params — `given_name`, `family_name`, `affiliation`, `keyword`, `ror_id`, `doi`, `pmid` — AND together automatically; `query` appends raw Solr syntax to the generated clause
+- `doi` and `pmid` map to `doi-self` / `pmid-self` field queries — finds researchers who linked that specific work to their ORCID record
+- `rows`: 1–1000 (default 20); `start`: 0–10,000 offset pagination (the ORCID Public API's ceiling for unauthenticated requests)
 - Returns expanded-search results with inline name and institution data — no follow-up profile fetch needed for basic discovery
-- Use this for precise field-anchored lookups; use `orcid_resolve_researcher` for ambiguous names needing ranked disambiguation
+- Use for precise field-anchored lookups; use `orcid_resolve_researcher` for ambiguous names needing ranked disambiguation
 
 ---
 
-### `orcid_get_profile`
+### `orcid_get_profile` <sub>tool</sub>
 
-Fetch a researcher's public person section by ORCID iD.
-
-- Accepts bare ORCID iD (`0000-0001-2345-6789`) or full URI form
-- Returns name, biography, keywords, researcher URLs, addresses, and external identifiers (Scopus Author ID, ResearcherID, Loop, etc.)
-- External identifiers are embedded in the person response — no separate round-trip
+- Accepts a bare ORCID iD (`0000-0001-2345-6789`) or a full URI
+- Returns name, biography, keywords, researcher URLs, external identifiers (Scopus Author ID, ResearcherID, Loop, etc.), emails, and country codes — all in one response
+- Only publicly visible fields are returned; researchers control per-field visibility
 - Entry point for building a researcher dossier before fetching works or affiliations
 
 ---
 
-### `orcid_get_works`
+### `orcid_get_works` <sub>tool</sub>
 
-Retrieve the works list for a researcher.
-
-- Returns work summaries: title, type, publication date, journal name, and all external identifiers (DOI, PMID, arXiv ID, ISBN, etc.)
-- Returns the first 50 works by default; `workCount` reports the total available, and prolific records are paged with `offset` plus the returned `nextOffset` (or raise `limit`, max 1000). `truncated` flags when more works remain
-- Set `include_external_ids` to `false` to drop identifier lists when only titles, types, and dates are needed
-- External IDs are returned in formats consumable by downstream servers (Crossref, PubMed, arXiv)
-- Works list is summaries only — chain to the relevant server for full metadata or abstracts
+- Returns the first 50 works by default (`limit` max 1000); page with `offset` and the returned `nextOffset` — `workCount` reports the total available
+- Set `include_external_ids` to `false` to drop DOI/PMID/arXiv/ISBN identifier lists for a lighter payload
+- External identifiers are pre-formatted for chaining to Crossref, PubMed, or arXiv
+- Summaries only — pass a work's `putCode` to `orcid_get_work_detail` for abstracts and full contributor lists
+- Works are self-reported; an empty list does not mean no publications
 
 ---
 
-### `orcid_get_work_detail`
+### `orcid_get_work_detail` <sub>tool</sub>
 
-Fetch full detail records for 1–100 works in a single bulk request using the ORCID bulk works endpoint.
-
-- `put_codes` is an array of 1–100 put-codes from `orcid_get_works`
-- Single round-trip regardless of how many put-codes are requested
-- Returns abstracts, all contributors with CRediT roles, the complete external ID list, citation metadata (BibTeX or other formats when deposited), journal title, and URL for each work
-- Per-record errors (not-found or inaccessible put-codes) arrive as `errors` entries — the remaining works still resolve
+- `put_codes`: 1–100 per call (from `orcid_get_works`), resolved in a single round-trip
+- Returns abstract, full contributor list with CRediT roles, complete external ID list, citation metadata (BibTeX or other deposited formats), journal title, and URL
+- Per-put-code failures (not found or inaccessible) arrive as `errors` entries — the rest of the batch still resolves
 
 ---
 
-### `orcid_get_affiliations`
+### `orcid_get_affiliations` <sub>tool</sub>
 
-Fetch affiliation records by type, using a single `/activities` call filtered client-side.
-
-- `types` controls which sections to include: `employment`, `education`, `invited-positions`, `distinctions`, `memberships`, `qualifications`, `services`, or `all`
-- Default is `['employment', 'education']` (the 90% case)
-- Returns organization names, disambiguated org IDs (ROR/GRID/Ringgold), departments, roles, and date ranges
-- One upstream call regardless of how many types are requested — the `/activities` endpoint returns all sections at once
+- `types` filters which sections to return: `employment`, `education`, `invited-positions`, `distinctions`, `memberships`, `qualifications`, `services`, or `all` — default is employment + education
+- One upstream call regardless of how many types are requested
+- Returns organization name, disambiguated ID (ROR/GRID/Ringgold), department, role, and date range per record
+- Self-reported; an empty result does not mean no affiliation
 
 ---
 
-### `orcid_get_funding`
+### `orcid_get_funding` <sub>tool</sub>
 
-Fetch funding records for a researcher.
-
-- Returns grants, contracts, awards, and salary awards with funder names, grant numbers, and funding periods
-- Funding data is self-reported and often sparse — absence does not mean no funding
-- Useful when it exists; high-value (grant numbers, funder IDs) but a thin single-endpoint wrapper
+- No filtering params — returns the complete funding list for the ORCID iD in one call
+- Returns funding type (grant, contract, award, salary-award), funder name and disambiguated ID (Crossref Funder ID/ROR), grant numbers, and funding period
+- Entirely self-reported — most researchers with real grants have no entries here; absence does not imply no funding
 
 ---
 
-### `orcid_get_peer_reviews`
+### `orcid_get_peer_reviews` <sub>tool</sub>
 
-Fetch peer review activity for a researcher.
-
-- Returns convening organizations (journals/publishers), reviewer role (`reviewer`, `editor`, `chair`, etc.), review type, completion dates, and ISSN-keyed group identifiers
-- Useful for assessing editorial activity and journal affiliations
+- No filtering params — returns the complete peer review history for the ORCID iD in one call
+- Returns convening organization (journal/publisher), reviewer role (`reviewer`, `editor`, `chair`, etc.), review type, completion date, and an ISSN-keyed group identifier per record
+- Self-reported or imported by participating publishers — coverage varies widely by researcher
 
 ---
 
-### `orcid_get_research_resources`
-
-List research resources associated with a researcher.
+### `orcid_get_research_resources` <sub>tool</sub>
 
 - Covers compute allocations, equipment access, lab facilities, data resources, and clinical study registrations
-- A newer ORCID section that is sparsely populated — most researchers have no entries, and absence does not imply none exist
+- A newer, sparsely populated ORCID section — most researchers have zero entries, and absence does not imply none exist
 - Entries are typically deposited by resource-allocation systems (e.g. ACCESS, XSEDE) rather than self-reported
-- Returns resource title, hosting organization (with disambiguated org ID), external identifiers (often a portal URI), and access period
+- Returns resource title, hosting organization (with disambiguated ID), external identifiers (often a portal URI), and access period
 
 ---
 
-### `orcid_resolve_researcher`
+### `orcid_resolve_researcher` <sub>tool</sub>
 
-Disambiguate an author name to a verified ORCID iD.
-
-- Returns ranked candidates (5 by default, up to 20 via `rows`) with transparent disambiguation signals: name match type (`exact`/`partial`/`other-name`), institution overlap flag, and anchor type (`doi`/`pmid`/`none`)
+- Returns ranked candidates (5 default, up to 20 via `rows`) with transparent disambiguation signals: name match type (`exact`/`partial`/`other-name`/`none`), institution overlap flag, and anchor type (`doi`/`pmid`/`none`)
 - When `doi` or `pmid` is provided, uses `doi-self` or `pmid-self` as an anchor — researchers who have linked that work to their ORCID record are near-deterministic matches
-- Falls back to a relaxed query (dropping affiliation) if the initial candidate set is empty
+- Falls back to a relaxed query (dropping affiliation) if the initial candidate set is empty, then to anchor-only retries when a supplied anchor is present
 - No synthetic scores — raw signal fields only, so callers can apply their own ranking logic
 
-## Resources
+---
 
-| Type | Name | Description |
-|:-----|:-----|:------------|
-| Resource | `orcid://researcher/{orcid_id}/profile` | Researcher profile (person section: name, bio, keywords, external IDs). Prefer the tool when the response needs to flow into conditional logic. |
-| Resource | `orcid://researcher/{orcid_id}/works` | Works list for a researcher — the first 25 works plus `workCount` (the total available). Use the `orcid_get_works` tool to page the full list. DOIs and PMIDs in the response are ready for Crossref/PubMed chaining. |
+### `orcid://researcher/{orcid_id}/profile` <sub>resource</sub>
 
-All resource data is also reachable via tools. Use resources when injecting stable researcher context into a prompt; use tools when filtering or processing results is needed.
+- Returns name, biography, keywords, researcher URLs, and external identifiers as `application/json`
+- Rejects a checksum-invalid ORCID iD locally before any upstream call
+- Prefer the `orcid_get_profile` tool when the response needs to flow into conditional logic
+
+---
+
+### `orcid://researcher/{orcid_id}/works` <sub>resource</sub>
+
+- Returns the first 25 works plus `workCount` (the total available) as `application/json`
+- No cursor pagination on this resource — use the `orcid_get_works` tool to page the full list or filter results
+- DOIs and PMIDs in the response are ready for Crossref or PubMed chaining
 
 ## Features
 
-Built on [`@cyanheads/mcp-ts-core`](https://www.npmjs.com/package/@cyanheads/mcp-ts-core):
-
-- Declarative tool and resource definitions — single file per primitive, framework handles registration and validation
-- Unified error handling — handlers throw, framework catches, classifies, and formats
-- Pluggable auth: `none`, `jwt`, `oauth`
-- Swappable storage backends: `in-memory`, `filesystem`, `Supabase`, `Cloudflare KV/R2/D1`
-- Structured logging with optional OpenTelemetry tracing
-- STDIO and Streamable HTTP transports — HTTP serves MCP protocol revision `2026-07-28` alongside the `initialize`-negotiated 2025 revisions
+Built on [`@cyanheads/mcp-ts-core`](https://github.com/cyanheads/mcp-ts-core): stdio and Streamable HTTP transports, pluggable auth (`none` / `jwt` / `oauth`), swappable storage (`in-memory`, `filesystem`, `Supabase`, `Cloudflare KV/R2/D1`), structured logging with optional OpenTelemetry tracing.
 
 ORCID-specific:
 
-- ORCID Public API v3.0 (`https://pub.orcid.org/v3.0/`) — no API key required for public read endpoints
+- ORCID Public API v3.0 (`https://pub.orcid.org/v3.0`) — no API key required for public read endpoints
 - `expanded-search` as the primary search backend — returns ORCID iD, name, and institution data inline, eliminating N+1 profile fetches
 - Single `/activities` call for affiliation queries, filtered client-side — eliminates up to 7 parallel upstream calls vs. per-section fetching
-- External identifiers (DOIs, PMIDs, arXiv IDs) surfaced in works responses in formats ready for cross-server chaining
+- External identifiers (DOIs, PMIDs, arXiv IDs) surfaced in works responses in formats ready for cross-server chaining to Crossref, PubMed, or arXiv
 
 Agent-friendly output:
 
-- Transparent disambiguation signals in `orcid_resolve_researcher` — name match type, institution overlap, and anchor type are returned as raw fields, not a synthetic score, so agents can reason about match confidence
-- Known-limitation annotations — works list surfaces `num_found` so agents know when the 10,000-result public API cap was hit; funding and profile tools note when sections are empty due to researcher-controlled visibility
-- External identifier pass-through — DOIs, PMIDs, arXiv IDs, Scopus Author IDs are normalized to formats consumable by downstream servers without parsing
+- Provenance — `orcid_resolve_researcher` returns raw disambiguation signals (name match type, institution overlap, anchor type) instead of a synthetic confidence score
+- Truncation awareness — `orcid_search_researchers` reports `numFound` and a `truncated` flag against the ORCID Public API's 10,000-offset ceiling; `orcid_get_works` reports `workCount` and `truncated` against its own page size
+- Partial failure isolation — `orcid_get_work_detail` returns per-put-code errors alongside successfully resolved works instead of failing the whole batch
+- Empty-result guidance — `orcid_get_works`, `orcid_get_affiliations`, `orcid_get_funding`, `orcid_get_peer_reviews`, and `orcid_get_research_resources` return a notice when a result is empty, explaining that this may reflect self-reporting gaps or visibility settings rather than confirmed absence
 
 ## Getting started
 
@@ -255,7 +250,7 @@ MCP_TRANSPORT_TYPE=http MCP_HTTP_PORT=3010 bun run start:http
 
 ### Prerequisites
 
-- [Bun v1.3.2](https://bun.sh/) or higher (or Node.js v24+).
+- [Bun v1.4.0](https://bun.sh/) or higher (or Node.js v24+).
 - No API key required. The ORCID Public API is open for public read access. Non-commercial use only under [ORCID Public API ToS §2](https://info.orcid.org/public-client-terms-of-service/).
 
 ### Installation
@@ -291,11 +286,11 @@ All configuration is validated at startup via Zod schemas in `src/config/server-
 
 | Variable | Description | Default |
 |:---------|:------------|:--------|
-| `ORCID_API_BASE_URL` | Override the ORCID API base URL. Useful for pointing at the sandbox (`https://pub.sandbox.orcid.org/v3.0/`). | `https://pub.orcid.org/v3.0/` |
+| `ORCID_API_BASE_URL` | Override the ORCID API base URL. Useful for pointing at the sandbox (`https://pub.sandbox.orcid.org/v3.0/`). | `https://pub.orcid.org/v3.0` |
 | `MCP_TRANSPORT_TYPE` | Transport: `stdio` or `http` | `stdio` |
 | `MCP_HTTP_PORT` | HTTP server port | `3010` |
 | `MCP_HTTP_ENDPOINT_PATH` | HTTP endpoint path | `/mcp` |
-| `MCP_SESSION_MODE` | HTTP session mode: `auto`, `stateful`, or `stateless`. This server holds no per-session state and ships `stateless`. | `auto` (resolves to `stateful`) |
+| `MCP_SESSION_MODE` | HTTP session mode: `auto`, `stateful`, or `stateless`. This server declares `stateless` in `createApp()` — no tool asks the caller for input mid-handler — and a set value overrides it. | `stateless` |
 | `MCP_PUBLIC_URL` | Public origin for TLS-terminating reverse-proxy deployments | none |
 | `MCP_AUTH_MODE` | Authentication: `none`, `jwt`, or `oauth` | `none` |
 | `MCP_LOG_LEVEL` | Log level (`debug`, `info`, `warning`, `error`, etc.) | `info` |
@@ -361,7 +356,7 @@ See [`CLAUDE.md`](./CLAUDE.md) for development guidelines and architectural rule
 
 ## Contributing
 
-Issues and pull requests are welcome. Run checks and tests before submitting:
+Issues are welcome. Run checks and tests before submitting:
 
 ```sh
 bun run devcheck
