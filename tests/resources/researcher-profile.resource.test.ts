@@ -116,9 +116,9 @@ describe('researcherProfileResource', () => {
   });
 
   it('remaps an upstream 404 to a clean NotFound without leaking the upstream url or body', async () => {
-    // fetchJson → httpErrorFromResponse builds an McpError whose data carries the raw
-    // ORCID endpoint URL and error body. The handler must catch it and rethrow a clean
-    // NotFound so the framework never serializes those internals to the client.
+    // The rejected McpError carries every upstream transport field (endpoint URL, error
+    // body, status). The handler must catch it and rethrow a clean NotFound so none of
+    // those internals are serialized to the client, whatever the service layer attaches.
     mockGetPerson.mockRejectedValueOnce(
       new McpError(JsonRpcErrorCode.NotFound, 'ORCID returned HTTP 404 Not Found.', {
         url: 'https://pub.orcid.org/v3.0/0000-0000-0000-0001/person',

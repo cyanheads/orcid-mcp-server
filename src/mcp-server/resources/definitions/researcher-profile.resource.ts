@@ -67,8 +67,8 @@ export const researcherProfileResource = resource('orcid://researcher/{orcid_id}
 
     ctx.log.debug('orcid-researcher-profile resource', { orcidId: bareId });
 
-    // Catch the upstream 404 here so the framework doesn't serialize McpError.data
-    // (the raw ORCID URL + error body) into the JSON-RPC error sent to the client.
+    // Remap the upstream 404 to a NotFound that names the iD, so the client gets a
+    // resource-level message rather than the HTTP status details on McpError.data.
     let person: NormalizedPerson;
     try {
       person = await service.getPerson(params.orcid_id, ctx);

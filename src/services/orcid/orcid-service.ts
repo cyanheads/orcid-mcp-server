@@ -6,7 +6,7 @@
 
 import type { Context } from '@cyanheads/mcp-ts-core';
 import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
-import { JsonRpcErrorCode, McpError, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, type McpError, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import {
   httpErrorFromResponse,
@@ -117,14 +117,12 @@ export class OrcidService {
   /**
    * Convert a non-2xx ORCID response into a client-safe `McpError`.
    *
-   * `httpErrorFromResponse` seeds `data.url` from `response.url` before it merges any
-   * caller-supplied `data`, so the upstream endpoint reaches the client whether or not a
-   * `url` is passed in — omitting the passthrough is not enough to close the leak (#31).
-   * The URL is logged for operators, then dropped from a copy of the error's `data`.
-   * Everything the framework and `withRetry` classify on survives: the status → JSON-RPC
-   * code mapping, `status`/`statusText`/`statusCode`, and any `retryAfter`/`retryable`
-   * signal. Stripping the one key (rather than rebuilding an allow-list) keeps future
-   * retry-relevant fields intact.
+   * `httpErrorFromResponse` keeps the upstream request URL off `error.data` unless
+   * `includeUrl` is passed, and `service: 'ORCID'` keeps the host out of the message, so
+   * the endpoint never reaches the client (#31). It is logged here for operators instead.
+   * The error carries what the framework and `withRetry` classify on: the status →
+   * JSON-RPC code mapping, `status`/`statusText`/`statusCode`, and any
+   * `retryAfter`/`retryable` signal.
    *
    * A 500 classifies as transient `ServiceUnavailable`, which `withRetry` retries. A 500
    * whose body names a Solr query rejection is reclassified `InvalidParams`: the same query
@@ -142,8 +140,7 @@ export class OrcidService {
       ...(queryRejected && { codeOverride: () => JsonRpcErrorCode.InvalidParams }),
     });
     ctx.log.warning('ORCID request failed.', { url, status: response.status });
-    const { url: _upstreamUrl, ...safeData } = error.data ?? {};
-    return new McpError(error.code, error.message, safeData);
+    return error;
   }
 
   /** Fetch a URL with retry and timeout, returning parsed JSON. */

@@ -59,8 +59,8 @@ describe('OrcidService — upstream URL redaction on non-2xx (#31)', () => {
   // A 400 keeps the run to a single upstream call — InvalidParams is non-transient, so
   // withRetry fails fast instead of sleeping through its backoff schedule.
   // `new Response()` leaves `url` empty, so it is pinned explicitly: that getter is the
-  // field httpErrorFromResponse copies into `data.url`, independent of anything the
-  // caller passes.
+  // field httpErrorFromResponse copies into `data.url` when `includeUrl` is set, so an
+  // empty one would let these assertions pass without exercising the redaction.
   function stubBadRequest(url: string): void {
     globalThis.fetch = vi.fn().mockImplementation(() => {
       const res = new Response('bad request', { status: 400, statusText: 'Bad Request' });
@@ -71,7 +71,7 @@ describe('OrcidService — upstream URL redaction on non-2xx (#31)', () => {
 
   const url = 'https://pub.orcid.org/v3.0/0000-0002-1825-0097/person';
 
-  it('strips url from the thrown error data while keeping the status fields', async () => {
+  it('keeps url off the thrown error data while keeping the status fields', async () => {
     stubBadRequest(url);
 
     const service = new OrcidService({} as unknown as AppConfig, {} as unknown as StorageService);
@@ -80,7 +80,7 @@ describe('OrcidService — upstream URL redaction on non-2xx (#31)', () => {
       .catch((e: unknown) => e)) as McpError;
 
     expect(err).toBeInstanceOf(McpError);
-    // The defect: httpErrorFromResponse seeds data.url from response.url unconditionally.
+    // response.url is set, so a url key here would put the upstream endpoint on client-facing data.
     expect(err.data).toBeDefined();
     expect(Object.keys(err.data as Record<string, unknown>)).not.toContain('url');
     expect(JSON.stringify(err.data)).not.toContain('pub.orcid.org');
