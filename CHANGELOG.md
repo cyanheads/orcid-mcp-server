@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.17](changelog/0.2.x/0.2.17.md) — 2026-09-21
+
+Adopts @cyanheads/mcp-ts-core 0.13.6 — a rejected tool argument carries an invalid_arguments reason and a recovery hint naming the accepted keys, a case-variant key or a JSON-stringified array is accepted instead of rejected, and tool error text closes with its reason. No advertised schema changes.
+
 ## [0.2.16](changelog/0.2.x/0.2.16.md) — 2026-09-16
 
 Adopts @cyanheads/mcp-ts-core 0.13.2 — tool argument rejections carry the structured error envelope and an upstream 5xx retries as ServiceUnavailable. Declares stateless session mode in source, and a malformed Solr query still fails fast instead of retrying as a transient outage.
