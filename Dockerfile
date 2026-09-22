@@ -3,12 +3,17 @@
 #
 # This stage installs all dependencies (including dev), builds the TypeScript
 # source code into JavaScript, and prepares the production assets.
+#
+# Pinned to $BUILDPLATFORM rather than the target platform: `bun run build` emits
+# JavaScript, and only `dist/` crosses into the production stage, which runs its
+# own target-arch install. Built for the target instead, the non-native leg of a
+# `--platform linux/amd64,linux/arm64` build runs under QEMU, where bun >= 1.4
+# aborts with a JavaScriptCore allocator assertion and fails the multi-arch push.
+#
+# The constraint this assumes: the build stage produces platform-independent
+# output. A stage that compiles a native addon needs the target-arch toolchain
+# and cannot cross-compile this way — drop the flag there.
 # ==============================================================================
-# `--platform=$BUILDPLATFORM` pins this stage to the host's native architecture.
-# The stage emits plain JavaScript (tsc + tsc-alias) with no native artifacts, so
-# one build serves every target arch — and it never runs under emulation, where
-# Bun aborts (SIGABRT) on a qemu-emulated linux/amd64 leg. The production stage
-# below stays unpinned so its dependency install resolves per target platform.
 FROM --platform=$BUILDPLATFORM oven/bun:1.4.0 AS build
 
 WORKDIR /usr/src/app
@@ -56,7 +61,6 @@ COPY package.json bun.lock ./
 
 # Install only production dependencies, ignoring any lifecycle scripts (like 'prepare')
 # that are not needed in the final production image.
-#
 # `--omit=peer` drops the framework's optional peer tiers (test runner, service
 # SDKs, parsers) that Bun would otherwise auto-install. Anything this server
 # actually imports belongs in its own `dependencies`, so nothing needed at
@@ -112,9 +116,8 @@ ENV MCP_FORCE_CONSOLE_LOGGING="true"
 # Expose the port the server listens on
 EXPOSE ${MCP_HTTP_PORT}
 
-# Health check — lightweight HTTP probe against the /healthz endpoint
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD bun -e "fetch('http://localhost:' + (process.env.MCP_HTTP_PORT || '3010') + '/healthz').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"
+# Health check using a bun-native fetch (slim image ships no curl/wget)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD bun -e "fetch('http://localhost:'+(process.env.MCP_HTTP_PORT??'3010')+'/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 # The command to start the server
 CMD ["bun", "run", "dist/index.js"]
