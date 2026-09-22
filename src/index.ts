@@ -40,6 +40,6 @@ await createApp({
     initOrcidService(core.config, core.storage);
   },
   instructions:
-    'ORCID researcher registry server. Use orcid_search_researchers for exact field lookups (name + institution + DOI/PMID). Use orcid_resolve_researcher when the input is an ambiguous author name needing ranked disambiguation. Use orcid_get_profile → orcid_get_works → orcid_get_affiliations to build a researcher dossier. Pass an array of put-codes from orcid_get_works to orcid_get_work_detail for abstracts and contributor lists (bulk fetch, up to 100 in one call). DOIs and PMIDs from orcid_get_works are ready for chaining to Crossref or PubMed servers.',
+    'Use orcid_search_researchers for exact field lookups (name, institution, DOI, PMID) and orcid_resolve_researcher when an ambiguous author name needs ranked disambiguation. Build a researcher dossier with orcid_get_profile, orcid_get_works, and orcid_get_affiliations, then pass put-codes from orcid_get_works to orcid_get_work_detail (up to 100 per call) for abstracts and contributor lists. DOIs and PMIDs in orcid_get_works results chain directly to Crossref or PubMed servers.',
   landing: { requireAuth: false },
 });
