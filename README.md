@@ -80,6 +80,7 @@ All resource data is also reachable via tools. Use resources when injecting stab
 ### `orcid_get_works` <sub>tool</sub>
 
 - Returns the first 50 works by default (`limit` max 1000); page with `offset` and the returned `nextOffset` — `workCount` reports the total available
+- A page also stops before its structured output or its text would pass 64,000 bytes, so `returnedCount` can come in below `limit`; `truncated` and `nextOffset` carry the continuation either way
 - Set `include_external_ids` to `false` to drop DOI/PMID/arXiv/ISBN identifier lists for a lighter payload
 - External identifiers are pre-formatted for chaining to Crossref, PubMed, or arXiv
 - Summaries only — pass a work's `putCode` to `orcid_get_work_detail` for abstracts and full contributor lists
@@ -89,9 +90,11 @@ All resource data is also reachable via tools. Use resources when injecting stab
 
 ### `orcid_get_work_detail` <sub>tool</sub>
 
-- `put_codes`: 1–100 per call (from `orcid_get_works`), resolved in a single round-trip
+- `put_codes`: 1–100 per call (from `orcid_get_works`), resolved in a single round-trip; a repeated put-code is fetched once
 - Returns abstract, full contributor list with CRediT roles, complete external ID list, citation metadata (BibTeX or other deposited formats), journal title, and URL
 - Per-put-code failures (not found or inaccessible) arrive as `errors` entries — the rest of the batch still resolves
+- Records are added until the structured output or the text would pass 64,000 bytes; put-codes left out come back in `deferredPutCodes` with a notice, ready to pass as `put_codes` in the next call
+- An upstream rate limit surfaces as a `RateLimited` error carrying ORCID's `retryAfter` when it sent one
 
 ---
 
@@ -163,12 +166,13 @@ ORCID-specific:
 - `expanded-search` as the primary search backend — returns ORCID iD, name, and institution data inline, eliminating N+1 profile fetches
 - Single `/activities` call for affiliation queries, filtered client-side — eliminates up to 7 parallel upstream calls vs. per-section fetching
 - External identifiers (DOIs, PMIDs, arXiv IDs) surfaced in works responses in formats ready for cross-server chaining to Crossref, PubMed, or arXiv
+- Inline markup that depositing systems leave in work titles, abstracts, and funding and research-resource titles (`<i>`, `<sup>`, `<h4>`) is stripped to plain text; the deposited citation is relayed verbatim
 
 Agent-friendly output:
 
 - Provenance — `orcid_resolve_researcher` returns raw disambiguation signals (name match type, institution overlap, anchor type) instead of a synthetic confidence score
-- Truncation awareness — `orcid_search_researchers` reports `numFound` and a `truncated` flag against the ORCID Public API's 10,000-offset ceiling; `orcid_get_works` reports `workCount` and `truncated` against its own page size
-- Partial failure isolation — `orcid_get_work_detail` returns per-put-code errors alongside successfully resolved works instead of failing the whole batch
+- Truncation awareness — `orcid_search_researchers` reports `numFound` and a `truncated` flag against the ORCID Public API's 10,000-offset ceiling; `orcid_get_works` reports `workCount` and `truncated` against its own page size and a 64,000-byte response budget
+- Partial failure isolation — `orcid_get_work_detail` returns per-put-code errors alongside successfully resolved works instead of failing the whole batch, and names any put-codes the response budget deferred
 - Empty-result guidance — `orcid_get_works`, `orcid_get_affiliations`, `orcid_get_funding`, `orcid_get_peer_reviews`, and `orcid_get_research_resources` return a notice when a result is empty, explaining that this may reflect self-reporting gaps or visibility settings rather than confirmed absence
 
 ## Getting started
