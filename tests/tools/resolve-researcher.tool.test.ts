@@ -3,8 +3,8 @@
  * @module tests/tools/resolve-researcher.tool.test
  */
 
-import { McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidResolveResearcher } from '@/mcp-server/tools/definitions/resolve-researcher.tool.js';
 
@@ -13,6 +13,12 @@ vi.mock('@/services/orcid/orcid-service.js', () => ({
   getOrcidService: () => ({ expandedSearch: mockExpandedSearch }),
   normalizeOrcidId: (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim(),
 }));
+
+// An unrouted search fails loudly; each test layers the responses it expects.
+beforeEach(() => {
+  mockExpandedSearch.mockReset();
+  mockExpandedSearch.mockRejectedValue(new Error('unmocked fetch'));
+});
 
 const doudnaResult = {
   orcidId: '0000-0001-9522-8779',
@@ -83,7 +89,7 @@ describe('orcidResolveResearcher', () => {
 
     expect(result.candidates[0]!.anchorType).toBe('doi');
     // DOI slash is Solr-reserved, so the executed clause carries the escaped form.
-    expect(enrichment.queryUsed).toContain('doi-self:10.1126\\/science.1225829');
+    expect(enrichment.queryUsed).toContain('doi-self:"10.1126\\/science.1225829"');
   });
 
   it('falls back to relaxed query when primary returns nothing and affiliation provided', async () => {
@@ -119,7 +125,7 @@ describe('orcidResolveResearcher', () => {
     await orcidResolveResearcher.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
 
-    expect(enrichment.relaxedQuery).toBe('doi-self:10.1126\\/science.1225829');
+    expect(enrichment.relaxedQuery).toBe('doi-self:"10.1126\\/science.1225829"');
   });
 
   it('adds notice enrichment when no candidates found and returns empty list', async () => {
@@ -307,13 +313,13 @@ describe('orcidResolveResearcher — count/query pairing (#15)', () => {
     expect(mockExpandedSearch).toHaveBeenCalledTimes(3);
 
     // Effective query is the anchor-only stage that finally matched (DOI slash escaped).
-    expect(enrichment.queryUsed).toBe('doi-self:10.1126\\/science.1225829');
+    expect(enrichment.queryUsed).toBe('doi-self:"10.1126\\/science.1225829"');
     expect(enrichment.queryUsed).toBe(enrichment.relaxedQuery);
     expect(enrichment.totalFound).toBe(4); // from the anchor-only response
 
     // primaryQuery still describes the fully-constrained first attempt.
     expect(enrichment.primaryQuery).toContain('affiliation-org-name:');
-    expect(enrichment.primaryQuery).toContain('doi-self:10.1126\\/science.1225829');
+    expect(enrichment.primaryQuery).toContain('doi-self:"10.1126\\/science.1225829"');
     expect(enrichment.primaryTotalFound).toBe(0);
   });
 });
@@ -347,8 +353,8 @@ describe('orcidResolveResearcher — dual DOI+PMID anchor fallback (#19)', () =>
     // The valid PMID anchor produced the candidate and is reported as the anchor used.
     expect(result.candidates).toHaveLength(1);
     expect(result.candidates[0]!.anchorType).toBe('pmid');
-    expect(enrichment.queryUsed).toBe('pmid-self:41961593');
-    expect(enrichment.relaxedQuery).toBe('pmid-self:41961593');
+    expect(enrichment.queryUsed).toBe('pmid-self:"41961593"');
+    expect(enrichment.relaxedQuery).toBe('pmid-self:"41961593"');
   });
 
   it('prefers the DOI anchor and never tries PMID when the DOI matches', async () => {
@@ -369,6 +375,83 @@ describe('orcidResolveResearcher — dual DOI+PMID anchor fallback (#19)', () =>
 
     expect(mockExpandedSearch).toHaveBeenCalledTimes(2); // combined, DOI-only (PMID skipped)
     expect(result.candidates[0]!.anchorType).toBe('doi');
-    expect(enrichment.relaxedQuery).toBe('doi-self:10.1126\\/science.1225829');
+    expect(enrichment.relaxedQuery).toBe('doi-self:"10.1126\\/science.1225829"');
+  });
+});
+
+describe('orcidResolveResearcher — blank name is rejected at the schema (#34)', () => {
+  it.each([
+    ['empty', ''],
+    ['spaces', '   '],
+    ['a tab', '\t'],
+  ])(
+    'rejects a %s name with invalid_arguments and an actionable recovery hint',
+    async (_, name) => {
+      const result = await runToolContract(orcidResolveResearcher, { name });
+
+      expect(result.isError).toBe(true);
+      const error = (
+        result.structuredContent as {
+          error: { code: number; data: { reason: string; recovery: { hint: string } } };
+        }
+      ).error;
+      expect(error.code).toBe(JsonRpcErrorCode.InvalidParams);
+      expect(error.data.reason).toBe('invalid_arguments');
+      expect(error.data.recovery.hint).toMatch(/author name/i);
+      expect(mockExpandedSearch).not.toHaveBeenCalled();
+    },
+  );
+
+  it('accepts a name that is non-blank after trimming', () => {
+    expect(orcidResolveResearcher.input.parse({ name: ' Doudna ' }).name).toBe(' Doudna ');
+  });
+});
+
+describe('orcidResolveResearcher — DOI/PMID URL anchors (#44)', () => {
+  async function primaryQuery(raw: Record<string, unknown>): Promise<string> {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 1, results: [doudnaResult] });
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
+    await orcidResolveResearcher.handler(orcidResolveResearcher.input.parse(raw), ctx);
+    return getEnrichment(ctx).primaryQuery as string;
+  }
+
+  it.each([
+    'https://doi.org/10.1126/science.1225829',
+    'https://dx.doi.org/10.1126/science.1225829',
+    'doi:10.1126/science.1225829',
+    'Doi:10.1126/science.1225829',
+  ])('anchors %s exactly like the bare DOI', async (doi) => {
+    expect(await primaryQuery({ name: 'Jennifer Doudna', doi })).toBe(
+      'given-and-family-names:"Jennifer Doudna" AND doi-self:"10.1126\\/science.1225829"',
+    );
+  });
+
+  it.each([
+    'https://pubmed.ncbi.nlm.nih.gov/22745249/',
+    'https://www.ncbi.nlm.nih.gov/pubmed/22745249',
+    'https://pubmed.ncbi.nlm.nih.gov/22745249/?from_single_result=22745249',
+    'PMID: 22745249',
+  ])('anchors %s exactly like the bare PMID', async (pmid) => {
+    expect(await primaryQuery({ name: 'Jennifer Doudna', pmid })).toBe(
+      'given-and-family-names:"Jennifer Doudna" AND pmid-self:"22745249"',
+    );
+  });
+
+  it('keeps a PMID anchor with inner whitespace inside its own phrase clause (#47)', async () => {
+    expect(await primaryQuery({ name: 'Jennifer Doudna', pmid: '22745249 OR smith' })).toBe(
+      'given-and-family-names:"Jennifer Doudna" AND pmid-self:"22745249 OR smith"',
+    );
+  });
+
+  it('treats a prefix-only DOI as no anchor rather than an empty clause', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 1, results: [doudnaResult] });
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
+    const result = await orcidResolveResearcher.handler(
+      orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna', doi: 'https://doi.org/' }),
+      ctx,
+    );
+
+    expect(getEnrichment(ctx).primaryQuery).toBe('given-and-family-names:"Jennifer Doudna"');
+    expect(result.candidates[0]!.anchorType).toBe('none');
   });
 });

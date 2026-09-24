@@ -3,8 +3,8 @@
  * @module tests/tools/search-researchers.tool.test
  */
 
-import { McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidSearchResearchers } from '@/mcp-server/tools/definitions/search-researchers.tool.js';
 
@@ -14,6 +14,19 @@ vi.mock('@/services/orcid/orcid-service.js', () => ({
   getOrcidService: () => ({ expandedSearch: mockExpandedSearch }),
   normalizeOrcidId: (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim(),
 }));
+
+// An unrouted search fails loudly; each test layers the responses it expects.
+beforeEach(() => {
+  mockExpandedSearch.mockReset();
+  mockExpandedSearch.mockRejectedValue(new Error('unmocked fetch'));
+});
+
+/** Text of every content block the contract runner rendered. */
+function contentText(result: { content: readonly { type: string }[] }): string {
+  return result.content
+    .flatMap((block) => ('text' in block && typeof block.text === 'string' ? [block.text] : []))
+    .join('\n');
+}
 
 describe('orcidSearchResearchers', () => {
   beforeEach(() => {
@@ -88,15 +101,22 @@ describe('orcidSearchResearchers', () => {
     expect(callParams.q).toContain('keyword:"CRISPR"');
   });
 
-  it('enriches with wildcard query when no params provided', async () => {
-    mockExpandedSearch.mockResolvedValueOnce({ numFound: 100, results: [] });
+  it('rejects a call with no search field at input validation instead of searching *:* (#34)', () => {
+    const parsed = orcidSearchResearchers.input.safeParse({});
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues[0]?.path).toEqual([]);
+    expect(parsed.error?.issues[0]?.message).toMatch(/at least one/i);
+  });
+
+  it('accepts `query` on its own and compiles it as the single clause', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 3, results: [] });
 
     const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
-    const input = orcidSearchResearchers.input.parse({});
+    const input = orcidSearchResearchers.input.parse({ query: 'grant-numbers:"NE/000393/1"' });
     await orcidSearchResearchers.handler(input, ctx);
-    const enrichment = getEnrichment(ctx);
 
-    expect(enrichment.effectiveQuery).toBe('*:*');
+    expect(getEnrichment(ctx).effectiveQuery).toBe('grant-numbers:"NE/000393/1"');
   });
 
   it('adds notice enrichment when no results found', async () => {
@@ -284,5 +304,48 @@ describe('orcidSearchResearchers', () => {
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('Next Start');
     expect(text).toContain('20');
+  });
+});
+
+describe('orcidSearchResearchers — blank input is rejected at the schema (#34)', () => {
+  it.each([
+    ['no field at all', {}],
+    ['only whitespace-only structured fields', { given_name: '   ', family_name: '\t' }],
+    ['only a whitespace-only raw query', { query: '  ' }],
+    ['only a whitespace-only grant number', { grant_number: ' ' }],
+    ['a DOI that is only a URL prefix', { doi: 'https://doi.org/' }],
+    ['a PMID that is only a URL prefix', { pmid: 'https://pubmed.ncbi.nlm.nih.gov/' }],
+  ])(
+    'rejects %s with invalid_arguments and a recovery hint naming the fields',
+    async (_, input) => {
+      const result = await runToolContract(orcidSearchResearchers, input);
+
+      expect(result.isError).toBe(true);
+      const error = (
+        result.structuredContent as {
+          error: { code: number; data: { reason: string; recovery: { hint: string } } };
+        }
+      ).error;
+      expect(error.code).toBe(JsonRpcErrorCode.InvalidParams);
+      expect(error.data.reason).toBe('invalid_arguments');
+      for (const field of ['given_name', 'family_name', 'doi', 'pmid', 'grant_number', 'query']) {
+        expect(error.data.recovery.hint).toContain(field);
+      }
+      expect(contentText(result)).toContain(error.data.recovery.hint);
+      expect(contentText(result)).toContain('(reason invalid_arguments)');
+      expect(mockExpandedSearch).not.toHaveBeenCalled();
+    },
+  );
+
+  it('still succeeds for a meaningful query that matches nothing, carrying the empty-result notice', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+
+    const result = await runToolContract(orcidSearchResearchers, { family_name: 'Xyzzyqx' });
+
+    expect(result.isError).toBeFalsy();
+    const structured = result.structuredContent as { notice?: string; numFound: number };
+    expect(structured.numFound).toBe(0);
+    expect(structured.notice).toContain('No results found');
+    expect(contentText(result)).toContain('No results found');
   });
 });

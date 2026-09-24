@@ -8,13 +8,23 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { getOrcidService } from '@/services/orcid/orcid-service.js';
-import { escapeSolrValue } from '@/services/orcid/solr-query.js';
+import { escapeSolrValue, stripIdentifierPrefix } from '@/services/orcid/solr-query.js';
+import { foldForMatching } from '@/services/orcid/text-folding.js';
 import type { ExpandedSearchResult } from '@/services/orcid/types.js';
 
 /**
  * Generic organization words that carry no disambiguating signal on their own. A name — or
  * a matched run — made of nothing but these words can't establish institution overlap, so
- * a bare "university"/"institute" never marks unrelated institutions as overlapping (#20).
+ * a bare "university"/"institute" never marks unrelated institutions as overlapping (#20),
+ * in English or in the other languages ORCID affiliations commonly use (#46).
+ *
+ * Entries are compared against `contentTokens` output, so they are folded (no accents,
+ * lowercase), and a word of 3 characters or fewer ("de", "di", "und", "för") never needs
+ * listing — it is already dropped. The non-English entries are the same concepts as the
+ * English ones, taken from live ORCID `affiliation-org-name` values; a word that names a
+ * specific place or institution stays out even when it is also a common word ("para" is
+ * the Brazilian state Pará, as in "Universidade Federal do Pará"; "dell" is the Italian
+ * "dell'" but also "Dell Medical School").
  */
 const ORG_STOPWORDS = new Set([
   'university',
@@ -46,19 +56,81 @@ const ORG_STOPWORDS = new Set([
   'for',
   'national',
   'state',
+  // University (es, pt, it, ca/de, fr, nl, sv/da/no) and its adjective forms.
+  'universidad',
+  'universidade',
+  'universita',
+  'universitat',
+  'universite',
+  'universiteit',
+  'universitet',
+  'universitetet',
+  'universitario',
+  'universitaria',
+  'universitaire',
+  'universitetssjukhuset',
+  // Institute (fr/de, es/pt, it, nl, no, sv) and the Swedish department word.
+  'institut',
+  'instituto',
+  'istituto',
+  'instituut',
+  'institutt',
+  'institutet',
+  'institutionen',
+  // College and school.
+  'colegio',
+  'escuela',
+  'escola',
+  'ecole',
+  'scuola',
+  'hochschule',
+  'hogeschool',
+  'hogskolan',
+  'hogskola',
+  'skole',
+  // Center and laboratory.
+  'centro',
+  'zentrum',
+  'senter',
+  'laboratoire',
+  'laboratorio',
+  'laboratorium',
+  // Hospital.
+  'hopital',
+  'ospedale',
+  'sjukhus',
+  'sykehus',
+  'ziekenhuis',
+  // National and state.
+  'nacional',
+  'nazionale',
+  'nationale',
+  'nationaal',
+  'estadual',
+  // Connectives long enough to survive the length filter ("Università degli Studi di").
+  'degli',
+  'della',
+  'delle',
+  'voor',
+  'studi',
 ]);
+
+/** Rejection text for an empty or whitespace-only `name`; also the synthesized recovery hint. */
+const BLANK_NAME_MESSAGE =
+  'Provide a non-blank author name to disambiguate, such as "Jennifer Doudna" or "J. Doudna".';
 
 /** Name match type based on how well the result name matches input. */
 type NameMatchType = 'exact' | 'partial' | 'other-name' | 'none';
 
 function computeNameMatch(candidate: ExpandedSearchResult, inputName: string): NameMatchType {
-  const normalize = (s: string) =>
-    s
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, '')
-      .trim();
+  // Accent-insensitive on both sides (#35): a record often carries the ASCII rendering of an
+  // accented name, and the input may be either form.
+  const normalize = (s: string) => foldForMatching(s).trim();
 
   const normalizedInput = normalize(inputName);
+  // A name with no letters or digits left has nothing to compare — and would otherwise
+  // equal the empty string of a candidate with no credit name.
+  if (!normalizedInput) return 'none';
 
   // Build full names from candidate
   const fullName = [candidate.givenNames, candidate.familyNames].filter(Boolean).join(' ');
@@ -69,8 +141,8 @@ function computeNameMatch(candidate: ExpandedSearchResult, inputName: string): N
   }
 
   const inputTokens = normalizedInput.split(/\s+/).filter(Boolean);
-  const candidateTokens = normalize(fullName).split(/\s+/).filter(Boolean);
-  const overlap = inputTokens.filter((t) => candidateTokens.includes(t));
+  const candidateTokens = new Set(normalize(fullName).split(/\s+/).filter(Boolean));
+  const overlap = inputTokens.filter((t) => candidateTokens.has(t));
   if (overlap.length >= Math.min(2, inputTokens.length)) {
     return 'partial';
   }
@@ -78,8 +150,8 @@ function computeNameMatch(candidate: ExpandedSearchResult, inputName: string): N
   // Check other-names
   for (const otherName of candidate.otherNames) {
     if (normalize(otherName) === normalizedInput) return 'other-name';
-    const otherTokens = normalize(otherName).split(/\s+/).filter(Boolean);
-    const otherOverlap = inputTokens.filter((t) => otherTokens.includes(t));
+    const otherTokens = new Set(normalize(otherName).split(/\s+/).filter(Boolean));
+    const otherOverlap = inputTokens.filter((t) => otherTokens.has(t));
     if (otherOverlap.length >= Math.min(2, inputTokens.length)) return 'other-name';
   }
 
@@ -87,15 +159,15 @@ function computeNameMatch(candidate: ExpandedSearchResult, inputName: string): N
 }
 
 /**
- * Content words of an institution name, in order. Tokens of 3 characters or fewer carry
- * too little identity to match on. Generic org words are deliberately *kept* — they
- * position the distinctive words within the name, which is what separates
- * "University of Washington" from "Washington University".
+ * Content words of an institution name, in order. Punctuation separates words
+ * ("Max-Planck-Institute" → max, planck, institute) before the accent-insensitive fold
+ * (#35), so "Université de Montréal" and "Universite de Montreal" produce the same words.
+ * Tokens of 3 characters or fewer carry too little identity to match on. Generic org words
+ * are deliberately *kept* — they position the distinctive words within the name, which is
+ * what separates "University of Washington" from "Washington University".
  */
 function contentTokens(name: string): string[] {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
+  return foldForMatching(name.replace(/[^\p{L}\p{M}\p{N}]+/gu, ' '))
     .split(' ')
     .filter((t) => t.length > 3);
 }
@@ -152,7 +224,8 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
   input: z.object({
     name: z
       .string()
-      .min(1)
+      .min(1, { message: BLANK_NAME_MESSAGE, abort: true })
+      .refine((name) => name.trim().length > 0, { message: BLANK_NAME_MESSAGE })
       .describe(
         'Author name to disambiguate (full name preferred, e.g. "Jennifer Doudna" or "J. Doudna").',
       ),
@@ -166,13 +239,13 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
       .string()
       .optional()
       .describe(
-        'DOI of a work authored by this researcher. Acts as a near-deterministic anchor — filters to researchers who linked this DOI to their ORCID record.',
+        'DOI of a work authored by this researcher, bare (10.1126/science.1225829) or as a https://doi.org/, https://dx.doi.org/, or doi: form. Acts as a near-deterministic anchor — filters to researchers who linked this DOI to their ORCID record.',
       ),
     pmid: z
       .string()
       .optional()
       .describe(
-        'PubMed ID of a work authored by this researcher. Acts as a near-deterministic anchor — filters to researchers who linked this PMID to their ORCID record.',
+        'PubMed ID of a work authored by this researcher, bare (22745249), as PMID:22745249, or as a pubmed.ncbi.nlm.nih.gov or ncbi.nlm.nih.gov/pubmed URL. Acts as a near-deterministic anchor — filters to researchers who linked this PMID to their ORCID record.',
       ),
     rows: z
       .number()
@@ -199,7 +272,7 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
             nameMatchType: z
               .enum(['exact', 'partial', 'other-name', 'none'])
               .describe(
-                'How closely the candidate name matches the input name: exact (full match), partial (token overlap), other-name (match on alternate name), or none.',
+                'How closely the candidate name matches the input name, compared case- and accent-insensitively (José = Jose): exact (full match), partial (token overlap), other-name (match on alternate name), or none.',
               ),
             institutionOverlap: z
               .boolean()
@@ -306,18 +379,20 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
       }
     };
 
-    // Model every supplied anchor as its own escaped clause, highest precedence first
-    // (DOI before PMID). The anchor-only fallback retries each independently so a valid
-    // anchor is never discarded when a wrong one zeroes out the combined query.
+    // Model every supplied anchor as its own escaped, phrase-quoted clause, highest
+    // precedence first (DOI before PMID). The quotes keep a value with inner whitespace one
+    // clause rather than extra query terms (#47). The anchor-only fallback retries each
+    // independently so a valid anchor is never discarded when a wrong one zeroes out the
+    // combined query. A URL-form identifier is reduced to the bare one ORCID indexes; one
+    // that is only a prefix comes back empty and anchors nothing.
     const anchorClauses: { type: 'doi' | 'pmid'; clause: string }[] = [];
-    if (input.doi?.trim()) {
-      anchorClauses.push({ type: 'doi', clause: `doi-self:${escapeSolrValue(input.doi.trim())}` });
+    const doi = input.doi && stripIdentifierPrefix('doi', input.doi);
+    if (doi) {
+      anchorClauses.push({ type: 'doi', clause: `doi-self:"${escapeSolrValue(doi)}"` });
     }
-    if (input.pmid?.trim()) {
-      anchorClauses.push({
-        type: 'pmid',
-        clause: `pmid-self:${escapeSolrValue(input.pmid.trim())}`,
-      });
+    const pmid = input.pmid && stripIdentifierPrefix('pmid', input.pmid);
+    if (pmid) {
+      anchorClauses.push({ type: 'pmid', clause: `pmid-self:"${escapeSolrValue(pmid)}"` });
     }
 
     // Describes the anchor that produced the returned candidates. Starts at the highest-

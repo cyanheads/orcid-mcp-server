@@ -35,7 +35,7 @@ Researcher identity data from the ORCID registry. Search and disambiguate author
 
 | Tool | Description |
 |:-----|:------------|
-| `orcid_search_researchers` | Search the ORCID registry using structured field params (name, affiliation, keyword, ROR ID, DOI, PMID) |
+| `orcid_search_researchers` | Search the ORCID registry using structured field params (name, affiliation, keyword, ROR ID, DOI, PMID, grant number) |
 | `orcid_get_profile` | Fetch a researcher's public profile — name, biography, keywords, researcher URLs, external identifiers |
 | `orcid_get_works` | Retrieve works (publications, datasets, software, preprints) for a researcher, paginated |
 | `orcid_get_work_detail` | Fetch full detail records — abstracts, contributors, citations — for 1–100 works by put-code |
@@ -58,8 +58,10 @@ All resource data is also reachable via tools. Use resources when injecting stab
 
 ### `orcid_search_researchers` <sub>tool</sub>
 
-- Structured params — `given_name`, `family_name`, `affiliation`, `keyword`, `ror_id`, `doi`, `pmid` — AND together automatically; `query` appends raw Solr syntax to the generated clause
-- `doi` and `pmid` map to `doi-self` / `pmid-self` field queries — finds researchers who linked that specific work to their ORCID record
+- Structured params — `given_name`, `family_name`, `affiliation`, `keyword`, `ror_id`, `doi`, `pmid`, `grant_number` — AND together automatically; `query` appends raw Solr syntax to the generated clause
+- At least one param must be non-blank — an empty or whitespace-only search is rejected rather than run against the whole registry
+- `doi` and `pmid` map to `doi-self` / `pmid-self` field queries — finds researchers who linked that specific work to their ORCID record. URL and label forms (`https://doi.org/…`, `doi:…`, `https://pubmed.ncbi.nlm.nih.gov/…/`, `PMID:…`) are accepted and reduced to the bare identifier
+- `grant_number` phrase-matches the grant numbers on researchers' funding items, case-insensitively, over the parts between separators such as hyphens and slashes — `5F31MH010500` also matches `5F31MH010500-03`, but a number cut mid-part matches nothing — pair with `orcid_get_funding` to inspect each match
 - `rows`: 1–1000 (default 20); `start`: 0–10,000 offset pagination (the ORCID Public API's ceiling for unauthenticated requests)
 - Returns expanded-search results with inline name and institution data — no follow-up profile fetch needed for basic discovery
 - Use for precise field-anchored lookups; use `orcid_resolve_researcher` for ambiguous names needing ranked disambiguation
@@ -95,7 +97,7 @@ All resource data is also reachable via tools. Use resources when injecting stab
 
 ### `orcid_get_affiliations` <sub>tool</sub>
 
-- `types` filters which sections to return: `employment`, `education`, `invited-positions`, `distinctions`, `memberships`, `qualifications`, `services`, or `all` — default is employment + education
+- `types` filters which sections to return: `employment`, `education`, `invited-positions`, `distinctions`, `memberships`, `qualifications`, `services`, or `all` — default is employment + education; an explicit empty list is rejected
 - One upstream call regardless of how many types are requested
 - Returns organization name, disambiguated ID (ROR/GRID/Ringgold), department, role, and date range per record
 - Self-reported; an empty result does not mean no affiliation
@@ -130,7 +132,8 @@ All resource data is also reachable via tools. Use resources when injecting stab
 ### `orcid_resolve_researcher` <sub>tool</sub>
 
 - Returns ranked candidates (5 default, up to 20 via `rows`) with transparent disambiguation signals: name match type (`exact`/`partial`/`other-name`/`none`), institution overlap flag, and anchor type (`doi`/`pmid`/`none`)
-- When `doi` or `pmid` is provided, uses `doi-self` or `pmid-self` as an anchor — researchers who have linked that work to their ORCID record are near-deterministic matches
+- Name and institution comparisons are case- and accent-insensitive — `José Baselga` and `Jose Baselga` classify the same candidate identically
+- When `doi` or `pmid` is provided (bare or as a URL), uses `doi-self` or `pmid-self` as an anchor — researchers who have linked that work to their ORCID record are near-deterministic matches
 - Falls back to a relaxed query (dropping affiliation) if the initial candidate set is empty, then to anchor-only retries when a supplied anchor is present
 - No synthetic scores — raw signal fields only, so callers can apply their own ranking logic
 

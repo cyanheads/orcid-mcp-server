@@ -8,12 +8,19 @@ import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidResolveResearcher } from '@/mcp-server/tools/definitions/resolve-researcher.tool.js';
+import type { ExpandedSearchResult } from '@/services/orcid/types.js';
 
 const mockExpandedSearch = vi.fn();
 vi.mock('@/services/orcid/orcid-service.js', () => ({
   getOrcidService: () => ({ expandedSearch: mockExpandedSearch }),
   normalizeOrcidId: (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim(),
 }));
+
+// An unrouted search fails loudly; each test layers the responses it expects.
+beforeEach(() => {
+  mockExpandedSearch.mockReset();
+  mockExpandedSearch.mockRejectedValue(new Error('unmocked fetch'));
+});
 
 const baseCandidate = {
   orcidId: '0000-0001-9522-8779',
@@ -45,7 +52,7 @@ describe('orcidResolveResearcher — pmid anchor', () => {
     const enrichment = getEnrichment(ctx);
 
     expect(result.candidates[0]!.anchorType).toBe('pmid');
-    expect(enrichment.queryUsed).toContain('pmid-self:22745249');
+    expect(enrichment.queryUsed).toContain('pmid-self:"22745249"');
   });
 
   it('falls back to pmid-only query when name+pmid returns nothing', async () => {
@@ -61,7 +68,7 @@ describe('orcidResolveResearcher — pmid anchor', () => {
     await orcidResolveResearcher.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
 
-    expect(enrichment.relaxedQuery).toBe('pmid-self:22745249');
+    expect(enrichment.relaxedQuery).toBe('pmid-self:"22745249"');
   });
 });
 
@@ -104,6 +111,42 @@ describe('orcidResolveResearcher — name match types', () => {
     const result = await orcidResolveResearcher.handler(input, ctx);
 
     expect(result.candidates[0]!.nameMatchType).toBe('other-name');
+  });
+
+  it.each([
+    ["O'Brien Walsh", 'OBrien', 'Walsh'],
+    ['J. Doudna', 'J', 'Doudna'],
+    ['Jean-Luc Picard', 'Jean-Luc', 'Picard'],
+  ])(
+    'drops ASCII punctuation on both sides: "%s" is an exact match',
+    async (name, given, family) => {
+      mockExpandedSearch.mockResolvedValueOnce({
+        numFound: 1,
+        results: [{ ...baseCandidate, givenNames: given, familyNames: family }],
+      });
+
+      const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
+      const result = await orcidResolveResearcher.handler(
+        orcidResolveResearcher.input.parse({ name }),
+        ctx,
+      );
+
+      expect(result.candidates[0]!.nameMatchType).toBe('exact');
+    },
+  );
+
+  it('trims surrounding whitespace from the name before compiling the clause', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 1, results: [baseCandidate] });
+
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
+    const result = await orcidResolveResearcher.handler(
+      orcidResolveResearcher.input.parse({ name: '  Jennifer Doudna \t' }),
+      ctx,
+    );
+
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
+    expect(callParams.q).toBe('given-and-family-names:"Jennifer Doudna"');
+    expect(result.candidates[0]!.nameMatchType).toBe('exact');
   });
 
   it('returns none when no tokens match', async () => {
@@ -287,7 +330,7 @@ describe('orcidResolveResearcher — Solr value escaping (#18)', () => {
 
     expect(mockExpandedSearch).toHaveBeenCalled();
     const [callParams] = mockExpandedSearch.mock.calls[0]!;
-    expect(callParams.q).toContain('doi-self:10.1126\\/science.1225829');
+    expect(callParams.q).toContain('doi-self:"10.1126\\/science.1225829"');
   });
 });
 
@@ -460,6 +503,8 @@ describe('orcidResolveResearcher — institution overlap needs a whole shared na
     ['Washington University in St. Louis', 'Washington University'],
     ['Innovative Genomics Institute', 'Innovative Genomics Institute'],
     ['UC Berkeley', 'University of California, Berkeley'],
+    // Punctuation splits words, so a hyphenated rendering matches its spaced form.
+    ['Max Planck Institute', 'Max-Planck-Institute of Biology'],
   ])('still reports overlap for "%s" against "%s"', async (affiliation, institution) => {
     expect(await overlapFor(affiliation, institution)).toBe(true);
   });
@@ -568,5 +613,252 @@ describe('orcidResolveResearcher — query_failed contract (#31)', () => {
     );
 
     expect(err).toBe(upstream);
+  });
+});
+
+describe('orcidResolveResearcher — accent-insensitive name matching (#35)', () => {
+  async function matchTypeFor(
+    name: string,
+    candidate: Partial<ExpandedSearchResult>,
+  ): Promise<string> {
+    mockExpandedSearch.mockResolvedValueOnce({
+      numFound: 1,
+      results: [{ ...baseCandidate, ...candidate }],
+    });
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
+    const result = await orcidResolveResearcher.handler(
+      orcidResolveResearcher.input.parse({ name }),
+      ctx,
+    );
+    return result.candidates[0]!.nameMatchType;
+  }
+
+  it.each([
+    ['José Baselga', { givenNames: 'Jose', familyNames: 'Baselga' }],
+    ['Jose Baselga', { givenNames: 'José', familyNames: 'Baselga' }],
+    ['JOSÉ BASELGA', { givenNames: 'josé', familyNames: 'baselga' }],
+    // Decomposed input (e + U+0301) folds the same as the precomposed record.
+    ['Jose\u0301 Baselga', { givenNames: 'José', familyNames: 'Baselga' }],
+  ])('"%s" is an exact match for the equivalent given/family pair', async (name, candidate) => {
+    expect(await matchTypeFor(name, candidate)).toBe('exact');
+  });
+
+  it('folds the credit name the same way', async () => {
+    expect(
+      await matchTypeFor('Jose Baselga', {
+        givenNames: 'J.',
+        familyNames: 'Baselga-Torres',
+        creditName: 'José Baselga',
+      }),
+    ).toBe('exact');
+  });
+
+  it('folds every other-name entry the same way', async () => {
+    expect(
+      await matchTypeFor('Zoe Muller', {
+        givenNames: 'Z.',
+        familyNames: 'Mueller-Smith',
+        otherNames: ['Z. M. Smith', 'Zoë Müller'],
+      }),
+    ).toBe('other-name');
+  });
+
+  it('counts folded tokens toward a partial match', async () => {
+    expect(
+      await matchTypeFor('José María Baselga', { givenNames: 'Jose', familyNames: 'Baselga' }),
+    ).toBe('partial');
+  });
+
+  it('keeps the two-token threshold: one shared folded token is still none', async () => {
+    expect(await matchTypeFor('José Baselga', { givenNames: 'Jose', familyNames: 'Smith' })).toBe(
+      'none',
+    );
+  });
+
+  it('keeps unrelated accented names at none', async () => {
+    expect(
+      await matchTypeFor('François Müller', { givenNames: 'Robert', familyNames: 'Smith' }),
+    ).toBe('none');
+  });
+
+  it.each([
+    ['山中 伸弥', { givenNames: 'Robert', familyNames: 'Smith' }, 'none'],
+    ['山中 伸弥', { givenNames: 'Robert', familyNames: 'Smith', creditName: '山中 伸弥' }, 'exact'],
+    ['김 철수', { givenNames: '철수', familyNames: '김' }, 'partial'],
+    ['Ива\u0301нов Пётр', { givenNames: 'Иванов', familyNames: 'Петр' }, 'exact'],
+  ])(
+    'matches non-Latin "%s" on its own letters rather than folding it to nothing',
+    async (name, candidate, expected) => {
+      expect(await matchTypeFor(name, candidate)).toBe(expected);
+    },
+  );
+
+  it('never calls a name with no letters or digits an exact match', async () => {
+    expect(await matchTypeFor('—', { givenNames: 'Robert', familyNames: 'Smith' })).toBe('none');
+  });
+
+  it('keeps exact-before-partial ordering after folding', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({
+      numFound: 2,
+      results: [
+        {
+          ...baseCandidate,
+          orcidId: '0000-0002-1111-2222',
+          givenNames: 'José María',
+          familyNames: 'Baselga',
+        },
+        {
+          ...baseCandidate,
+          orcidId: '0000-0001-9522-8779',
+          givenNames: 'Jose',
+          familyNames: 'Baselga',
+        },
+      ],
+    });
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
+    const result = await orcidResolveResearcher.handler(
+      orcidResolveResearcher.input.parse({ name: 'José Baselga' }),
+      ctx,
+    );
+
+    expect(result.candidates.map((c) => [c.orcidId, c.nameMatchType])).toEqual([
+      ['0000-0001-9522-8779', 'exact'],
+      ['0000-0002-1111-2222', 'partial'],
+    ]);
+  });
+});
+
+describe('orcidResolveResearcher — accent-insensitive institution overlap (#35)', () => {
+  async function overlapFor(affiliation: string, institution: string): Promise<boolean> {
+    mockExpandedSearch.mockResolvedValueOnce({
+      numFound: 1,
+      results: [{ ...baseCandidate, institutionNames: [institution] }],
+    });
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
+    const result = await orcidResolveResearcher.handler(
+      orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna', affiliation }),
+      ctx,
+    );
+    return result.candidates[0]!.institutionOverlap;
+  }
+
+  it.each([
+    ['Université de Montréal', 'Universite de Montreal'],
+    ['Universite de Montreal', 'Université de Montréal'],
+    ['Universität Zürich', 'Universitat Zurich'],
+    ['Montréal', 'Université de Montréal'],
+  ])('reports overlap for "%s" against "%s"', async (affiliation, institution) => {
+    expect(await overlapFor(affiliation, institution)).toBe(true);
+  });
+
+  it.each([
+    // Generic-word rejection still holds.
+    ['University', 'University of Zürich'],
+    // Contiguous-run requirement still holds after folding.
+    ['Montréal Université', 'Université de Montréal'],
+  ])('does not report overlap for "%s" against "%s"', async (affiliation, institution) => {
+    expect(await overlapFor(affiliation, institution)).toBe(false);
+  });
+});
+
+describe('orcidResolveResearcher — folding cost stays linear in name length (#35)', () => {
+  /**
+   * Best-of-three wall-clock for classifying one candidate whose every name field is `size`
+   * characters of distinct accented, punctuated tokens — the shape that would expose both a
+   * backtracking fold and a quadratic token-overlap scan.
+   */
+  async function timeFor(size: number): Promise<number> {
+    const tokens: string[] = [];
+    for (let i = 0, length = 0; length < size; i++) {
+      const token = `Jé${i.toString(36)}-ö\u0301`;
+      tokens.push(token);
+      length += token.length + 1;
+    }
+    const long = tokens.join(' ').slice(0, size);
+    let best = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < 3; i++) {
+      mockExpandedSearch.mockResolvedValueOnce({
+        numFound: 1,
+        results: [
+          {
+            ...baseCandidate,
+            givenNames: long,
+            familyNames: long,
+            creditName: long,
+            otherNames: [long],
+            institutionNames: [long],
+          },
+        ],
+      });
+      const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
+      const input = orcidResolveResearcher.input.parse({ name: long, affiliation: long });
+      const start = performance.now();
+      await orcidResolveResearcher.handler(input, ctx);
+      best = Math.min(best, performance.now() - start);
+    }
+    return best;
+  }
+
+  it('classifies 5k and 80k character names in linear time', async () => {
+    const [t5, t80] = [await timeFor(5_000), await timeFor(80_000)];
+
+    // 16x the input may cost ~16x the time; quadratic growth would be ~256x, so a 64x bound
+    // leaves room for load noise while still failing a quadratic scan. The 2 ms floor keeps
+    // timer noise on the small case from inflating the ratio.
+    expect(t80 / Math.max(t5, 2)).toBeLessThan(64);
+    expect(t80).toBeLessThan(1_000);
+  });
+});
+
+describe('orcidResolveResearcher — generic institution words in other languages (#46)', () => {
+  async function overlapFor(affiliation: string, institution: string): Promise<boolean> {
+    mockExpandedSearch.mockResolvedValueOnce({
+      numFound: 1,
+      results: [{ ...baseCandidate, institutionNames: [institution] }],
+    });
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
+    const result = await orcidResolveResearcher.handler(
+      orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna', affiliation }),
+      ctx,
+    );
+    return result.candidates[0]!.institutionOverlap;
+  }
+
+  // Institution names below are real ORCID affiliation-org-name values.
+  it.each([
+    ['Universidad de', 'Universidad de Buenos Aires'],
+    ['Université', 'Université Laval'],
+    ['Universität', 'Universität Bielefeld'],
+    ['Institut', 'Institut Pasteur'],
+    ['Universidade', 'Universidade Paulista'],
+    ['Università degli Studi', 'Università degli Studi di Palermo'],
+    ['Universiteit', 'Universiteit Utrecht'],
+    ['Instituut voor', 'Instituut voor Tropische Geneeskunde'],
+    ['Universitetet', 'Universitetet i Bergen Kjemisk institutt'],
+    ['Högskolan', 'Högskolan i Borås'],
+    ['Hôpital Universitaire', 'Hôpital Universitaire de Bruxelles'],
+    ['Hochschule', 'Hochschule Bochum'],
+    ['Ospedale', 'Ospedale Antonio Cardarelli'],
+    ['Centro Universitário', 'Centro Universitário FacUnicamps'],
+    ['Instituto Nacional', 'Instituto Nacional de Cancerologia'],
+  ])('a generic-only "%s" establishes no overlap with "%s"', async (affiliation, institution) => {
+    expect(await overlapFor(affiliation, institution)).toBe(false);
+  });
+
+  it.each([
+    ['Universidad de Chile', 'Universidad de Chile'],
+    ['Karolinska Institutet', 'Karolinska Institutet'],
+    ['Institut Pasteur', 'Institut Pasteur'],
+    ['Universität Zürich', 'Universitat Zurich'],
+    // "Pará" is a Brazilian state — a distinguishing name, so it is not a stopword.
+    ['Pará', 'Universidade Federal do Pará'],
+    // "Dell" folds like the Italian "dell'", but here it names the institution.
+    ['Dell', 'University of Texas at Austin Dell Medical School'],
+  ])('a distinctive "%s" still overlaps "%s"', async (affiliation, institution) => {
+    expect(await overlapFor(affiliation, institution)).toBe(true);
+  });
+
+  it('keeps the contiguous-run rule: "Universidad de Chile" does not overlap "Universidad de Buenos Aires"', async () => {
+    expect(await overlapFor('Universidad de Chile', 'Universidad de Buenos Aires')).toBe(false);
   });
 });

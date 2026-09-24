@@ -33,6 +33,21 @@ vi.mock('@/services/orcid/orcid-service.js', () => ({
   normalizeOrcidId: (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim(),
 }));
 
+// An unrouted service call fails loudly; each test layers the responses it expects.
+beforeEach(() => {
+  for (const mock of [
+    mockExpandedSearch,
+    mockGetPerson,
+    mockGetWorks,
+    mockGetAffiliations,
+    mockGetFundings,
+    mockGetPeerReviews,
+  ]) {
+    mock.mockReset();
+    mock.mockRejectedValue(new Error('unmocked fetch'));
+  }
+});
+
 describe('security: injection attempts are forwarded as query strings, not executed', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -108,10 +123,77 @@ describe('security: injection attempts are forwarded as query strings, not execu
     expect(callParams.q).toContain('affiliation-org-name:"UC Berkeley\\" OR \\*\\:\\*"');
     expect(callParams.q).not.toContain('affiliation-org-name:"UC Berkeley" OR *:*"');
   });
+
+  it('search_researchers: grant_number with reserved chars is escaped inside its phrase clause', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
+    const input = orcidSearchResearchers.input.parse({ grant_number: 'R01" OR *:* (x)' });
+    await orcidSearchResearchers.handler(input, ctx);
+
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
+    expect(callParams.q).toBe('grant-numbers:"R01\\" OR \\*\\:\\* \\(x\\)"');
+  });
+
+  it('search_researchers: a DOI with inner whitespace stays one phrase clause, no live OR (#47)', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
+    const input = orcidSearchResearchers.input.parse({
+      doi: 'https://doi.org/10.1000/x OR *:*',
+    });
+    await orcidSearchResearchers.handler(input, ctx);
+
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
+    expect(callParams.q).toBe('doi-self:"10.1000\\/x OR \\*\\:\\*"');
+  });
+
+  it('search_researchers: a PMID with inner whitespace stays one phrase clause, no live OR (#47)', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
+    const input = orcidSearchResearchers.input.parse({ pmid: '123 OR smith' });
+    await orcidSearchResearchers.handler(input, ctx);
+
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
+    expect(callParams.q).toBe('pmid-self:"123 OR smith"');
+  });
+
+  it('resolve_researcher: a PMID URL has only its prefix stripped; the body stays escaped', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
+    const input = orcidResolveResearcher.input.parse({
+      name: 'Jane Roe',
+      pmid: 'https://pubmed.ncbi.nlm.nih.gov/123:*/',
+    });
+    await orcidResolveResearcher.handler(input, ctx);
+
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
+    expect(callParams.q).toBe('given-and-family-names:"Jane Roe" AND pmid-self:"123\\:\\*"');
+  });
+
+  it('resolve_researcher: a DOI anchor with inner whitespace stays one phrase clause (#47)', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
+    const input = orcidResolveResearcher.input.parse({
+      name: 'Jane Roe',
+      doi: '10.1000/x OR smith',
+    });
+    await orcidResolveResearcher.handler(input, ctx);
+
+    const [primary] = mockExpandedSearch.mock.calls[0]!;
+    const [anchorOnly] = mockExpandedSearch.mock.calls[1]!;
+    expect(primary.q).toBe('given-and-family-names:"Jane Roe" AND doi-self:"10.1000\\/x OR smith"');
+    expect(anchorOnly.q).toBe('doi-self:"10.1000\\/x OR smith"');
+  });
 });
 
 describe('security: oversized inputs are rejected by input validation', () => {
-  it('resolve_researcher: name with very long string still passes validation (min-length only)', () => {
+  it('resolve_researcher: name with very long string still passes validation (no max length)', () => {
     const longName = 'A'.repeat(10000);
     // No max length on name — the tool accepts it (the API will handle limits)
     expect(() => orcidResolveResearcher.input.parse({ name: longName })).not.toThrow();
@@ -121,16 +203,24 @@ describe('security: oversized inputs are rejected by input validation', () => {
     expect(() => orcidResolveResearcher.input.parse({ name: '' })).toThrow();
   });
 
+  it('resolve_researcher: whitespace-only name is rejected', () => {
+    expect(() => orcidResolveResearcher.input.parse({ name: '   ' })).toThrow();
+    expect(() => orcidResolveResearcher.input.parse({ name: '\t' })).toThrow();
+  });
+
+  // Each case carries one search field so only the bound under test decides the outcome.
   it('search_researchers: rows above 1000 is rejected', () => {
-    expect(() => orcidSearchResearchers.input.parse({ rows: 1001 })).toThrow();
+    expect(() =>
+      orcidSearchResearchers.input.parse({ family_name: 'Smith', rows: 1001 }),
+    ).toThrow();
   });
 
   it('search_researchers: rows below 1 is rejected', () => {
-    expect(() => orcidSearchResearchers.input.parse({ rows: 0 })).toThrow();
+    expect(() => orcidSearchResearchers.input.parse({ family_name: 'Smith', rows: 0 })).toThrow();
   });
 
   it('search_researchers: start below 0 is rejected', () => {
-    expect(() => orcidSearchResearchers.input.parse({ start: -1 })).toThrow();
+    expect(() => orcidSearchResearchers.input.parse({ family_name: 'Smith', start: -1 })).toThrow();
   });
 
   it('resolve_researcher: rows above 20 is rejected', () => {

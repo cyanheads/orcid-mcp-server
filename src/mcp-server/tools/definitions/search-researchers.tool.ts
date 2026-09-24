@@ -7,10 +7,14 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { getOrcidService } from '@/services/orcid/orcid-service.js';
-import { escapeSolrValue } from '@/services/orcid/solr-query.js';
+import { escapeSolrValue, stripIdentifierPrefix } from '@/services/orcid/solr-query.js';
 import type { ExpandedSearchResponse } from '@/services/orcid/types.js';
 
-/** Build a Solr query string from structured search parameters. */
+/**
+ * Build a Solr query string from structured search parameters. Blank values contribute no
+ * clause, so an input with nothing searchable compiles to `''` — which the input schema
+ * rejects before the handler runs.
+ */
 function buildSolrQuery(input: {
   given_name?: string | undefined;
   family_name?: string | undefined;
@@ -19,13 +23,16 @@ function buildSolrQuery(input: {
   ror_id?: string | undefined;
   doi?: string | undefined;
   pmid?: string | undefined;
+  grant_number?: string | undefined;
   query?: string | undefined;
 }): string {
   const clauses: string[] = [];
+  const doi = input.doi && stripIdentifierPrefix('doi', input.doi);
+  const pmid = input.pmid && stripIdentifierPrefix('pmid', input.pmid);
 
-  // Every structured value is escaped so reserved characters (quotes, DOI punctuation,
-  // ROR colons/slashes) stay literal and cannot break out of their clause or malform the
-  // upstream request. The raw `query` passthrough below is deliberately left unescaped.
+  // Every structured value is escaped and phrase-quoted so reserved characters (quotes, DOI
+  // punctuation, ROR colons/slashes) stay literal and whitespace cannot split a value into
+  // extra query terms (#47). The raw `query` passthrough below is deliberately left unescaped.
   if (input.given_name?.trim()) {
     clauses.push(`given-names:"${escapeSolrValue(input.given_name.trim())}"`);
   }
@@ -41,74 +48,97 @@ function buildSolrQuery(input: {
   if (input.ror_id?.trim()) {
     clauses.push(`ror-org-id:"${escapeSolrValue(input.ror_id.trim())}"`);
   }
-  if (input.doi?.trim()) {
-    clauses.push(`doi-self:${escapeSolrValue(input.doi.trim())}`);
+  if (doi) {
+    clauses.push(`doi-self:"${escapeSolrValue(doi)}"`);
   }
-  if (input.pmid?.trim()) {
-    clauses.push(`pmid-self:${escapeSolrValue(input.pmid.trim())}`);
+  if (pmid) {
+    clauses.push(`pmid-self:"${escapeSolrValue(pmid)}"`);
+  }
+  // `grant-numbers` is a tokenized text field: only the phrase-quoted clause matches narrowly.
+  if (input.grant_number?.trim()) {
+    clauses.push(`grant-numbers:"${escapeSolrValue(input.grant_number.trim())}"`);
   }
   if (input.query?.trim()) {
     clauses.push(input.query.trim());
   }
 
-  return clauses.join(' AND ') || '*:*';
+  return clauses.join(' AND ');
 }
 
 export const orcidSearchResearchers = tool('orcid_search_researchers', {
   title: 'Search ORCID Researchers',
   description:
-    'Search the ORCID registry using structured field parameters or raw Solr syntax. All provided structured params are ANDed together. The `query` field appends raw Solr syntax to the generated clause. Returns ORCID iDs with inline name and institution data — no follow-up profile fetches needed for basic disambiguation. For ranked disambiguation of an ambiguous author name, use orcid_resolve_researcher instead. The ORCID Public API caps results at 10,000 — use pagination for large result sets.',
+    'Search the ORCID registry using structured field parameters or raw Solr syntax. Provide at least one non-blank search field; all provided structured params are ANDed together. The `query` field appends raw Solr syntax to the generated clause. Returns ORCID iDs with inline name and institution data — no follow-up profile fetches needed for basic disambiguation. For ranked disambiguation of an ambiguous author name, use orcid_resolve_researcher instead. The ORCID Public API caps results at 10,000 — use pagination for large result sets.',
   annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
-  input: z.object({
-    given_name: z.string().optional().describe("Researcher's given (first) name."),
-    family_name: z.string().optional().describe("Researcher's family (last) name."),
-    affiliation: z.string().optional().describe('Organization name to filter by. Phrase match.'),
-    keyword: z
-      .string()
-      .optional()
-      .describe("Keyword to search in the researcher's keyword fields. Phrase match."),
-    ror_id: z
-      .string()
-      .optional()
-      .describe(
-        'ROR organization ID to filter by (full URL, e.g. https://ror.org/00f54p054). Returns researchers affiliated with this organization.',
-      ),
-    doi: z
-      .string()
-      .optional()
-      .describe(
-        'DOI to anchor the search. Returns researchers who have linked this DOI to their ORCID record.',
-      ),
-    pmid: z
-      .string()
-      .optional()
-      .describe(
-        'PubMed ID to anchor the search. Returns researchers who have linked this PMID to their ORCID record.',
-      ),
-    query: z
-      .string()
-      .optional()
-      .describe(
-        'Raw Solr query string appended to the generated clause with AND. Supports all ORCID Solr fields and boolean operators.',
-      ),
-    rows: z
-      .number()
-      .int()
-      .min(1)
-      .max(1000)
-      .default(20)
-      .describe('Maximum results to return (1–1000).'),
-    start: z
-      .number()
-      .int()
-      .min(0)
-      .max(10000)
-      .default(0)
-      .describe(
-        'Pagination offset (0-based), 0–10,000. The ORCID Public API rejects start > 10,000 for unauthenticated requests.',
-      ),
-  }),
+  input: z
+    .object({
+      given_name: z.string().optional().describe("Researcher's given (first) name."),
+      family_name: z.string().optional().describe("Researcher's family (last) name."),
+      affiliation: z.string().optional().describe('Organization name to filter by. Phrase match.'),
+      keyword: z
+        .string()
+        .optional()
+        .describe("Keyword to search in the researcher's keyword fields. Phrase match."),
+      ror_id: z
+        .string()
+        .optional()
+        .describe(
+          'ROR organization ID to filter by (full URL, e.g. https://ror.org/00f54p054). Returns researchers affiliated with this organization.',
+        ),
+      doi: z
+        .string()
+        .optional()
+        .describe(
+          'DOI to anchor the search, bare (10.1126/science.1225829) or as a https://doi.org/, https://dx.doi.org/, or doi: form. Returns researchers who have linked this DOI to their ORCID record.',
+        ),
+      pmid: z
+        .string()
+        .optional()
+        .describe(
+          'PubMed ID to anchor the search, bare (22745249), as PMID:22745249, or as a pubmed.ncbi.nlm.nih.gov or ncbi.nlm.nih.gov/pubmed URL. Returns researchers who have linked this PMID to their ORCID record.',
+        ),
+      grant_number: z
+        .string()
+        .optional()
+        .describe(
+          'Grant or award number on a funding item in the researcher record (e.g. 5F31MH010500-03). Matched as a case-insensitive phrase over the parts between separators such as hyphens and slashes: 5F31MH010500 also matches 5F31MH010500-03, but a number cut mid-part (5F31MH0105) matches nothing. Not an exact identifier lookup.',
+        ),
+      query: z
+        .string()
+        .optional()
+        .describe(
+          'Raw Solr query string appended to the generated clause with AND. Supports all ORCID Solr fields and boolean operators.',
+        ),
+      rows: z
+        .number()
+        .int()
+        .min(1)
+        .max(1000)
+        .default(20)
+        .describe('Maximum results to return (1–1000).'),
+      start: z
+        .number()
+        .int()
+        .min(0)
+        .max(10000)
+        .default(0)
+        .describe(
+          'Pagination offset (0-based), 0–10,000. The ORCID Public API rejects start > 10,000 for unauthenticated requests.',
+        ),
+    })
+    // A search with nothing to search on would run as a match-all over the whole registry.
+    // A doi or pmid that is only a URL prefix normalizes to empty and counts as blank.
+    .superRefine((input, ctx) => {
+      if (!buildSolrQuery(input)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [],
+          message:
+            'Provide at least one non-blank search field: given_name, family_name, affiliation, keyword, ror_id, doi, pmid, grant_number, or query.',
+        });
+      }
+    }),
 
   output: z.object({
     results: z

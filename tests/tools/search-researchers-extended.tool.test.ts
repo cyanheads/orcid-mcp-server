@@ -1,11 +1,12 @@
 /**
  * @fileoverview Extended coverage for orcidSearchResearchers: additional Solr query
- * clause building, creditName rendering, ror_id/doi/pmid fields, and edge cases.
+ * clause building, creditName rendering, ror_id/doi/pmid/grant_number fields, DOI/PMID
+ * URL forms, and edge cases.
  * @module tests/tools/search-researchers-extended.tool.test
  */
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidSearchResearchers } from '@/mcp-server/tools/definitions/search-researchers.tool.js';
 
@@ -14,6 +15,21 @@ vi.mock('@/services/orcid/orcid-service.js', () => ({
   getOrcidService: () => ({ expandedSearch: mockExpandedSearch }),
   normalizeOrcidId: (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim(),
 }));
+
+// An unrouted search fails loudly; each test layers the responses it expects.
+beforeEach(() => {
+  mockExpandedSearch.mockReset();
+  mockExpandedSearch.mockRejectedValue(new Error('unmocked fetch'));
+});
+
+/** Run the handler for `raw` input against an empty upstream and return the compiled query. */
+async function compiledQuery(raw: Record<string, unknown>): Promise<string> {
+  mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+  const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
+  await orcidSearchResearchers.handler(orcidSearchResearchers.input.parse(raw), ctx);
+  const [callParams] = mockExpandedSearch.mock.calls.at(-1)!;
+  return callParams.q;
+}
 
 describe('orcidSearchResearchers — Solr clause building', () => {
   beforeEach(() => {
@@ -47,7 +63,7 @@ describe('orcidSearchResearchers — Solr clause building', () => {
     expect(mockExpandedSearch).toHaveBeenCalled();
     const [callParams] = mockExpandedSearch.mock.calls[0]!;
     // DOI slash is Solr-reserved — escaped so the value stays a literal, not a regex.
-    expect(callParams.q).toBe('doi-self:10.1126\\/science.1225829');
+    expect(callParams.q).toBe('doi-self:"10.1126\\/science.1225829"');
   });
 
   it('builds pmid-self clause for pmid param', async () => {
@@ -61,7 +77,7 @@ describe('orcidSearchResearchers — Solr clause building', () => {
 
     expect(mockExpandedSearch).toHaveBeenCalled();
     const [callParams] = mockExpandedSearch.mock.calls[0]!;
-    expect(callParams.q).toBe('pmid-self:22745249');
+    expect(callParams.q).toBe('pmid-self:"22745249"');
   });
 
   it('appends raw query field with AND to structured clauses', async () => {
@@ -105,19 +121,64 @@ describe('orcidSearchResearchers — Solr clause building', () => {
     expect(callParams.q).toBe('family-name:"Van Damme"');
   });
 
-  it('uses *:* when only whitespace-only params are provided', async () => {
+  it('rejects a call whose only params are whitespace-only instead of searching *:* (#34)', () => {
+    expect(() =>
+      orcidSearchResearchers.input.parse({
+        given_name: '   ',
+        family_name: '  ',
+      }),
+    ).toThrow(/at least one/i);
+  });
+
+  it('compiles every structured field, in a fixed order, ANDed ahead of the raw query', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
     const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({
-      given_name: '   ',
-      family_name: '  ',
+      query: 'email:*berkeley.edu',
+      pmid: '22745249',
+      doi: '10.1126/science.1225829',
+      ror_id: 'https://ror.org/01an7q238',
+      keyword: 'CRISPR',
+      affiliation: 'UC Berkeley',
+      family_name: 'Doudna',
+      given_name: 'Jennifer',
     });
     await orcidSearchResearchers.handler(input, ctx);
 
-    expect(mockExpandedSearch).toHaveBeenCalled();
     const [callParams] = mockExpandedSearch.mock.calls[0]!;
-    expect(callParams.q).toBe('*:*');
+    expect(callParams.q).toBe(
+      'given-names:"Jennifer" AND family-name:"Doudna" AND affiliation-org-name:"UC Berkeley" AND keyword:"CRISPR" AND ror-org-id:"https\\:\\/\\/ror.org\\/01an7q238" AND doi-self:"10.1126\\/science.1225829" AND pmid-self:"22745249" AND email:*berkeley.edu',
+    );
+  });
+
+  it('skips a blank field supplied alongside a non-blank one (form-client payload)', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
+    const input = orcidSearchResearchers.input.parse({
+      given_name: '',
+      family_name: '  Doudna  ',
+      affiliation: '   ',
+      doi: '',
+      pmid: '',
+      query: '',
+    });
+    await orcidSearchResearchers.handler(input, ctx);
+
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
+    expect(callParams.q).toBe('family-name:"Doudna"');
+  });
+
+  it('forwards a DOI with its case intact', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
+    const input = orcidSearchResearchers.input.parse({ doi: '10.1371/journal.PMED.0020124' });
+    await orcidSearchResearchers.handler(input, ctx);
+
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
+    expect(callParams.q).toBe('doi-self:"10.1371\\/journal.PMED.0020124"');
   });
 
   it('passes rows and start to the service call', async () => {
@@ -220,26 +281,134 @@ describe('orcidSearchResearchers — format output', () => {
 });
 
 describe('orcidSearchResearchers — input validation bounds', () => {
+  // Every case carries one search field so only the bound under test decides the outcome.
+  const field = { family_name: 'Smith' };
+
   it('accepts rows at minimum boundary (1)', () => {
-    expect(() => orcidSearchResearchers.input.parse({ rows: 1 })).not.toThrow();
+    expect(() => orcidSearchResearchers.input.parse({ ...field, rows: 1 })).not.toThrow();
   });
 
   it('accepts rows at maximum boundary (1000)', () => {
-    expect(() => orcidSearchResearchers.input.parse({ rows: 1000 })).not.toThrow();
+    expect(() => orcidSearchResearchers.input.parse({ ...field, rows: 1000 })).not.toThrow();
   });
 
   it('accepts start at minimum boundary (0)', () => {
-    expect(() => orcidSearchResearchers.input.parse({ start: 0 })).not.toThrow();
+    expect(() => orcidSearchResearchers.input.parse({ ...field, start: 0 })).not.toThrow();
   });
 
   it('defaults rows to 20 when not provided', () => {
-    const input = orcidSearchResearchers.input.parse({});
+    const input = orcidSearchResearchers.input.parse(field);
     expect(input.rows).toBe(20);
   });
 
   it('defaults start to 0 when not provided', () => {
-    const input = orcidSearchResearchers.input.parse({});
+    const input = orcidSearchResearchers.input.parse(field);
     expect(input.start).toBe(0);
+  });
+});
+
+describe('orcidSearchResearchers — grant_number filter (#42)', () => {
+  it('compiles a phrase-quoted, escaped grant-numbers clause', async () => {
+    expect(await compiledQuery({ grant_number: '5F31MH010500-03' })).toBe(
+      'grant-numbers:"5F31MH010500\\-03"',
+    );
+  });
+
+  it('escapes a slash-bearing grant number inside the phrase, never emitting the unquoted form', async () => {
+    const q = await compiledQuery({ grant_number: ' NE/000393/1 ' });
+    expect(q).toBe('grant-numbers:"NE\\/000393\\/1"');
+    expect(q).not.toMatch(/grant-numbers:[^"]/);
+  });
+
+  it('ANDs after the identifier anchors and ahead of the raw query', async () => {
+    expect(
+      await compiledQuery({
+        query: 'email:*berkeley.edu',
+        grant_number: 'R01GM123456',
+        pmid: '22745249',
+        family_name: 'Doudna',
+      }),
+    ).toBe(
+      'family-name:"Doudna" AND pmid-self:"22745249" AND grant-numbers:"R01GM123456" AND email:*berkeley.edu',
+    );
+  });
+
+  it('skips a blank grant_number supplied alongside another field', async () => {
+    expect(await compiledQuery({ grant_number: '   ', family_name: 'Doudna' })).toBe(
+      'family-name:"Doudna"',
+    );
+  });
+
+  it('returns a structured success with the empty-result notice when no record carries the grant', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
+    const result = await orcidSearchResearchers.handler(
+      orcidSearchResearchers.input.parse({ grant_number: 'NO-SUCH-GRANT-0' }),
+      ctx,
+    );
+
+    expect(result.results).toEqual([]);
+    expect(getEnrichment(ctx).notice).toContain('No results found');
+  });
+
+  it('describes phrase-match, case-insensitive semantics rather than an exact lookup', () => {
+    const description = orcidSearchResearchers.input.shape.grant_number.description ?? '';
+    expect(description).toMatch(/phrase/i);
+    expect(description).toMatch(/case-insensitive/i);
+  });
+});
+
+describe('orcidSearchResearchers — DOI/PMID URL forms (#44)', () => {
+  it.each([
+    'https://doi.org/10.5555/12345680',
+    'http://doi.org/10.5555/12345680',
+    'https://dx.doi.org/10.5555/12345680',
+    'doi:10.5555/12345680',
+    'DOI:10.5555/12345680',
+    'HTTPS://DOI.ORG/10.5555/12345680',
+    'doi.org/10.5555/12345680',
+    'doi: 10.5555/12345680',
+    '  https://doi.org/10.5555/12345680  ',
+  ])('compiles %s to the same doi-self clause as the bare DOI', async (doi) => {
+    expect(await compiledQuery({ doi })).toBe(await compiledQuery({ doi: '10.5555/12345680' }));
+  });
+
+  it('keeps the case of the DOI body when stripping an uppercase prefix', async () => {
+    expect(await compiledQuery({ doi: 'HTTPS://DOI.ORG/10.1371/journal.PMED.0020124' })).toBe(
+      'doi-self:"10.1371\\/journal.PMED.0020124"',
+    );
+  });
+
+  it.each([
+    'https://pubmed.ncbi.nlm.nih.gov/22745249/',
+    'https://pubmed.ncbi.nlm.nih.gov/22745249',
+    'http://www.ncbi.nlm.nih.gov/pubmed/22745249',
+    'https://ncbi.nlm.nih.gov/pubmed/22745249/',
+    'HTTPS://PUBMED.NCBI.NLM.NIH.GOV/22745249/',
+    'pubmed.ncbi.nlm.nih.gov/22745249/',
+    // Copied from a PubMed results page: the URL carries a query string or fragment.
+    'https://pubmed.ncbi.nlm.nih.gov/22745249/?from_single_result=22745249',
+    'https://pubmed.ncbi.nlm.nih.gov/22745249/#affiliation-1',
+    // A citation label, which would otherwise be searched as part of the identifier.
+    'PMID: 22745249',
+    'pmid:22745249',
+  ])('compiles %s to the same pmid-self clause as the bare PMID', async (pmid) => {
+    expect(await compiledQuery({ pmid })).toBe('pmid-self:"22745249"');
+  });
+
+  it('drops a prefix-only DOI supplied alongside another field rather than emitting an empty clause', async () => {
+    expect(await compiledQuery({ doi: 'https://doi.org/', family_name: 'Carberry' })).toBe(
+      'family-name:"Carberry"',
+    );
+  });
+
+  it('keeps a DOI or PMID with inner whitespace inside its own phrase clause (#47)', async () => {
+    expect(await compiledQuery({ doi: '10.1000/x OR smith', family_name: 'Carberry' })).toBe(
+      'family-name:"Carberry" AND doi-self:"10.1000\\/x OR smith"',
+    );
+    expect(await compiledQuery({ pmid: '22745249 AND smith' })).toBe(
+      'pmid-self:"22745249 AND smith"',
+    );
   });
 });
 
@@ -285,7 +454,7 @@ describe('orcidSearchResearchers — Solr value escaping (#18)', () => {
     const [callParams] = mockExpandedSearch.mock.calls[0]!;
     // Reserved chars (/ ( ) - :) escaped; non-reserved (< > ;) left literal.
     expect(callParams.q).toBe(
-      'doi-self:10.1002\\/\\(SICI\\)1099\\-0844\\(199912\\)17\\:4<290\\:\\:AID\\-CBF849>3.0.CO;2\\-P',
+      'doi-self:"10.1002\\/\\(SICI\\)1099\\-0844\\(199912\\)17\\:4<290\\:\\:AID\\-CBF849>3.0.CO;2\\-P"',
     );
   });
 
