@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.3.0](changelog/0.3.x/0.3.0.md) — 2026-09-23 · ⚠️ Breaking
+
+orcid_search_researchers and orcid_resolve_researcher reject blank input instead of matching everything, add a grant_number filter and DOI/PMID URL-form normalization, phrase-quote identifier clauses, and fold accents for multilingual name/institution matching. Record-fetch tools now declare openWorldHint.
+
 ## [0.2.17](changelog/0.2.x/0.2.17.md) — 2026-09-21
 
 Adopts @cyanheads/mcp-ts-core 0.13.6 — a rejected tool argument carries an invalid_arguments reason and a recovery hint naming the accepted keys, a case-variant key or a JSON-stringified array is accepted instead of rejected, and tool error text closes with its reason. No advertised schema changes.

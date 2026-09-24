@@ -1,6 +1,6 @@
 # orcid-mcp-server - Directory Structure
 
-Generated on: 2026-09-22 04:55:43
+Generated on: 2026-09-24 01:01:44
 
 ```text
 orcid-mcp-server/
@@ -26,6 +26,7 @@ orcid-mcp-server/
 ├── changelog/
 │   ├── 0.1.x/
 │   ├── 0.2.x/
+│   ├── 0.3.x/
 │   └── template.md
 ├── docs/
 │   ├── design.md
@@ -152,6 +153,7 @@ orcid-mcp-server/
 │   │           ├── get-research-resources.tool.ts
 │   │           ├── get-work-detail.tool.ts
 │   │           ├── get-works.tool.ts
+│   │           ├── index.ts
 │   │           ├── resolve-researcher.tool.ts
 │   │           └── search-researchers.tool.ts
 │   ├── services/
@@ -160,6 +162,7 @@ orcid-mcp-server/
 │   │       ├── orcid-id.ts
 │   │       ├── orcid-service.ts
 │   │       ├── solr-query.ts
+│   │       ├── text-folding.ts
 │   │       └── types.ts
 │   └── index.ts
 ├── tests/
@@ -181,10 +184,12 @@ orcid-mcp-server/
 │   │       ├── normalizers.test.ts
 │   │       ├── orcid-id.test.ts
 │   │       ├── orcid-service.test.ts
-│   │       └── solr-query.test.ts
+│   │       ├── solr-query.test.ts
+│   │       └── text-folding.test.ts
 │   ├── smoke/
 │   │   └── definitions.smoke.test.ts
 │   └── tools/
+│       ├── annotations.tool.test.ts
 │       ├── get-affiliations.tool.test.ts
 │       ├── get-funding.tool.test.ts
 │       ├── get-peer-reviews.tool.test.ts
