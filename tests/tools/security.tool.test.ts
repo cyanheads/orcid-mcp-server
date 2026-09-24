@@ -1,22 +1,27 @@
 /**
- * @fileoverview Security tests: injection attempts, oversized inputs, and assertion
- * that no secrets/env values leak into tool output or error messages.
+ * @fileoverview Security tests: injection attempts, oversized inputs, assertion that no
+ * secrets/env values or upstream transport details leak into tool output or error messages,
+ * and that upstream markup is stripped before it reaches either result surface.
  * @module tests/tools/security.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { createMockContext, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetAffiliations } from '@/mcp-server/tools/definitions/get-affiliations.tool.js';
 import { orcidGetFunding } from '@/mcp-server/tools/definitions/get-funding.tool.js';
 import { orcidGetPeerReviews } from '@/mcp-server/tools/definitions/get-peer-reviews.tool.js';
 import { orcidGetProfile } from '@/mcp-server/tools/definitions/get-profile.tool.js';
+import { orcidGetWorkDetail } from '@/mcp-server/tools/definitions/get-work-detail.tool.js';
 import { orcidGetWorks } from '@/mcp-server/tools/definitions/get-works.tool.js';
 import { orcidResolveResearcher } from '@/mcp-server/tools/definitions/resolve-researcher.tool.js';
 import { orcidSearchResearchers } from '@/mcp-server/tools/definitions/search-researchers.tool.js';
+import { normalizeBulkWorks, normalizeWorks } from '@/services/orcid/normalizers.js';
 
 const mockExpandedSearch = vi.fn();
 const mockGetPerson = vi.fn();
 const mockGetWorks = vi.fn();
+const mockGetWorkDetails = vi.fn();
 const mockGetAffiliations = vi.fn();
 const mockGetFundings = vi.fn();
 const mockGetPeerReviews = vi.fn();
@@ -26,6 +31,7 @@ vi.mock('@/services/orcid/orcid-service.js', () => ({
     expandedSearch: mockExpandedSearch,
     getPerson: mockGetPerson,
     getWorks: mockGetWorks,
+    getWorkDetails: mockGetWorkDetails,
     getAffiliations: mockGetAffiliations,
     getFundings: mockGetFundings,
     getPeerReviews: mockGetPeerReviews,
@@ -39,6 +45,7 @@ beforeEach(() => {
     mockExpandedSearch,
     mockGetPerson,
     mockGetWorks,
+    mockGetWorkDetails,
     mockGetAffiliations,
     mockGetFundings,
     mockGetPeerReviews,
@@ -345,5 +352,66 @@ describe('security: no secrets or env values appear in tool output or error mess
     const text = (blocks[0] as { text: string }).text;
 
     expect(text).not.toMatch(/API_KEY|SECRET|TOKEN|PASSWORD/i);
+  });
+
+  it('get_work_detail: an exhausted rate limit reaches the client without upstream URL or body', async () => {
+    mockGetWorkDetails.mockRejectedValueOnce(
+      new McpError(JsonRpcErrorCode.RateLimited, 'ORCID returned HTTP 429 Too Many Requests.', {
+        url: 'https://pub.orcid.org/v3.0/0000-0002-1825-0097/works/1?token=SECRET_TOKEN',
+        status: 429,
+        body: 'quota for client 203.0.113.7 exceeded',
+        retryAfter: '30',
+      }),
+    );
+
+    const result = await runToolContract(orcidGetWorkDetail, {
+      orcid_id: '0000-0002-1825-0097',
+      put_codes: [1],
+    });
+    const wire = JSON.stringify(result);
+
+    expect(result.isError).toBe(true);
+    expect(wire).toContain('rate-limited');
+    expect(wire).not.toContain('pub.orcid.org');
+    expect(wire).not.toContain('203.0.113.7');
+    expect(wire).not.toMatch(/SECRET|TOKEN/);
+  });
+});
+
+describe('security: upstream markup never reaches either surface as markup (#37)', () => {
+  const hostile =
+    'Genome <script>alert(1)</script> editing <img src=x onerror="alert(2)"> in <a href="javascript:alert(3)">vivo</a>';
+
+  it('get_works: script, image, and link tags in a deposited title are stripped', async () => {
+    mockGetWorks.mockResolvedValueOnce(
+      normalizeWorks({
+        group: [{ 'work-summary': [{ 'put-code': 1, title: { title: { value: hostile } } }] }],
+      }),
+    );
+
+    const result = await runToolContract(orcidGetWorks, { orcid_id: '0000-0002-1825-0097' });
+    const wire = JSON.stringify(result);
+
+    expect((result.structuredContent as { works: { title?: string }[] }).works[0]?.title).toBe(
+      'Genome alert(1) editing in vivo',
+    );
+    expect(wire).not.toMatch(/<(script|img|a)\b/);
+    expect(wire).not.toContain('onerror');
+    expect(wire).not.toContain('javascript:');
+  });
+
+  it('get_work_detail: the same tags in a deposited abstract are stripped', async () => {
+    mockGetWorkDetails.mockResolvedValueOnce(
+      normalizeBulkWorks({ bulk: [{ work: { 'put-code': 1, 'short-description': hostile } }] }),
+    );
+
+    const result = await runToolContract(orcidGetWorkDetail, {
+      orcid_id: '0000-0002-1825-0097',
+      put_codes: [1],
+    });
+    const wire = JSON.stringify(result);
+
+    expect(wire).not.toMatch(/<(script|img|a)\b/);
+    expect(wire).not.toContain('onerror');
   });
 });

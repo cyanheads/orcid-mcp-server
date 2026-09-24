@@ -22,6 +22,15 @@ export const MISSING_ID = '0000-0001-2345-6789';
 /** ORCID iD whose bulk-works route fails with a non-404, non-transient upstream error. */
 export const BULK_FAILURE_ID = '0000-0002-9999-111X';
 
+/**
+ * ORCID iD whose bulk-works route answers 429 with a `Retry-After` longer than the retry
+ * layer's backoff ceiling, so the rate limit surfaces on the first attempt.
+ */
+export const RATE_LIMITED_ID = '0000-0002-4290-429X';
+
+/** ORCID iD whose works, funding, and research-resource text carries inline markup. */
+export const MARKUP_ID = '0000-0003-6400-0002';
+
 /** Marker interpolated into a Solr clause to select the malformed-query route. */
 export const BROKEN_QUERY_MARKER = 'Brokenquery';
 
@@ -306,8 +315,65 @@ const BULK_WORKS = {
   ],
 };
 
+/** Live title of put-code 215949395 on 0000-0001-9161-999X, markup and doubled spaces intact. */
+export const MARKUP_TITLE = 'Amplified genome editing by  <i>in vivo</i>  editor production';
+/** Deposited BibTeX carrying the same markup — relayed verbatim, never cleaned. */
+export const MARKUP_BIBTEX =
+  '@article{PPR:PPR1226445,\n\ttitle = {Amplified genome editing by  <i>in vivo</i>  editor production}\n}';
+
+const MARKUP_WORKS = {
+  group: [
+    {
+      'work-summary': [
+        {
+          'put-code': 215_949_395,
+          title: { title: { value: MARKUP_TITLE } },
+          type: 'preprint',
+          'journal-title': { value: '<i>bioRxiv</i>' },
+        },
+      ],
+    },
+  ],
+};
+
+const MARKUP_BULK_WORKS = {
+  bulk: [
+    {
+      work: {
+        'put-code': 215_949_395,
+        title: { title: { value: MARKUP_TITLE }, subtitle: { value: 'in  <i>Arabidopsis</i>' } },
+        'short-description': '<h4>Background</h4>Group I introns.<h4>Results</h4>Heavy atoms.',
+        citation: { 'citation-type': 'bibtex', 'citation-value': MARKUP_BIBTEX },
+      },
+    },
+  ],
+};
+
+const MARKUP_FUNDINGS = {
+  group: [{ 'funding-summary': [{ title: { title: { value: 'Editing  <i>in planta</i>' } } }] }],
+};
+
+const MARKUP_RESEARCH_RESOURCES = {
+  group: [
+    {
+      'research-resource-summary': [
+        {
+          'put-code': 7002,
+          proposal: { title: { title: { value: 'Cryo-EM of <i>E. coli</i>' } } },
+        },
+      ],
+    },
+  ],
+};
+
 const notFound = () => new Response('Not Found', { status: 404, statusText: 'Not Found' });
 const badRequest = () => new Response('Bad Request', { status: 400, statusText: 'Bad Request' });
+const rateLimited = () =>
+  new Response('Rate limit exceeded for 203.0.113.7', {
+    status: 429,
+    statusText: 'Too Many Requests',
+    headers: { 'Retry-After': '120' },
+  });
 
 /** ORCID relays a query its Solr backend rejects as HTTP 500 naming the Solr exception. */
 const solrQueryRejected = () =>
@@ -355,6 +421,31 @@ function orcidApiRoutes(): FetchMockRoute[] {
       method: 'GET',
       match: (request) => isBulkWorksUrl(request.url, BULK_FAILURE_ID),
       respond: badRequest,
+    },
+    {
+      method: 'GET',
+      match: (request) => isBulkWorksUrl(request.url, RATE_LIMITED_ID),
+      respond: rateLimited,
+    },
+    {
+      method: 'GET',
+      match: (request) => isBulkWorksUrl(request.url, MARKUP_ID),
+      respond: () => Response.json(MARKUP_BULK_WORKS),
+    },
+    {
+      method: 'GET',
+      match: `${BASE}/${MARKUP_ID}/works`,
+      respond: () => Response.json(MARKUP_WORKS),
+    },
+    {
+      method: 'GET',
+      match: `${BASE}/${MARKUP_ID}/fundings`,
+      respond: () => Response.json(MARKUP_FUNDINGS),
+    },
+    {
+      method: 'GET',
+      match: `${BASE}/${MARKUP_ID}/research-resources`,
+      respond: () => Response.json(MARKUP_RESEARCH_RESOURCES),
     },
     {
       method: 'GET',

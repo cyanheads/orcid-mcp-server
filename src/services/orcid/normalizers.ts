@@ -1,9 +1,12 @@
 /**
  * @fileoverview Normalization functions that convert raw ORCID API shapes to
  * typed domain objects. Preserves absence as unknown rather than inventing defaults.
+ * Work, funding, and research-resource titles and work abstracts pass through the
+ * `toPlainText` markup boundary; identifiers, URLs, and the deposited citation do not.
  * @module services/orcid/normalizers
  */
 
+import { toPlainText } from './markup-text.js';
 import type { AffiliationType } from './orcid-service.js';
 import type {
   Affiliation,
@@ -235,12 +238,13 @@ function normalizeWorkSummary(raw: RawWorkSummary): Work {
   const externalIds = normalizeExternalIds(raw['external-ids']?.['external-id']);
   const work: Work = { externalIds };
   if (raw['put-code'] != null) work.putCode = raw['put-code'];
-  const title = raw.title?.title?.value;
+  const title = toPlainText(raw.title?.title?.value);
   if (title) work.title = title;
   if (raw.type) work.workType = raw.type;
   const pubDate = normalizeDate(raw['publication-date']);
   if (pubDate) work.publicationDate = pubDate;
-  if (raw['journal-title']?.value) work.journalTitle = raw['journal-title'].value;
+  const journalTitle = toPlainText(raw['journal-title']?.value);
+  if (journalTitle) work.journalTitle = journalTitle;
   if (raw.url?.value) work.url = raw.url.value;
   return work;
 }
@@ -274,7 +278,8 @@ function normalizeFundingSummary(raw: RawFundingSummary): FundingRecord {
     .filter((id) => id.type === 'grant_number')
     .map((id) => id.value);
   const record: FundingRecord = { grantNumbers };
-  if (raw.title?.title?.value) record.title = raw.title.title.value;
+  const title = toPlainText(raw.title?.title?.value);
+  if (title) record.title = title;
   if (raw.type) record.type = raw.type;
   if (funder) record.funder = funder;
   const startDate = normalizeDate(raw['start-date']);
@@ -359,16 +364,16 @@ export function normalizeWorkDetail(raw: RawWorkDetail): WorkDetail {
     externalIds,
     contributors,
   };
-  const titleVal = raw.title?.title?.value;
+  const titleVal = toPlainText(raw.title?.title?.value);
   if (titleVal) detail.title = titleVal;
-  const subtitleVal = raw.title?.subtitle?.value;
+  const subtitleVal = toPlainText(raw.title?.subtitle?.value);
   if (subtitleVal) detail.subtitle = subtitleVal;
   if (raw.type) detail.workType = raw.type;
   const pubDate = normalizeDate(raw['publication-date'] ?? undefined);
   if (pubDate) detail.publicationDate = pubDate;
-  const journalTitle = raw['journal-title']?.value;
+  const journalTitle = toPlainText(raw['journal-title']?.value);
   if (journalTitle) detail.journalTitle = journalTitle;
-  const abstract = raw['short-description']?.trim() || undefined;
+  const abstract = toPlainText(raw['short-description']?.trim());
   if (abstract) detail.abstract = abstract;
   const citationType = raw.citation?.['citation-type'];
   const citationValue = raw.citation?.['citation-value'];
@@ -419,7 +424,7 @@ export function normalizeResearchResources(raw: RawResearchResourcesResponse): R
       const putCode = s['put-code'];
       if (!putCode) return [];
       const resource: ResearchResource = { putCode, externalIds: [] };
-      const titleVal = s.proposal?.title?.title?.value;
+      const titleVal = toPlainText(s.proposal?.title?.title?.value);
       if (titleVal) resource.title = titleVal;
       const firstOrg = s.proposal?.hosts?.organization?.[0];
       const hostOrg = normalizeOrg(firstOrg);
