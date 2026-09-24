@@ -28,7 +28,7 @@ const sampleWorks = [
   },
 ];
 
-/** Prolific record fixture (0000-0001-9161-999X returns 524 works in production). */
+/** Prolific record fixture (0000-0001-9161-999X returns 500+ works in production). */
 const prolificWorks = Array.from({ length: 60 }, (_, i) => ({
   title: `Work ${i}`,
   workType: 'journal-article',
@@ -80,7 +80,7 @@ describe('researcherWorksResource', () => {
     mockGetWorks.mockResolvedValueOnce(prolificWorks);
 
     const ctx = createMockContext({ tenantId: 'test-tenant' });
-    // 0000-0001-9161-999X is the real prolific record (524 works in production).
+    // 0000-0001-9161-999X is the real prolific record (500+ works in production).
     const params = researcherWorksResource.params!.parse({ orcid_id: '0000-0001-9161-999X' });
     const result = await researcherWorksResource.handler(params, ctx);
 

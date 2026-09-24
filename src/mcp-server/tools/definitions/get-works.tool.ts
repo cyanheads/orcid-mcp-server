@@ -2,12 +2,14 @@
  * @fileoverview Retrieve works (publications, datasets, software, preprints, etc.)
  * associated with an ORCID iD. Returns titles, types, dates, journal names, and
  * external identifiers ready for chaining to Crossref, PubMed, or arXiv. Prolific
- * records are sliced locally via offset/limit so default payloads stay compact.
+ * records are sliced locally via offset/limit so default payloads stay compact, and every
+ * page is capped by the shared response byte budget.
  * @module mcp-server/tools/definitions/get-works.tool
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { countWithinBudget, jsonBytes, recordCost } from '@/mcp-server/tools/response-budget.js';
 import { orcidIdSchema } from '@/services/orcid/orcid-id.js';
 import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
 import type { Work } from '@/services/orcid/types.js';
@@ -21,10 +23,58 @@ const ExternalIdSchema = z
   })
   .describe('External identifier for a work.');
 
+const WorkSummarySchema = z
+  .object({
+    putCode: z
+      .number()
+      .optional()
+      .describe(
+        'Work put-code — pass to orcid_get_work_detail to fetch the full record including abstract and contributors.',
+      ),
+    title: z.string().optional().describe('Work title.'),
+    workType: z
+      .string()
+      .optional()
+      .describe('Work type (e.g. journal-article, dataset, software, preprint).'),
+    publicationDate: z
+      .string()
+      .optional()
+      .describe('Publication date (YYYY, YYYY-MM, or YYYY-MM-DD).'),
+    journalTitle: z.string().optional().describe('Journal or container title.'),
+    url: z.string().optional().describe('URL for the work, if available.'),
+    externalIds: z
+      .array(ExternalIdSchema)
+      .optional()
+      .describe(
+        'External identifiers (DOIs, PMIDs, arXiv IDs, ISBNs, etc.). Omitted when include_external_ids is false.',
+      ),
+  })
+  .describe('Work summary record.');
+
+/** The Markdown `format()` renders for one work, trailing blank line included. */
+function renderWork(w: z.infer<typeof WorkSummarySchema>): string {
+  const lines = [`### ${w.title ?? '(untitled)'}`];
+  if (w.putCode != null) lines.push(`**Put-code:** ${w.putCode}`);
+  if (w.workType) lines.push(`**Type:** ${w.workType}`);
+  if (w.publicationDate) lines.push(`**Date:** ${w.publicationDate}`);
+  if (w.journalTitle) lines.push(`**Journal:** ${w.journalTitle}`);
+  if (w.url) lines.push(`**URL:** ${w.url}`);
+  if (w.externalIds?.length) {
+    const idParts = w.externalIds.map((id) => {
+      const rel = id.relationship ? ` [${id.relationship}]` : '';
+      const urlPart = id.url ? ` (${id.url})` : '';
+      return `${id.type}:${id.value}${urlPart}${rel}`;
+    });
+    lines.push(`**IDs:** ${idParts.join(', ')}`);
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+
 export const orcidGetWorks = tool('orcid_get_works', {
   title: 'Get ORCID Researcher Works',
   description:
-    'Retrieve works associated with an ORCID iD — publications, datasets, software, preprints, and more. Returns work summaries with put-codes, titles, types, publication dates, journal names, and all external identifiers (DOIs, PMIDs, arXiv IDs, ISBNs). The first 50 works are returned by default; workCount reports the total available, and prolific records are paged with offset and the returned nextOffset (or raise limit). Set include_external_ids to false to omit identifier lists for a lighter payload. Pass the putCode from each work to orcid_get_work_detail to retrieve the full record including abstract and contributors. External IDs are ready for chaining to Crossref, PubMed, or arXiv servers. Works are self-reported; a researcher may not have linked all their publications.',
+    'Retrieve works associated with an ORCID iD — publications, datasets, software, preprints, and more. Returns work summaries with put-codes, titles, types, publication dates, journal names, and all external identifiers (DOIs, PMIDs, arXiv IDs, ISBNs). The first 50 works are returned by default; workCount reports the total available, and prolific records are paged with offset and the returned nextOffset (or raise limit). A page also stops early once the response reaches its 64,000-byte budget, so returnedCount can come in below limit; truncated and nextOffset then carry the continuation. Set include_external_ids to false to omit identifier lists for a lighter payload. Pass the putCode from each work to orcid_get_work_detail to retrieve the full record including abstract and contributors. External IDs are ready for chaining to Crossref, PubMed, or arXiv servers. Works are self-reported; a researcher may not have linked all their publications.',
   annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
@@ -36,7 +86,7 @@ export const orcidGetWorks = tool('orcid_get_works', {
       .max(1000)
       .default(50)
       .describe(
-        'Maximum works to return in this response (default 50, max 1000). The full list is sliced locally — page prolific records with offset and the returned nextOffset.',
+        'Maximum works to return in this response (default 50, max 1000). The full list is sliced locally — page prolific records with offset and the returned nextOffset. A page stops early at the 64,000-byte response budget, so a large limit may return fewer works.',
       ),
     offset: z
       .number()
@@ -62,7 +112,9 @@ export const orcidGetWorks = tool('orcid_get_works', {
       .describe('Total works available for this ORCID iD, before offset and limit are applied.'),
     returnedCount: z
       .number()
-      .describe('Number of works returned in this response, after applying offset and limit.'),
+      .describe(
+        'Number of works returned in this response, after applying offset, limit, and the 64,000-byte response budget.',
+      ),
     offset: z
       .number()
       .describe('Zero-based offset applied to the full works list for this response.'),
@@ -75,39 +127,13 @@ export const orcidGetWorks = tool('orcid_get_works', {
     truncated: z
       .boolean()
       .describe(
-        'True when more works are available beyond this response — fetch them with nextOffset.',
+        'True when more works are available beyond this response, whether limit or the response budget ended the page — fetch them with nextOffset.',
       ),
     works: z
-      .array(
-        z
-          .object({
-            putCode: z
-              .number()
-              .optional()
-              .describe(
-                'Work put-code — pass to orcid_get_work_detail to fetch the full record including abstract and contributors.',
-              ),
-            title: z.string().optional().describe('Work title.'),
-            workType: z
-              .string()
-              .optional()
-              .describe('Work type (e.g. journal-article, dataset, software, preprint).'),
-            publicationDate: z
-              .string()
-              .optional()
-              .describe('Publication date (YYYY, YYYY-MM, or YYYY-MM-DD).'),
-            journalTitle: z.string().optional().describe('Journal or container title.'),
-            url: z.string().optional().describe('URL for the work, if available.'),
-            externalIds: z
-              .array(ExternalIdSchema)
-              .optional()
-              .describe(
-                'External identifiers (DOIs, PMIDs, arXiv IDs, ISBNs, etc.). Omitted when include_external_ids is false.',
-              ),
-          })
-          .describe('Work summary record.'),
-      )
-      .describe('Works for this ORCID iD, sliced to the requested offset and limit.'),
+      .array(WorkSummarySchema)
+      .describe(
+        'Works for this ORCID iD, sliced to the requested offset and limit and to the response budget.',
+      ),
   }),
 
   // Agent-facing context: empty-result notice surfaces in structuredContent and content[]
@@ -153,12 +179,31 @@ export const orcidGetWorks = tool('orcid_get_works', {
       throw err;
     }
     const bareId = normalizeOrcidId(input.orcid_id);
+    const orcidUri = `https://orcid.org/${bareId}`;
     const workCount = allWorks.length;
 
-    const works = allWorks.slice(input.offset, input.offset + input.limit).map((w) => {
+    const page = allWorks.slice(input.offset, input.offset + input.limit).map((w) => {
       const { externalIds, ...rest } = w;
       return input.include_external_ids ? { ...rest, externalIds } : rest;
     });
+    // Envelope sized for its widest counters, so the page never overshoots the budget.
+    const envelopeBytes = jsonBytes({
+      orcidId: bareId,
+      orcidUri,
+      workCount,
+      returnedCount: page.length,
+      offset: input.offset,
+      nextOffset: workCount,
+      truncated: false,
+      works: [],
+    });
+    const works = page.slice(
+      0,
+      countWithinBudget(
+        page.values().map((w) => recordCost(w, renderWork(w))),
+        envelopeBytes,
+      ),
+    );
     const returnedCount = works.length;
     const endOffset = input.offset + returnedCount;
     const truncated = endOffset < workCount;
@@ -178,7 +223,7 @@ export const orcidGetWorks = tool('orcid_get_works', {
 
     return {
       orcidId: bareId,
-      orcidUri: `https://orcid.org/${bareId}`,
+      orcidUri,
       workCount,
       returnedCount,
       offset: input.offset,
@@ -197,30 +242,7 @@ export const orcidGetWorks = tool('orcid_get_works', {
       `**Truncated:** ${result.truncated ? 'Yes' : 'No'}`,
     ];
     if (result.nextOffset != null) lines.push(`**Next Offset:** ${result.nextOffset}`);
-
-    if (result.works.length === 0) {
-      return [{ type: 'text', text: lines.join('\n') }];
-    }
-
-    lines.push('');
-    for (const w of result.works) {
-      lines.push(`### ${w.title ?? '(untitled)'}`);
-      if (w.putCode != null) lines.push(`**Put-code:** ${w.putCode}`);
-      if (w.workType) lines.push(`**Type:** ${w.workType}`);
-      if (w.publicationDate) lines.push(`**Date:** ${w.publicationDate}`);
-      if (w.journalTitle) lines.push(`**Journal:** ${w.journalTitle}`);
-      if (w.url) lines.push(`**URL:** ${w.url}`);
-      if (w.externalIds?.length) {
-        const idParts = w.externalIds.map((id) => {
-          const rel = id.relationship ? ` [${id.relationship}]` : '';
-          const urlPart = id.url ? ` (${id.url})` : '';
-          return `${id.type}:${id.value}${urlPart}${rel}`;
-        });
-        lines.push(`**IDs:** ${idParts.join(', ')}`);
-      }
-      lines.push('');
-    }
-
+    if (result.works.length > 0) lines.push('', ...result.works.map(renderWork));
     return [{ type: 'text', text: lines.join('\n') }];
   },
 });

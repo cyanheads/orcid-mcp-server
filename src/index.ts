@@ -22,6 +22,6 @@ await createApp({
     initOrcidService(core.config, core.storage);
   },
   instructions:
-    'Use orcid_search_researchers for field-anchored lookups (name, institution, DOI, PMID, grant number) and orcid_resolve_researcher when an ambiguous author name needs ranked disambiguation. Build a researcher dossier with orcid_get_profile, orcid_get_works, and orcid_get_affiliations, then pass put-codes from orcid_get_works to orcid_get_work_detail (up to 100 per call) for abstracts and contributor lists. DOIs and PMIDs in orcid_get_works results chain directly to Crossref or PubMed servers.',
+    'Use orcid_search_researchers for field-anchored lookups (name, institution, DOI, PMID, grant number) and orcid_resolve_researcher when an ambiguous author name needs ranked disambiguation. Build a researcher dossier with orcid_get_profile, orcid_get_works, and orcid_get_affiliations, then pass put-codes from orcid_get_works to orcid_get_work_detail (up to 100 per call) for abstracts and contributor lists. Both cap each response at a 64,000-byte budget: continue orcid_get_works from nextOffset, and pass orcid_get_work_detail its deferredPutCodes. DOIs and PMIDs in orcid_get_works results chain directly to Crossref or PubMed servers.',
   landing: { requireAuth: false },
 });

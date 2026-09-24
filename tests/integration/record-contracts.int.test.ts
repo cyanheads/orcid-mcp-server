@@ -8,8 +8,9 @@
 
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import type { FetchMockHarness } from '@cyanheads/mcp-ts-core/testing';
+import { runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { toolContractSuite } from '@cyanheads/mcp-ts-core/testing/vitest';
-import { afterAll, beforeAll, expect } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { orcidGetProfile } from '@/mcp-server/tools/definitions/get-profile.tool.js';
 import { orcidGetWorkDetail } from '@/mcp-server/tools/definitions/get-work-detail.tool.js';
 import { orcidGetWorks } from '@/mcp-server/tools/definitions/get-works.tool.js';
@@ -18,6 +19,7 @@ import {
   createOrcidFetchMock,
   initOrcidServiceForTests,
   MISSING_ID,
+  RATE_LIMITED_ID,
   RESEARCHER_ID,
   RESOLVED_PUT_CODE,
   UNRESOLVED_PUT_CODE,
@@ -138,5 +140,35 @@ toolContractSuite(orcidGetWorkDetail, {
       code: JsonRpcErrorCode.InternalError,
       reason: 'fetch_failed',
     },
+    {
+      name: 'keeps an upstream 429 rate limit as RateLimited',
+      input: { orcid_id: RATE_LIMITED_ID, put_codes: [RESOLVED_PUT_CODE] },
+      code: JsonRpcErrorCode.RateLimited,
+    },
   ],
+});
+
+describe('orcid_get_work_detail upstream rate limit, through the real service', () => {
+  it('forwards the upstream Retry-After and nothing else from the 429', async () => {
+    const result = await runToolContract(orcidGetWorkDetail, {
+      orcid_id: RATE_LIMITED_ID,
+      put_codes: [RESOLVED_PUT_CODE],
+    });
+
+    expect(result.isError).toBe(true);
+    const envelope = (
+      result.structuredContent as {
+        error: { code: number; message: string; data?: Record<string, unknown> };
+      }
+    ).error;
+    expect(envelope.code).toBe(JsonRpcErrorCode.RateLimited);
+    expect(envelope.message).toBe(
+      `ORCID bulk works endpoint is rate-limited for ${RATE_LIMITED_ID}.`,
+    );
+    // httpErrorFromResponse sets retryAfter from the header and no retryable flag for a 429.
+    expect(envelope.data).toStrictEqual({ retryAfter: '120' });
+    const text = result.content.map((block) => (block.type === 'text' ? block.text : '')).join('');
+    expect(text).not.toContain('203.0.113.7');
+    expect(text).not.toContain('/works/');
+  });
 });

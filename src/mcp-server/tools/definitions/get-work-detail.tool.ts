@@ -1,11 +1,18 @@
 /**
  * @fileoverview Fetch full detail records for one or more ORCID works by their put-codes
- * using the bulk works endpoint.
+ * using the bulk works endpoint. Records past the shared response byte budget are
+ * deferred and named for a follow-up call.
  * @module mcp-server/tools/definitions/get-work-detail
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import {
+  countWithinBudget,
+  jsonBytes,
+  RESPONSE_BYTE_BUDGET,
+  recordCost,
+} from '@/mcp-server/tools/response-budget.js';
 import { orcidIdSchema } from '@/services/orcid/orcid-id.js';
 import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
 import type { BulkWorkResult, WorkDetail } from '@/services/orcid/types.js';
@@ -69,6 +76,58 @@ const WorkDetailSchema = z
   })
   .describe('Full detail record for one work.');
 
+/** The Markdown `format()` renders for one work, opening with its `---` separator. */
+function renderWorkDetail(work: z.infer<typeof WorkDetailSchema>): string {
+  const lines = ['', '---', `## ${work.title ?? '(untitled)'}`, `**Put-code:** ${work.putCode}`];
+  if (work.subtitle) lines.push(`**Subtitle:** ${work.subtitle}`);
+  if (work.workType) lines.push(`**Type:** ${work.workType}`);
+  if (work.publicationDate) lines.push(`**Date:** ${work.publicationDate}`);
+  if (work.journalTitle) lines.push(`**Journal:** ${work.journalTitle}`);
+  if (work.url) lines.push(`**URL:** ${work.url}`);
+  if (work.externalIds.length) {
+    const idParts = work.externalIds.map((id) => {
+      const rel = id.relationship ? ` [${id.relationship}]` : '';
+      const urlPart = id.url ? ` (${id.url})` : '';
+      return `${id.type}:${id.value}${urlPart}${rel}`;
+    });
+    lines.push(`**IDs:** ${idParts.join(', ')}`);
+  }
+  if (work.abstract) {
+    lines.push('', `**Abstract:** ${work.abstract}`);
+  }
+  if (work.contributors.length) {
+    lines.push('', '**Contributors:**');
+    for (const c of work.contributors) {
+      const name = c.name ?? '(unnamed)';
+      const role = c.role ? ` — ${c.role}` : '';
+      const seq = c.sequence ? ` (${c.sequence})` : '';
+      const orcid = c.orcidId ? ` [${c.orcidId}]` : '';
+      lines.push(`- ${name}${role}${seq}${orcid}`);
+    }
+  }
+  if (work.citation) {
+    lines.push('', `**Citation (${work.citation.type}):**`, '```', work.citation.value, '```');
+  }
+  if (work.languageCode) lines.push(`**Language:** ${work.languageCode}`);
+  return lines.join('\n');
+}
+
+type WorkError = { putCode?: number; message: string };
+
+/** One bulk entry in response order, before it is sorted into `works` or `errors`. */
+type WorkEntry = { kind: 'work'; record: WorkDetail } | { kind: 'error'; record: WorkError };
+
+function deferredNotice(count: number): string {
+  return `The response reached its ${RESPONSE_BYTE_BUDGET.toLocaleString('en-US')}-byte budget, so ${count} put-code${count === 1 ? ' was' : 's were'} deferred. Call orcid_get_work_detail again with deferredPutCodes as put_codes to fetch ${count === 1 ? 'it' : 'them'}.`;
+}
+
+/** Transient upstream codes the handler keeps, mapped to the outcome its message names. */
+const TRANSIENT_OUTCOMES = new Map<number, string>([
+  [JsonRpcErrorCode.ServiceUnavailable, 'is unavailable'],
+  [JsonRpcErrorCode.Timeout, 'timed out'],
+  [JsonRpcErrorCode.RateLimited, 'is rate-limited'],
+]);
+
 const WorkErrorSchema = z
   .object({
     putCode: z
@@ -82,7 +141,7 @@ const WorkErrorSchema = z
 export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
   title: 'Get ORCID Work Details (Bulk)',
   description:
-    'Fetch full detail records for 1–100 works by their put-codes in a single request. Put-codes are returned by orcid_get_works in the putCode field of each work entry. Returns the abstract (short-description), all contributors with CRediT roles, the complete external ID list (DOI, PMID, arXiv, ISBN, etc.), citation metadata (BibTeX or other formats when provided), journal title, and URL for each work. Per-record errors (not-found or inaccessible put-codes) are surfaced as error entries rather than failing the whole call.',
+    'Fetch full detail records for 1–100 works by their put-codes in a single request. Put-codes are returned by orcid_get_works in the putCode field of each work entry. Returns the abstract (short-description), all contributors with CRediT roles, the complete external ID list (DOI, PMID, arXiv, ISBN, etc.), citation metadata (BibTeX or other formats when provided), journal title, and URL for each work. Per-record errors (not-found or inaccessible put-codes) are surfaced as error entries rather than failing the whole call. Records are added until the response reaches its 64,000-byte budget; put-codes left out are returned in deferredPutCodes to pass back in a follow-up call. A repeated put-code is fetched once.',
   annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
@@ -92,7 +151,7 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
       .min(1)
       .max(100)
       .describe(
-        'Array of 1–100 work put-codes to fetch. Put-codes are available in the putCode field returned by orcid_get_works.',
+        'Array of 1–100 work put-codes to fetch. Put-codes are available in the putCode field returned by orcid_get_works. A repeated put-code is fetched once. Any the 64,000-byte response budget leaves out come back in deferredPutCodes.',
       ),
   }),
 
@@ -105,7 +164,24 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
       .describe(
         'Per-record errors for put-codes that could not be resolved (not found or inaccessible). Empty when all put-codes resolved successfully.',
       ),
+    deferredPutCodes: z
+      .array(z.number().describe('Deferred work put-code.'))
+      .optional()
+      .describe(
+        'Requested put-codes left out because the response reached its 64,000-byte budget. Pass them as put_codes in another call to fetch them. Omitted when every put-code was fetched.',
+      ),
   }),
+
+  // Agent-facing context: the deferral notice surfaces in structuredContent and content[]
+  // without occupying the domain return.
+  enrichment: {
+    notice: z
+      .string()
+      .optional()
+      .describe(
+        'Note when the response budget deferred some put-codes — call again with deferredPutCodes.',
+      ),
+  },
 
   errors: [
     {
@@ -126,36 +202,38 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
   async handler(input, ctx) {
     const service = getOrcidService();
     const bareId = normalizeOrcidId(input.orcid_id);
-    ctx.log.info('orcid_get_work_detail', { orcidId: bareId, count: input.put_codes.length });
+    // The bulk endpoint answers a repeated put-code with its record plus an invalid-put-code
+    // error, so repeats are collapsed (first occurrence kept) before the request is sent.
+    const putCodes = [...new Set(input.put_codes)];
+    ctx.log.info('orcid_get_work_detail', { orcidId: bareId, count: putCodes.length });
 
     let results: BulkWorkResult[];
     try {
-      results = await service.getWorkDetails(input.orcid_id, input.put_codes, ctx);
+      results = await service.getWorkDetails(input.orcid_id, putCodes, ctx);
     } catch (err) {
       // A whole-request 404 means the ORCID iD itself does not resolve. A transient
       // upstream failure (retries already exhausted in the service layer) keeps its
-      // original code so clients retain the retryable signal instead of seeing a
-      // downgraded InternalError. Anything else is a genuinely unexpected bulk failure.
-      // Every branch builds fresh message + data (never spreading the caught error's
-      // data), which is what redacts upstream transport details (url/status/statusText/
-      // body) from the client payload.
+      // original code, plus any retryable/retryAfter signal it carried, so clients can
+      // wait and retry instead of seeing a downgraded InternalError. Anything else is a
+      // genuinely unexpected bulk failure. Every branch builds fresh message + data (never
+      // spreading the caught error's data), which is what redacts upstream transport
+      // details (url/status/statusText/body) from the client payload.
       if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
         throw ctx.fail('profile_not_found', `ORCID iD ${bareId} not found`, {
           ...ctx.recoveryFor('profile_not_found'),
         });
       }
-      if (
-        err instanceof McpError &&
-        (err.code === JsonRpcErrorCode.ServiceUnavailable || err.code === JsonRpcErrorCode.Timeout)
-      ) {
-        const message =
-          err.code === JsonRpcErrorCode.Timeout
-            ? `ORCID bulk works endpoint timed out for ${bareId}.`
-            : `ORCID bulk works endpoint is unavailable for ${bareId}.`;
+      const transientOutcome =
+        err instanceof McpError ? TRANSIENT_OUTCOMES.get(err.code) : undefined;
+      if (err instanceof McpError && transientOutcome) {
+        const { retryable, retryAfter } = err.data ?? {};
         throw new McpError(
           err.code,
-          message,
-          { ...(err.data?.retryable !== undefined && { retryable: err.data.retryable }) },
+          `ORCID bulk works endpoint ${transientOutcome} for ${bareId}.`,
+          {
+            ...(retryable !== undefined && { retryable }),
+            ...(retryAfter !== undefined && { retryAfter }),
+          },
           { cause: err },
         );
       }
@@ -167,18 +245,20 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
       );
     }
 
-    const works: WorkDetail[] = [];
-    const errors: Array<{ putCode?: number; message: string }> = [];
-
-    for (const result of results) {
+    const entries = results.map((result): WorkEntry => {
       if (result.type === 'error') {
-        errors.push({
-          ...(result.putCode !== undefined && { putCode: result.putCode }),
-          message: result.message,
-        });
-      } else {
-        const d = result.detail;
-        works.push({
+        return {
+          kind: 'error',
+          record: {
+            ...(result.putCode !== undefined && { putCode: result.putCode }),
+            message: result.message,
+          },
+        };
+      }
+      const d = result.detail;
+      return {
+        kind: 'work',
+        record: {
           putCode: d.putCode,
           ...(d.title !== undefined && { title: d.title }),
           ...(d.subtitle !== undefined && { subtitle: d.subtitle }),
@@ -191,67 +271,65 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
           externalIds: d.externalIds,
           contributors: d.contributors,
           ...(d.languageCode !== undefined && { languageCode: d.languageCode }),
-        });
-      }
+        },
+      };
+    });
+
+    // Entries are budgeted in upstream order: the bulk endpoint returns works first, in an
+    // order of its own rather than the request's, then error entries. An error entry's text
+    // line is shorter than its JSON, so its JSON is its cost. A cut response also carries the
+    // deferred list and its notice, sized here for the worst case of every put-code deferred.
+    const orcidUri = `https://orcid.org/${bareId}`;
+    const kept = entries.slice(
+      0,
+      countWithinBudget(
+        entries
+          .values()
+          .map((entry) =>
+            entry.kind === 'work'
+              ? recordCost(entry.record, renderWorkDetail(entry.record))
+              : jsonBytes(entry.record),
+          ),
+        jsonBytes({ orcidId: bareId, orcidUri, works: [], errors: [] }),
+        jsonBytes({ deferredPutCodes: putCodes, notice: deferredNotice(putCodes.length) }),
+      ),
+    );
+
+    const works: WorkDetail[] = [];
+    const errors: WorkError[] = [];
+    for (const entry of kept) {
+      if (entry.kind === 'work') works.push(entry.record);
+      else errors.push(entry.record);
     }
+    // Deferred = requested put-codes no kept entry settled, in request order.
+    const settled = new Set([...works, ...errors].map((record) => record.putCode));
+    const deferredPutCodes =
+      kept.length < entries.length ? putCodes.filter((code) => !settled.has(code)) : [];
 
     ctx.log.info('orcid_get_work_detail completed', {
       orcidId: bareId,
       resolved: works.length,
       errors: errors.length,
+      deferred: deferredPutCodes.length,
     });
+
+    if (deferredPutCodes.length > 0) ctx.enrich.notice(deferredNotice(deferredPutCodes.length));
 
     return {
       orcidId: bareId,
-      orcidUri: `https://orcid.org/${bareId}`,
+      orcidUri,
       works,
       errors,
+      ...(deferredPutCodes.length > 0 && { deferredPutCodes }),
     };
   },
 
   format: (result) => {
-    const lines: string[] = [
+    const lines = [
       `**ORCID iD:** ${result.orcidId} | **URI:** ${result.orcidUri}`,
       `**Works resolved:** ${result.works.length} | **Errors:** ${result.errors.length}`,
+      ...result.works.map(renderWorkDetail),
     ];
-
-    for (const work of result.works) {
-      lines.push('', `---`, `## ${work.title ?? '(untitled)'}`);
-      lines.push(`**Put-code:** ${work.putCode}`);
-      if (work.subtitle) lines.push(`**Subtitle:** ${work.subtitle}`);
-      if (work.workType) lines.push(`**Type:** ${work.workType}`);
-      if (work.publicationDate) lines.push(`**Date:** ${work.publicationDate}`);
-      if (work.journalTitle) lines.push(`**Journal:** ${work.journalTitle}`);
-      if (work.url) lines.push(`**URL:** ${work.url}`);
-      if (work.externalIds.length) {
-        const idParts = work.externalIds.map((id) => {
-          const rel = id.relationship ? ` [${id.relationship}]` : '';
-          const urlPart = id.url ? ` (${id.url})` : '';
-          return `${id.type}:${id.value}${urlPart}${rel}`;
-        });
-        lines.push(`**IDs:** ${idParts.join(', ')}`);
-      }
-      if (work.abstract) {
-        lines.push('', `**Abstract:** ${work.abstract}`);
-      }
-      if (work.contributors.length) {
-        lines.push('', '**Contributors:**');
-        for (const c of work.contributors) {
-          const name = c.name ?? '(unnamed)';
-          const role = c.role ? ` — ${c.role}` : '';
-          const seq = c.sequence ? ` (${c.sequence})` : '';
-          const orcid = c.orcidId ? ` [${c.orcidId}]` : '';
-          lines.push(`- ${name}${role}${seq}${orcid}`);
-        }
-      }
-      if (work.citation) {
-        lines.push('', `**Citation (${work.citation.type}):**`);
-        lines.push('```');
-        lines.push(work.citation.value);
-        lines.push('```');
-      }
-      if (work.languageCode) lines.push(`**Language:** ${work.languageCode}`);
-    }
 
     if (result.errors.length) {
       lines.push('', '---', '**Errors:**');
@@ -259,6 +337,10 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
         const putCodeLabel = err.putCode !== undefined ? ` (put-code ${err.putCode})` : '';
         lines.push(`- ${err.message}${putCodeLabel}`);
       }
+    }
+
+    if (result.deferredPutCodes?.length) {
+      lines.push('', '---', `**Deferred put-codes:** ${result.deferredPutCodes.join(', ')}`);
     }
 
     return [{ type: 'text', text: lines.join('\n') }];

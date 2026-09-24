@@ -1,14 +1,20 @@
 /**
  * @fileoverview Property-based fuzz coverage for every ORCID tool. Generated and
- * adversarial inputs are driven through the real handlers; the upstream is faked with a
- * catch-all empty JSON response so a run exercises validation and normalization rather
- * than the network. A thrown McpError is a handled outcome — these assertions cover
- * crashes, client-visible stack or path leaks, and prototype pollution.
+ * adversarial inputs are driven through the real handlers; the upstream is faked — a
+ * generated works list and bulk-works payload, and a catch-all empty JSON response for
+ * every other route — so a run exercises validation and normalization rather than the
+ * network. A thrown McpError is a handled outcome — these assertions cover crashes,
+ * client-visible stack or path leaks, and prototype pollution, plus the search input
+ * contract and the works response byte budget.
  * @module tests/fuzz/tools.fuzz.test
  */
 
 import type { FetchMockHarness } from '@cyanheads/mcp-ts-core/testing';
-import { createFetchMock, createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import {
+  createFetchMock,
+  createMockContext,
+  runToolContract,
+} from '@cyanheads/mcp-ts-core/testing';
 import { fuzzTool } from '@cyanheads/mcp-ts-core/testing/fuzz';
 import fc from 'fast-check';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -26,10 +32,85 @@ import { initOrcidServiceForTests } from '../integration/orcid-api-fixtures.js';
 /** Fixed seed keeps a failing run reproducible. */
 const SEED = 20_260_824;
 
+/** Works list size the faked `/works` route serves for every ORCID iD. */
+const GENERATED_WORK_COUNT = 300;
+
+/** Structured-output ceiling the works tools hold every multi-record response to (#36). */
+const RESPONSE_BYTE_BUDGET = 64_000;
+
+/** Record size varies with the put-code, from a bare record to ~9 KB of abstract. */
+const sizeFor = (code: number) => (code * 7_919) % 9_000;
+
+/**
+ * A work summary list sized like a prolific live record: titles and journals vary in
+ * length with the put-code, and some carry the inline markup ORCID relays.
+ */
+function generatedWorks() {
+  return {
+    group: Array.from({ length: GENERATED_WORK_COUNT }, (_, i) => ({
+      'work-summary': [
+        {
+          'put-code': i + 1,
+          title: {
+            title: { value: `Work ${i} <i>in vivo</i> ${'t'.repeat(sizeFor(i + 1) / 20)}` },
+          },
+          type: 'journal-article',
+          'journal-title': { value: `Journal ${'j'.repeat(i % 80)}` },
+          'external-ids': {
+            'external-id': [{ 'external-id-type': 'doi', 'external-id-value': `10.1/${i}` }],
+          },
+        },
+      ],
+    })),
+  };
+}
+
+/**
+ * Mirror the live bulk endpoint for the requested put-codes: one work per distinct code in
+ * ascending order, an invalid-put-code error for codes divisible by 17, then an
+ * invalid-put-code error for every repeated occurrence of a code (the live endpoint's answer
+ * to a repeat, which the tool must never send).
+ */
+function generatedBulk(url: string) {
+  const codes = (url.split('/works/')[1] ?? '').split(',').map(Number);
+  const distinct = [...new Set(codes)].sort((a, b) => a - b);
+  const invalid = (code: number) =>
+    `400 Bad Request: The put code provided is not valid. Full validation error: '${code}' is not a valid put code`;
+  return {
+    bulk: [
+      ...distinct
+        .filter((code) => code % 17 !== 0)
+        .map((code) => ({
+          work: {
+            'put-code': code,
+            title: { title: { value: `Work ${code}` } },
+            'short-description': `<h4>Abstract</h4>${'a'.repeat(sizeFor(code))}`,
+          },
+        })),
+      ...distinct
+        .filter((code) => code % 17 === 0)
+        .map((code) => ({ error: { 'developer-message': invalid(code) } })),
+      ...codes
+        .filter((code, i) => codes.indexOf(code) !== i)
+        .map((code) => ({ error: { 'developer-message': invalid(code) } })),
+    ],
+  };
+}
+
 let http: FetchMockHarness;
 
 beforeAll(() => {
-  http = createFetchMock([{ match: () => true, respond: () => Response.json({}) }]);
+  http = createFetchMock([
+    {
+      match: (request) => request.url.includes('/works/'),
+      respond: (request) => Response.json(generatedBulk(request.url)),
+    },
+    {
+      match: (request) => request.url.endsWith('/works'),
+      respond: () => Response.json(generatedWorks()),
+    },
+    { match: () => true, respond: () => Response.json({}) },
+  ]);
   http.install();
   initOrcidServiceForTests();
 });
@@ -180,5 +261,101 @@ describe('orcid_search_researchers input contract', () => {
     // Both sides of the contract were exercised, not just one.
     expect(outcomes.accepted).toBeGreaterThan(50);
     expect(outcomes.rejected).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * The response byte budget (#36): for any page or batch request, a multi-record response
+ * stays within the budget, and the continuation it reports — nextOffset for works,
+ * deferredPutCodes for work detail — accounts for every record exactly once.
+ */
+describe('works response byte budget', () => {
+  const ORCID = '0000-0002-1825-0097';
+  const bytesOf = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
+  /** What a client receives: the text surface plus structuredContent, capped at 130,000 B. */
+  const withinCombinedCeiling = (result: Awaited<ReturnType<typeof runToolContract>>) => {
+    const text = result.content.map((block) => (block.type === 'text' ? block.text : '')).join('');
+    return bytesOf(result.structuredContent) + Buffer.byteLength(text) < 130_000;
+  };
+
+  it('orcid_get_works: every page fits the budget and continues exactly where it stopped', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.integer({ min: 1, max: 1000 }),
+        fc.integer({ min: 0, max: GENERATED_WORK_COUNT + 20 }),
+        fc.boolean(),
+        async (limit, offset, includeIds) => {
+          const result = await runToolContract(orcidGetWorks, {
+            orcid_id: ORCID,
+            limit,
+            offset,
+            include_external_ids: includeIds,
+          });
+          const page = result.structuredContent as {
+            workCount: number;
+            returnedCount: number;
+            nextOffset?: number;
+            truncated: boolean;
+            works: { title?: string }[];
+          };
+
+          if (page.returnedCount > 1) {
+            expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(RESPONSE_BYTE_BUDGET);
+            expect(withinCombinedCeiling(result)).toBe(true);
+          }
+          expect(page.workCount).toBe(GENERATED_WORK_COUNT);
+          expect(page.returnedCount).toBe(page.works.length);
+          expect(page.returnedCount).toBeLessThanOrEqual(limit);
+          if (offset < GENERATED_WORK_COUNT) expect(page.returnedCount).toBeGreaterThan(0);
+          const end = offset + page.returnedCount;
+          expect(page.truncated).toBe(end < GENERATED_WORK_COUNT);
+          expect(page.nextOffset).toBe(end < GENERATED_WORK_COUNT ? end : undefined);
+          for (const work of page.works) expect(work.title).not.toMatch(/<\/?i>/);
+        },
+      ),
+      { numRuns: 150, seed: SEED },
+    );
+  });
+
+  it('orcid_get_work_detail: every batch fits the budget and settles each put-code exactly once', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        // Codes drawn from a narrow range, so most batches repeat some put-codes.
+        fc.array(fc.integer({ min: 1, max: 400 }), { minLength: 1, maxLength: 100 }),
+        async (putCodes) => {
+          const result = await runToolContract(orcidGetWorkDetail, {
+            orcid_id: ORCID,
+            put_codes: putCodes,
+          });
+          const batch = result.structuredContent as {
+            works: { putCode: number; abstract?: string }[];
+            errors: { putCode?: number }[];
+            deferredPutCodes?: number[];
+            notice?: string;
+          };
+
+          if (batch.works.length + batch.errors.length > 1) {
+            expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(RESPONSE_BYTE_BUDGET);
+            expect(withinCombinedCeiling(result)).toBe(true);
+          }
+          const settled = [
+            ...batch.works.map((w) => w.putCode),
+            ...batch.errors.map((e) => e.putCode),
+          ];
+          const returned = new Set(settled);
+          // A repeated put-code resolves or fails once — never a work and an error both (#49).
+          expect(returned.size).toBe(settled.length);
+          const deferred = batch.deferredPutCodes ?? [];
+          expect(new Set(deferred).size).toBe(deferred.length);
+          for (const code of deferred) expect(returned.has(code)).toBe(false);
+          for (const code of new Set(putCodes)) {
+            expect(returned.has(code) || deferred.includes(code)).toBe(true);
+          }
+          expect(batch.notice !== undefined).toBe(deferred.length > 0);
+          for (const work of batch.works) expect(work.abstract).not.toContain('<h4>');
+        },
+      ),
+      { numRuns: 150, seed: SEED },
+    );
   });
 });
