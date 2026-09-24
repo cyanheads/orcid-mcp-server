@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.3.1](changelog/0.3.x/0.3.1.md) — 2026-09-23 · 🛡️ Security
+
+Response byte budget on the works tools, ORCID markup stripped from text, and preserved rate-limit errors.
+
 ## [0.3.0](changelog/0.3.x/0.3.0.md) — 2026-09-23 · ⚠️ Breaking
 
 orcid_search_researchers and orcid_resolve_researcher reject blank input instead of matching everything, add a grant_number filter and DOI/PMID URL-form normalization, phrase-quote identifier clauses, and fold accents for multilingual name/institution matching. Record-fetch tools now declare openWorldHint.

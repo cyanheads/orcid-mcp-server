@@ -91,7 +91,7 @@ export class OrcidService {
   private headers(): Record<string, string> {
     return {
       Accept: 'application/json',
-      'User-Agent': 'orcid-mcp-server/0.3.0 (https://github.com/cyanheads/orcid-mcp-server)',
+      'User-Agent': 'orcid-mcp-server/0.3.1 (https://github.com/cyanheads/orcid-mcp-server)',
     };
   }
 

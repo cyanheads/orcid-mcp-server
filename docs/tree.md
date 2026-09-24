@@ -1,6 +1,6 @@
 # orcid-mcp-server - Directory Structure
 
-Generated on: 2026-09-24 01:01:44
+Generated on: 2026-09-24 01:50:15
 
 ```text
 orcid-mcp-server/
@@ -145,19 +145,21 @@ orcid-mcp-server/
 │   │   │       ├── researcher-profile.resource.ts
 │   │   │       └── researcher-works.resource.ts
 │   │   └── tools/
-│   │       └── definitions/
-│   │           ├── get-affiliations.tool.ts
-│   │           ├── get-funding.tool.ts
-│   │           ├── get-peer-reviews.tool.ts
-│   │           ├── get-profile.tool.ts
-│   │           ├── get-research-resources.tool.ts
-│   │           ├── get-work-detail.tool.ts
-│   │           ├── get-works.tool.ts
-│   │           ├── index.ts
-│   │           ├── resolve-researcher.tool.ts
-│   │           └── search-researchers.tool.ts
+│   │       ├── definitions/
+│   │       │   ├── get-affiliations.tool.ts
+│   │       │   ├── get-funding.tool.ts
+│   │       │   ├── get-peer-reviews.tool.ts
+│   │       │   ├── get-profile.tool.ts
+│   │       │   ├── get-research-resources.tool.ts
+│   │       │   ├── get-work-detail.tool.ts
+│   │       │   ├── get-works.tool.ts
+│   │       │   ├── index.ts
+│   │       │   ├── resolve-researcher.tool.ts
+│   │       │   └── search-researchers.tool.ts
+│   │       └── response-budget.ts
 │   ├── services/
 │   │   └── orcid/
+│   │       ├── markup-text.ts
 │   │       ├── normalizers.ts
 │   │       ├── orcid-id.ts
 │   │       ├── orcid-service.ts
@@ -171,6 +173,7 @@ orcid-mcp-server/
 │   │   └── tools.fuzz.test.ts
 │   ├── integration/
 │   │   ├── activity-contracts.int.test.ts
+│   │   ├── markup-text.int.test.ts
 │   │   ├── orcid-api-fixtures.ts
 │   │   ├── record-contracts.int.test.ts
 │   │   └── search-contracts.int.test.ts
@@ -180,7 +183,9 @@ orcid-mcp-server/
 │   │   └── resources-extended.test.ts
 │   ├── services/
 │   │   └── orcid/
+│   │       ├── markup-text.test.ts
 │   │       ├── normalizers-extended.test.ts
+│   │       ├── normalizers-text.test.ts
 │   │       ├── normalizers.test.ts
 │   │       ├── orcid-id.test.ts
 │   │       ├── orcid-service.test.ts
@@ -199,6 +204,7 @@ orcid-mcp-server/
 │       ├── get-works.tool.test.ts
 │       ├── resolve-researcher-extended.tool.test.ts
 │       ├── resolve-researcher.tool.test.ts
+│       ├── response-budget.test.ts
 │       ├── search-researchers-extended.tool.test.ts
 │       ├── search-researchers.tool.test.ts
 │       └── security.tool.test.ts
