@@ -39,7 +39,7 @@ export const orcidGetResearchResources = tool('orcid_get_research_resources', {
   title: 'Get ORCID Research Resources',
   description:
     'List research resources associated with an ORCID researcher — compute allocations, equipment access, lab facilities, data resources, and clinical study registrations. This is a newer ORCID section; most researchers have no entries. Returns the resource title, hosting organization, external identifiers (often a URI to the allocation portal), and access period. Most entries are deposited by resource-allocation systems (e.g. ACCESS, XSEDE) rather than researchers themselves.',
-  annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+  annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
     orcid_id: orcidIdSchema,

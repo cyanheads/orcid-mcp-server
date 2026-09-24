@@ -83,7 +83,7 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
   title: 'Get ORCID Work Details (Bulk)',
   description:
     'Fetch full detail records for 1–100 works by their put-codes in a single request. Put-codes are returned by orcid_get_works in the putCode field of each work entry. Returns the abstract (short-description), all contributors with CRediT roles, the complete external ID list (DOI, PMID, arXiv, ISBN, etc.), citation metadata (BibTeX or other formats when provided), journal title, and URL for each work. Per-record errors (not-found or inaccessible put-codes) are surfaced as error entries rather than failing the whole call.',
-  annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+  annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
     orcid_id: orcidIdSchema,

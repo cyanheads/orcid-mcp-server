@@ -4,7 +4,7 @@
  */
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { assert, beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetAffiliations } from '@/mcp-server/tools/definitions/get-affiliations.tool.js';
 
@@ -13,6 +13,12 @@ vi.mock('@/services/orcid/orcid-service.js', () => ({
   getOrcidService: () => ({ getAffiliations: mockGetAffiliations }),
   normalizeOrcidId: (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim(),
 }));
+
+// An unrouted fetch fails loudly; each test layers the responses it expects.
+beforeEach(() => {
+  mockGetAffiliations.mockReset();
+  mockGetAffiliations.mockRejectedValue(new Error('unmocked fetch'));
+});
 
 const sampleAffiliations = [
   {
@@ -118,6 +124,32 @@ describe('orcidGetAffiliations', () => {
     const ctx = createMockContext({ errors: orcidGetAffiliations.errors });
     const input = orcidGetAffiliations.input.parse({ orcid_id: '0000-0002-1825-0097' });
     await expect(orcidGetAffiliations.handler(input, ctx)).rejects.toThrow('API error');
+  });
+
+  it('rejects an explicitly empty types array with invalid_arguments and a next step (#34)', async () => {
+    const result = await runToolContract(orcidGetAffiliations, {
+      orcid_id: '0000-0002-1825-0097',
+      types: [],
+    });
+
+    expect(result.isError).toBe(true);
+    const error = (
+      result.structuredContent as {
+        error: { code: number; data: { reason: string; recovery: { hint: string } } };
+      }
+    ).error;
+    expect(error.code).toBe(JsonRpcErrorCode.InvalidParams);
+    expect(error.data.reason).toBe('invalid_arguments');
+    expect(error.data.recovery.hint).toMatch(/omit types/i);
+    expect(error.data.recovery.hint).toContain('"all"');
+    expect(mockGetAffiliations).not.toHaveBeenCalled();
+  });
+
+  it('still applies the employment/education default when types is omitted', () => {
+    expect(orcidGetAffiliations.input.parse({ orcid_id: '0000-0002-1825-0097' }).types).toEqual([
+      'employment',
+      'education',
+    ]);
   });
 
   it('rejects malformed ORCID iD at input validation', () => {

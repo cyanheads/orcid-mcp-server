@@ -14,7 +14,7 @@ export const orcidGetFunding = tool('orcid_get_funding', {
   title: 'Get ORCID Researcher Funding',
   description:
     'Fetch funding records for an ORCID researcher: grants, contracts, awards, and salary awards. Returns funder names, funder organization identifiers, grant numbers, and funding periods. Funding data is entirely self-reported — most researchers do not enter funding even when they have grants. Absence of funding records does not imply absence of funding. When records exist they are high-value for grant tracking and funder analysis.',
-  annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+  annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
     orcid_id: orcidIdSchema,

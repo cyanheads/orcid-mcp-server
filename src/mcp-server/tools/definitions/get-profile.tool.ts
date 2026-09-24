@@ -14,7 +14,7 @@ export const orcidGetProfile = tool('orcid_get_profile', {
   title: 'Get ORCID Researcher Profile',
   description:
     "Fetch a researcher's public profile from ORCID: name, biography, keywords, researcher URLs, and external identifiers such as Scopus Author ID, ResearcherID, and Loop profile. This is the entry point for building a researcher dossier. Pass a bare ORCID iD (0000-0001-2345-6789) or a full URI (https://orcid.org/0000-0001-2345-6789). The profile contains only publicly visible data — researchers control visibility per field.",
-  annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+  annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
     orcid_id: orcidIdSchema,

@@ -14,7 +14,7 @@ export const orcidGetPeerReviews = tool('orcid_get_peer_reviews', {
   title: 'Get ORCID Researcher Peer Reviews',
   description:
     "Fetch peer review activity for an ORCID researcher: convening organizations (journals and publishers), reviewer role (reviewer, editor, chair, etc.), review type, completion dates, and ISSN-keyed group identifiers. Use to assess editorial activity, journal affiliations, and the scope of a researcher's peer review contributions. Peer review records are self-reported or imported by participating publishers — coverage varies by researcher.",
-  annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+  annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
     orcid_id: orcidIdSchema,

@@ -29,7 +29,7 @@ export const orcidGetAffiliations = tool('orcid_get_affiliations', {
   title: 'Get ORCID Researcher Affiliations',
   description:
     'Fetch affiliation records for an ORCID researcher. The `types` parameter controls which affiliation sections to return: employment, education, invited-positions, distinctions, memberships, qualifications, services, or all. Default is employment and education. Returns organization names, disambiguated organization identifiers (ROR/GRID/Ringgold), departments, roles, and date ranges. Affiliation data is self-reported; absence does not mean no affiliation.',
-  annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+  annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
     orcid_id: orcidIdSchema,
@@ -38,6 +38,11 @@ export const orcidGetAffiliations = tool('orcid_get_affiliations', {
         z
           .enum(AFFILIATION_TYPES)
           .describe('Affiliation section type. Use "all" to include all section types.'),
+      )
+      // An explicit [] would select no section and read as an empty record.
+      .min(
+        1,
+        'Request at least one affiliation type, such as ["employment"] or ["all"], or omit types to get employment and education.',
       )
       .default(['employment', 'education'])
       .describe(
