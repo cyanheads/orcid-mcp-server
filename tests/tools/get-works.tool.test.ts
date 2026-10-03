@@ -22,6 +22,7 @@ const sampleWorks = [
     journalTitle: 'Science',
     url: 'https://doi.org/10.1126/science.1225829',
     externalIds: [{ type: 'doi', value: '10.1126/science.1225829' }],
+    sources: [{ name: 'Crossref', selfAsserted: false }],
   },
   {
     title: 'RNA Structure',
@@ -32,6 +33,7 @@ const sampleWorks = [
       { type: 'doi', value: '10.1038/nature12345' },
       { type: 'pmid', value: '24567890' },
     ],
+    sources: [],
   },
 ];
 
@@ -42,7 +44,57 @@ const prolificWorks = Array.from({ length: 60 }, (_, i) => ({
   workType: 'journal-article',
   publicationDate: '2020',
   externalIds: [{ type: 'doi', value: `10.1/${i}` }],
+  sources: [],
 }));
+
+describe('orcidGetWorks sources', () => {
+  it('carries every source of the work group on both result surfaces', async () => {
+    mockGetWorks.mockResolvedValueOnce([
+      {
+        putCode: 165310393,
+        title: 'Grouped work',
+        externalIds: [],
+        sources: [
+          { name: 'Scopus - Elsevier', assertionOriginName: 'David Ussery', selfAsserted: true },
+          {
+            name: "Oklahoma State University's Research Information Management System",
+            selfAsserted: false,
+          },
+        ],
+      },
+      {
+        putCode: 2,
+        title: 'Researcher-entered, unnamed',
+        externalIds: [],
+        sources: [{ selfAsserted: true }],
+      },
+      { putCode: 3, title: 'No source recorded', externalIds: [], sources: [] },
+    ]);
+
+    const result = await runToolContract(orcidGetWorks, { orcid_id: '0000-0003-3632-5512' });
+
+    expect(result.isError).toBeFalsy();
+    const structured = result.structuredContent as {
+      works: {
+        sources: { name?: string; assertionOriginName?: string; selfAsserted: boolean }[];
+      }[];
+    };
+    expect(structured.works[0]?.sources).toEqual([
+      { name: 'Scopus - Elsevier', assertionOriginName: 'David Ussery', selfAsserted: true },
+      {
+        name: "Oklahoma State University's Research Information Management System",
+        selfAsserted: false,
+      },
+    ]);
+    expect(structured.works[2]?.sources).toEqual([]);
+    const text = result.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
+    expect(text).toContain(
+      "**Sources:** David Ussery via Scopus - Elsevier (self-asserted); Oklahoma State University's Research Information Management System\n",
+    );
+    expect(text).toContain('**Sources:** (unnamed source) (self-asserted)\n');
+    expect(text.match(/\*\*Sources:\*\*/g)).toHaveLength(2);
+  });
+});
 
 describe('orcidGetWorks', () => {
   beforeEach(() => {
@@ -165,12 +217,13 @@ describe('orcidGetWorks', () => {
     expect(result.returnedCount).toBe(0);
     expect(result.truncated).toBe(false);
     expect(result.works).toEqual([]);
-    expect(enrichment.notice).toBeDefined();
-    expect(enrichment.notice).toContain('No works found');
+    expect(enrichment.notice).toBe(
+      'No works found. They may be set to private, or neither the researcher nor a member organization added any; absence does not mean no publications.',
+    );
   });
 
   it('handles a sparse work entry (no title, no date)', async () => {
-    mockGetWorks.mockResolvedValueOnce([{ externalIds: [] }]);
+    mockGetWorks.mockResolvedValueOnce([{ externalIds: [], sources: [] }]);
 
     const ctx = createMockContext({ errors: orcidGetWorks.errors });
     const input = orcidGetWorks.input.parse({ orcid_id: '0000-0002-1825-0097' });
@@ -207,20 +260,20 @@ describe('orcidGetWorks', () => {
     ).not.toThrow();
   });
 
-  it('throws profile_not_found McpError on 404', async () => {
+  it('fails with profile_not_found and the contract recovery hint on 404', async () => {
     mockGetWorks.mockRejectedValueOnce(
       new McpError(JsonRpcErrorCode.NotFound, 'ORCID returned HTTP 404 Not Found.'),
     );
 
-    const ctx = createMockContext({ errors: orcidGetWorks.errors });
     // Checksum-valid but unregistered iD — passes local validation, 404s upstream.
-    const input = orcidGetWorks.input.parse({ orcid_id: '0000-0000-0000-0001' });
-    const error = await Promise.resolve(orcidGetWorks.handler(input, ctx)).catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(McpError);
-    expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
-    const data = (error as McpError).data as { reason?: string; recovery?: { hint?: string } };
-    expect(data.reason).toBe('profile_not_found');
-    expect(data.recovery?.hint).toBeDefined();
+    const result = await runToolContract(orcidGetWorks, { orcid_id: '0000-0000-0000-0001' });
+    expect(result.isError).toBe(true);
+    const { error } = result.structuredContent as {
+      error: { code: number; data: { reason: string; recovery: { hint: string } } };
+    };
+    expect(error.code).toBe(JsonRpcErrorCode.NotFound);
+    expect(error.data.reason).toBe('profile_not_found');
+    expect(error.data.recovery.hint).toContain('orcid_search_researchers');
   });
 
   it('formats works with counts, truncation, and external IDs', () => {
@@ -299,6 +352,7 @@ describe('orcidGetWorks', () => {
         **Journal:** Science
         **URL:** https://doi.org/10.1126/science.1225829
         **IDs:** doi:10.1126/science.1225829
+        **Sources:** Crossref
 
         ### RNA Structure
         **Type:** journal-article
@@ -327,7 +381,7 @@ describe('orcidGetWorks', () => {
       expect(structured.nextOffset).toBe(50);
       expect(structured.truncated).toBe(true);
       expect(structured.works.every((w) => w.externalIds === undefined)).toBe(true);
-      expect(JSON.stringify(result.structuredContent).length).toMatchInlineSnapshot(`4612`);
+      expect(JSON.stringify(result.structuredContent).length).toMatchInlineSnapshot(`5262`);
       expect(textOf(result).length).toMatchInlineSnapshot(`3813`);
     });
 
@@ -372,6 +426,10 @@ describe('orcidGetWorks', () => {
           relationship: 'self',
         },
         { type: 'pmid', value: `${30_000_000 + i}`, relationship: 'self' },
+      ],
+      sources: [
+        { name: 'Scopus - Elsevier', assertionOriginName: 'Jennifer Doudna', selfAsserted: true },
+        { name: 'Crossref', selfAsserted: false },
       ],
     }));
 
@@ -450,7 +508,7 @@ describe('orcidGetWorks', () => {
     });
 
     it('returns a single record that alone exceeds the budget, then continues past it', async () => {
-      const oversized = { putCode: 1, title: 'x'.repeat(70_000), externalIds: [] };
+      const oversized = { putCode: 1, title: 'x'.repeat(70_000), externalIds: [], sources: [] };
       const works = [oversized, ...heavyWorks.slice(0, 3)];
 
       const first = await page({ limit: 1000 }, works);
@@ -467,7 +525,7 @@ describe('orcidGetWorks', () => {
     });
 
     it('stops before an oversized record that follows others, and serves it alone next', async () => {
-      const oversized = { putCode: 99, title: 'y'.repeat(70_000), externalIds: [] };
+      const oversized = { putCode: 99, title: 'y'.repeat(70_000), externalIds: [], sources: [] };
       const works = [...heavyWorks.slice(0, 2), oversized, ...heavyWorks.slice(2, 4)];
 
       const first = await page({ limit: 1000 }, works);
@@ -483,11 +541,13 @@ describe('orcidGetWorks', () => {
     });
 
     it('keeps the whole response under 130,000 bytes when the text outweighs the structured record', async () => {
-      // An untitled work renders a `### (untitled)` heading its JSON has no field for.
+      // An untitled work renders a `### (untitled)` heading its JSON has no field for, and a
+      // nameless source a `(unnamed source)` its JSON has no name for.
       const untitled = Array.from({ length: 1000 }, (_, i) => ({
         putCode: 200_000_000 + i,
         url: `https://example.org/${'a'.repeat(33)}`,
         externalIds: [],
+        sources: [{ selfAsserted: false }],
       }));
       const { result, structured } = await page(
         { limit: 1000, include_external_ids: false },
@@ -519,7 +579,7 @@ describe('orcidGetWorks', () => {
       returnedCount: 1,
       offset: 0,
       truncated: false,
-      works: [{ externalIds: [] }],
+      works: [{ externalIds: [], sources: [] }],
     });
 
     const blocks = orcidGetWorks.format!(output);

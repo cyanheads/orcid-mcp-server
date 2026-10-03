@@ -7,8 +7,14 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { singleLine } from '@/mcp-server/tools/third-party-text.js';
 import { getOrcidService } from '@/services/orcid/orcid-service.js';
-import { escapeSolrValue, stripIdentifierPrefix } from '@/services/orcid/solr-query.js';
+import {
+  escapeSolrValue,
+  isInitial,
+  splitNameWords,
+  stripIdentifierPrefix,
+} from '@/services/orcid/solr-query.js';
 import { foldForMatching } from '@/services/orcid/text-folding.js';
 import type { ExpandedSearchResult } from '@/services/orcid/types.js';
 
@@ -122,6 +128,44 @@ const BLANK_NAME_MESSAGE =
 /** Name match type based on how well the result name matches input. */
 type NameMatchType = 'exact' | 'partial' | 'other-name' | 'none';
 
+/**
+ * Read a "Family, Given" name — exactly one comma, both sides non-blank — as "Given Family",
+ * the order the phrase clause and the name comparison expect (#53). Any other name is trimmed.
+ */
+function reorderCommaName(name: string): string {
+  const parts = name.split(',');
+  if (parts.length === 2) {
+    const [family, given] = parts.map((part) => part.trim());
+    if (family && given) return `${given} ${family}`;
+  }
+  return name.trim();
+}
+
+/**
+ * The byline clause for a name with initials (#53); undefined when the name has no initial or
+ * nothing but initials. Two or more other words form a phrase whose slop absorbs the dropped
+ * initials ("Jennifer A. Doudna" → `"Jennifer Doudna"~1`), which keeps phrase precision where
+ * an AND of the words would rank repeated-word names ("Wei Wei Wang") above exact ones. One
+ * other word pairs with the first initial as a prefix term ("J. Doudna" → `("Doudna" AND J*)`);
+ * prefix terms on this field are case- and accent-folded, and a bare letter needs no escaping.
+ */
+function bylineClause(name: string): string | undefined {
+  const words = splitNameWords(name);
+  const initials = words.filter(isInitial);
+  const others = words.filter((word) => !isInitial(word));
+  const [firstInitial] = initials;
+  if (!firstInitial || others.length === 0) return undefined;
+  const phrase = escapeSolrValue(others.join(' '));
+  return others.length > 1
+    ? `given-and-family-names:"${phrase}"~${initials.length}`
+    : `given-and-family-names:("${phrase}" AND ${firstInitial.normalize('NFC')}*)`;
+}
+
+/** Folded words of a name for token comparison; periods separate words ("J.A." → j, a). */
+function matchTokens(name: string): string[] {
+  return foldForMatching(name.replace(/\./g, ' ')).split(/\s+/).filter(Boolean);
+}
+
 function computeNameMatch(candidate: ExpandedSearchResult, inputName: string): NameMatchType {
   // Accent-insensitive on both sides (#35): a record often carries the ASCII rendering of an
   // accented name, and the input may be either form.
@@ -140,19 +184,31 @@ function computeNameMatch(candidate: ExpandedSearchResult, inputName: string): N
     return 'exact';
   }
 
-  const inputTokens = normalizedInput.split(/\s+/).filter(Boolean);
-  const candidateTokens = new Set(normalize(fullName).split(/\s+/).filter(Boolean));
-  const overlap = inputTokens.filter((t) => candidateTokens.has(t));
-  if (overlap.length >= Math.min(2, inputTokens.length)) {
+  // The input's first initial matches a name only through that name's first word ("J." for
+  // "John"), never a middle initial elsewhere ("J. Smith" is not "Carolyn J Smith"), so it can
+  // reach partial or other-name but never exact (#53). Every other input word needs the same
+  // folded word in the name.
+  const inputTokens = matchTokens(inputName);
+  const firstInitial = splitNameWords(inputName).find(isInitial);
+  const initial = firstInitial ? foldForMatching(firstInitial) : '';
+  const initialAt = initial ? inputTokens.indexOf(initial) : -1;
+  const wordTokens = inputTokens.filter((_, i) => i !== initialAt);
+  const needed = Math.min(2, inputTokens.length);
+  const covers = (nameTokens: string[], firstWord: string | undefined) => {
+    const words = new Set(nameTokens);
+    const initialHit = initialAt !== -1 && firstWord?.startsWith(initial) ? 1 : 0;
+    return wordTokens.filter((t) => words.has(t)).length + initialHit >= needed;
+  };
+
+  if (covers(matchTokens(fullName), matchTokens(candidate.givenNames ?? '')[0])) {
     return 'partial';
   }
 
   // Check other-names
   for (const otherName of candidate.otherNames) {
     if (normalize(otherName) === normalizedInput) return 'other-name';
-    const otherTokens = new Set(normalize(otherName).split(/\s+/).filter(Boolean));
-    const otherOverlap = inputTokens.filter((t) => otherTokens.has(t));
-    if (otherOverlap.length >= Math.min(2, inputTokens.length)) return 'other-name';
+    const otherTokens = matchTokens(otherName);
+    if (covers(otherTokens, otherTokens[0])) return 'other-name';
   }
 
   return 'none';
@@ -218,7 +274,7 @@ function computeInstitutionOverlap(
 export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
   title: 'Resolve ORCID Researcher',
   description:
-    'Disambiguate an author name to a verified ORCID iD. Returns ranked candidates (5 by default, up to 20 via the rows parameter) with transparent disambiguation signals: name match type (exact/partial/other-name/none), institution overlap flag, and whether a DOI or PMID anchor was used in the query. A DOI or PMID anchor is near-deterministic — it filters to researchers who have linked that specific work to their ORCID record. Use this tool (not orcid_search_researchers) when the input is an ambiguous name that needs ranked disambiguation. No synthetic scores are used — raw signals only.',
+    'Disambiguate an author name to a verified ORCID iD. Returns ranked candidates (5 by default, up to 20 via the rows parameter) with transparent disambiguation signals: name match type (exact/partial/other-name/none), institution overlap flag, and whether a DOI or PMID anchor was used in the query. The name is searched as an exact phrase first; when that finds nothing, byline initials (J. Doudna, Jennifer A. Doudna) and then the other names listed on ORCID records are tried. A DOI or PMID anchor is near-deterministic — it filters to researchers who have linked that specific work to their ORCID record. Use this tool (not orcid_search_researchers) when the input is an ambiguous name that needs ranked disambiguation. No synthetic scores are used — raw signals only.',
   annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
@@ -227,7 +283,7 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
       .min(1, { message: BLANK_NAME_MESSAGE, abort: true })
       .refine((name) => name.trim().length > 0, { message: BLANK_NAME_MESSAGE })
       .describe(
-        'Author name to disambiguate (full name preferred, e.g. "Jennifer Doudna" or "J. Doudna").',
+        'Author name to disambiguate: a full name ("Jennifer Doudna"), a byline with initials ("J. Doudna", "Jennifer A. Doudna"), or "Family, Given" ("Doudna, Jennifer", read as Jennifer Doudna). The exact phrase is tried first; initials and other names listed on a record are fallbacks, so a full name gives the most precise candidates.',
       ),
     affiliation: z
       .string()
@@ -272,7 +328,7 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
             nameMatchType: z
               .enum(['exact', 'partial', 'other-name', 'none'])
               .describe(
-                'How closely the candidate name matches the input name, compared case- and accent-insensitively (José = Jose): exact (full match), partial (token overlap), other-name (match on alternate name), or none.',
+                'How closely the candidate name matches the input name, compared case- and accent-insensitively (José = Jose): exact (full match), partial (token overlap, where an initial such as J. matches a first given name starting with J), other-name (match on alternate name), or none.',
               ),
             institutionOverlap: z
               .boolean()
@@ -306,13 +362,13 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
     queryUsed: z
       .string()
       .describe(
-        'The Solr query that produced the returned candidates — the primary query, or the final relaxed query when a fallback ran. Paired with totalFound.',
+        'The Solr query that produced the returned candidates — the primary query, or the last fallback stage run when the primary found nothing. Paired with totalFound.',
       ),
     relaxedQuery: z
       .string()
       .optional()
       .describe(
-        'Solr query used in a secondary relaxed search, if the primary returned no results.',
+        'The last fallback stage run (byline initials, affiliation dropped, other names, or an anchor alone), present only when the primary query found nothing.',
       ),
     totalFound: z
       .number()
@@ -322,7 +378,7 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
     primaryQuery: z
       .string()
       .describe(
-        'The primary, most-constrained Solr query attempted first (name + optional anchor + optional affiliation). Always populated; equals queryUsed when no relaxed fallback ran.',
+        'The primary, most-constrained Solr query attempted first (exact name phrase + optional anchor + optional affiliation). Always populated; equals queryUsed when no fallback ran.',
       ),
     primaryTotalFound: z
       .number()
@@ -373,7 +429,7 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
         throw ctx.fail(
           'query_failed',
           `ORCID could not complete the search for query: ${q}`,
-          { ...ctx.recoveryFor('query_failed') },
+          undefined,
           { cause: err },
         );
       }
@@ -400,31 +456,50 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
     // if a lower-precedence anchor-only fallback is what actually matched.
     let anchorType: 'doi' | 'pmid' | 'none' = anchorClauses[0]?.type ?? 'none';
 
-    // Build primary query: name + every supplied anchor + optional affiliation
-    const primaryClauses: string[] = [
-      `given-and-family-names:"${escapeSolrValue(input.name.trim())}"`,
-      ...anchorClauses.map((a) => a.clause),
+    // A "Family, Given" name is read as "Given Family" before any clause is built or compared.
+    const name = reorderCommaName(input.name);
+    const affiliation = input.affiliation?.trim();
+    const affiliationClause = affiliation
+      ? `affiliation-org-name:"${escapeSolrValue(affiliation)}"`
+      : undefined;
+    // Every name stage carries every anchor; only the phrase and byline stages are tried with
+    // the affiliation first.
+    const stage = (nameClause: string, withAffiliation: boolean) =>
+      [
+        nameClause,
+        ...anchorClauses.map((a) => a.clause),
+        ...(withAffiliation && affiliationClause ? [affiliationClause] : []),
+      ].join(' AND ');
+
+    // The exact phrase always runs first, so a name that matches as written sends one query
+    // (#4). The later stages run in order, each only while every earlier one found
+    // nothing (#53): byline initials with the affiliation, then the phrase and the byline
+    // without it, then the other names listed on records. Folding other-names into the first
+    // query was rejected — a hyphenated other name ("Chih-Wei Wang") contains a common name's
+    // phrase and crowds exact matches out of the candidate pool.
+    const phrase = `given-and-family-names:"${escapeSolrValue(name)}"`;
+    const byline = bylineClause(name);
+    const primaryQuery = stage(phrase, true);
+    const fallbackQueries = [
+      ...(byline && affiliationClause ? [stage(byline, true)] : []),
+      ...(affiliationClause ? [stage(phrase, false)] : []),
+      ...(byline ? [stage(byline, false)] : []),
+      stage(`other-names:"${escapeSolrValue(name)}"`, false),
     ];
-    if (input.affiliation?.trim()) {
-      primaryClauses.push(`affiliation-org-name:"${escapeSolrValue(input.affiliation.trim())}"`);
-    }
-    const primaryQuery = primaryClauses.join(' AND ');
 
     const primaryResponse = await search(primaryQuery);
 
     let relaxedQuery: string | undefined;
     let finalResponse = primaryResponse;
 
-    // Relaxed fallback: drop affiliation constraint if primary returned nothing
-    if (primaryResponse.numFound === 0 && input.affiliation?.trim()) {
-      const relaxedClauses = primaryClauses.filter((c) => !c.startsWith('affiliation-org-name:'));
-      relaxedQuery = relaxedClauses.join(' AND ');
-      finalResponse = await search(relaxedQuery);
+    for (const query of fallbackQueries) {
+      if (finalResponse.numFound > 0) break;
+      relaxedQuery = query;
+      finalResponse = await search(query);
     }
 
-    // Anchor-only fallback: if the combined query (and its drop-affiliation relaxation)
-    // still found nothing, retry each supplied anchor on its own — DOI first, then PMID —
-    // and report the anchor that actually matched.
+    // Anchor-only fallback: if every name stage still found nothing, retry each supplied
+    // anchor on its own — DOI first, then PMID — and report the anchor that actually matched.
     if (finalResponse.numFound === 0 && anchorClauses.length > 0) {
       for (const anchor of anchorClauses) {
         relaxedQuery = anchor.clause;
@@ -445,7 +520,7 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
     // Score and sort candidates
     const scored = finalResponse.results.map((r) => ({
       candidate: r,
-      nameMatch: computeNameMatch(r, input.name),
+      nameMatch: computeNameMatch(r, name),
       instOverlap: computeInstitutionOverlap(r, input.affiliation),
     }));
 
@@ -473,8 +548,8 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
     }));
 
     // queryUsed/totalFound must describe the SAME query — the effective query that
-    // produced the returned candidates (the primary query, or the last relaxed stage
-    // when a fallback ran). primaryQuery/primaryTotalFound preserve the primary attempt.
+    // produced the returned candidates (the primary query, or the last fallback stage
+    // run). primaryQuery/primaryTotalFound preserve the primary attempt.
     const effectiveQuery = relaxedQuery ?? primaryQuery;
     ctx.enrich({
       queryUsed: effectiveQuery,
@@ -512,17 +587,17 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
       const nameParts = [c.givenNames, c.familyNames].filter(Boolean);
       const displayName = c.creditName ?? (nameParts.length ? nameParts.join(' ') : c.orcidId);
       lines.push('');
-      lines.push(`### ${i + 1}. ${displayName}`);
+      lines.push(`### ${i + 1}. ${singleLine(displayName)}`);
       lines.push(`**ORCID iD:** ${c.orcidId}`);
       lines.push(`**ORCID URI:** ${c.orcidUri}`);
-      if (c.givenNames) lines.push(`**Given Names:** ${c.givenNames}`);
-      if (c.familyNames) lines.push(`**Family Names:** ${c.familyNames}`);
-      if (c.creditName) lines.push(`**Credit Name:** ${c.creditName}`);
+      if (c.givenNames) lines.push(`**Given Names:** ${singleLine(c.givenNames)}`);
+      if (c.familyNames) lines.push(`**Family Names:** ${singleLine(c.familyNames)}`);
+      if (c.creditName) lines.push(`**Credit Name:** ${singleLine(c.creditName)}`);
       lines.push(`**Name Match:** ${c.nameMatchType}`);
       lines.push(`**Institution Overlap:** ${c.institutionOverlap ? 'Yes' : 'No'}`);
       lines.push(`**Anchor Type:** ${c.anchorType}`);
       if (c.institutionNames.length) {
-        lines.push(`**Institutions:** ${c.institutionNames.join('; ')}`);
+        lines.push(`**Institutions:** ${c.institutionNames.map(singleLine).join('; ')}`);
       }
     });
 

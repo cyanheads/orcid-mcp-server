@@ -1,15 +1,17 @@
 /**
  * @fileoverview Retrieve works (publications, datasets, software, preprints, etc.)
- * associated with an ORCID iD. Returns titles, types, dates, journal names, and
- * external identifiers ready for chaining to Crossref, PubMed, or arXiv. Prolific
- * records are sliced locally via offset/limit so default payloads stay compact, and every
- * page is capped by the shared response byte budget.
+ * associated with an ORCID iD. Returns titles, types, dates, journal names, the
+ * sources that asserted each work, and external identifiers ready for chaining to
+ * Crossref, PubMed, or arXiv. Prolific records are sliced locally via offset/limit so
+ * default payloads stay compact, and every page is capped by the shared response byte budget.
  * @module mcp-server/tools/definitions/get-works.tool
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { SourceSchema, sourcesText } from '@/mcp-server/tools/record-sources.js';
 import { countWithinBudget, jsonBytes, recordCost } from '@/mcp-server/tools/response-budget.js';
+import { singleLine } from '@/mcp-server/tools/third-party-text.js';
 import { orcidIdSchema } from '@/services/orcid/orcid-id.js';
 import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
 import type { Work } from '@/services/orcid/types.js';
@@ -46,27 +48,34 @@ const WorkSummarySchema = z
       .array(ExternalIdSchema)
       .optional()
       .describe(
-        'External identifiers (DOIs, PMIDs, arXiv IDs, ISBNs, etc.). Omitted when include_external_ids is false.',
+        "External identifiers of the whole ORCID work group (DOIs, PMIDs, arXiv IDs, ISBNs, etc.): the preferred version's own, part-of IDs such as an ISSN included, then each identifier only another source in the group holds. Omitted when include_external_ids is false.",
+      ),
+    sources: z
+      .array(SourceSchema)
+      .describe(
+        "Every party that added this work to the ORCID record, one entry per distinct source in the work group, the preferred version's first. Empty when ORCID records no source.",
       ),
   })
-  .describe('Work summary record.');
+  .describe('Work summary record — one ORCID work group, built from its preferred version.');
 
 /** The Markdown `format()` renders for one work, trailing blank line included. */
 function renderWork(w: z.infer<typeof WorkSummarySchema>): string {
-  const lines = [`### ${w.title ?? '(untitled)'}`];
+  const lines = [`### ${singleLine(w.title ?? '(untitled)')}`];
   if (w.putCode != null) lines.push(`**Put-code:** ${w.putCode}`);
   if (w.workType) lines.push(`**Type:** ${w.workType}`);
   if (w.publicationDate) lines.push(`**Date:** ${w.publicationDate}`);
-  if (w.journalTitle) lines.push(`**Journal:** ${w.journalTitle}`);
-  if (w.url) lines.push(`**URL:** ${w.url}`);
+  if (w.journalTitle) lines.push(`**Journal:** ${singleLine(w.journalTitle)}`);
+  if (w.url) lines.push(`**URL:** ${singleLine(w.url)}`);
   if (w.externalIds?.length) {
     const idParts = w.externalIds.map((id) => {
       const rel = id.relationship ? ` [${id.relationship}]` : '';
-      const urlPart = id.url ? ` (${id.url})` : '';
-      return `${id.type}:${id.value}${urlPart}${rel}`;
+      const urlPart = id.url ? ` (${singleLine(id.url)})` : '';
+      return `${id.type}:${singleLine(id.value)}${urlPart}${rel}`;
     });
     lines.push(`**IDs:** ${idParts.join(', ')}`);
   }
+  const sources = sourcesText(w.sources);
+  if (sources) lines.push(`**Sources:** ${sources}`);
   lines.push('');
   return lines.join('\n');
 }
@@ -74,7 +83,7 @@ function renderWork(w: z.infer<typeof WorkSummarySchema>): string {
 export const orcidGetWorks = tool('orcid_get_works', {
   title: 'Get ORCID Researcher Works',
   description:
-    'Retrieve works associated with an ORCID iD — publications, datasets, software, preprints, and more. Returns work summaries with put-codes, titles, types, publication dates, journal names, and all external identifiers (DOIs, PMIDs, arXiv IDs, ISBNs). The first 50 works are returned by default; workCount reports the total available, and prolific records are paged with offset and the returned nextOffset (or raise limit). A page also stops early once the response reaches its 64,000-byte budget, so returnedCount can come in below limit; truncated and nextOffset then carry the continuation. Set include_external_ids to false to omit identifier lists for a lighter payload. Pass the putCode from each work to orcid_get_work_detail to retrieve the full record including abstract and contributors. External IDs are ready for chaining to Crossref, PubMed, or arXiv servers. Works are self-reported; a researcher may not have linked all their publications.',
+    'Retrieve works associated with an ORCID iD — publications, datasets, software, preprints, and more. Returns work summaries with put-codes, titles, types, publication dates, journal names, and all external identifiers (DOIs, PMIDs, arXiv IDs, ISBNs). The first 50 works are returned by default; workCount reports the total available, and prolific records are paged with offset and the returned nextOffset (or raise limit). A page also stops early once the response reaches its 64,000-byte budget, so returnedCount can come in below limit; truncated and nextOffset then carry the continuation. Set include_external_ids to false to omit identifier lists for a lighter payload. Pass the putCode from each work to orcid_get_work_detail to retrieve the full record including abstract and contributors. External IDs are ready for chaining to Crossref, PubMed, or arXiv servers. Works come from the researcher or from member organizations such as Crossref or a university system; each work lists its sources and whether the researcher asserted it (selfAsserted). A researcher may not have linked all their publications.',
   annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
@@ -143,7 +152,7 @@ export const orcidGetWorks = tool('orcid_get_works', {
       .string()
       .optional()
       .describe(
-        'Note when the works list is empty — may indicate no self-reported works or private visibility settings.',
+        'Note when the works list is empty — neither the researcher nor a member organization may have added works, or they may be private.',
       ),
   },
 
@@ -173,7 +182,6 @@ export const orcidGetWorks = tool('orcid_get_works', {
         throw ctx.fail(
           'profile_not_found',
           `ORCID iD ${normalizeOrcidId(input.orcid_id)} not found`,
-          { ...ctx.recoveryFor('profile_not_found') },
         );
       }
       throw err;
@@ -217,7 +225,7 @@ export const orcidGetWorks = tool('orcid_get_works', {
 
     if (workCount === 0) {
       ctx.enrich.notice(
-        'No works found. The researcher may not have linked works to their ORCID record, or works may be set to private visibility.',
+        'No works found. They may be set to private, or neither the researcher nor a member organization added any; absence does not mean no publications.',
       );
     }
 

@@ -164,7 +164,10 @@ describe('orcid-mcp-server definition smoke test', () => {
   });
 
   it('runs the orcid-researcher-profile resource end to end', async () => {
-    const ctx = createMockContext({ uri: new URL(`orcid://researcher/${RESEARCHER_ID}/profile`) });
+    const ctx = createMockContext({
+      uri: new URL(`orcid://researcher/${RESEARCHER_ID}/profile`),
+      errors: researcherProfileResource.errors,
+    });
     const params = researcherProfileResource.params!.parse({ orcid_id: RESEARCHER_ID });
     const result = await researcherProfileResource.handler(params, ctx);
 
@@ -173,19 +176,25 @@ describe('orcid-mcp-server definition smoke test', () => {
       orcidId: RESEARCHER_ID,
       orcidUri: `https://orcid.org/${RESEARCHER_ID}`,
       creditName: 'Jennifer A. Doudna',
+      otherNames: ['Josiah Stinkney Carberry', 'J. Carberry', 'J. S. Carberry'],
     });
   });
 
   it('runs the orcid-researcher-works resource end to end', async () => {
-    const ctx = createMockContext({ uri: new URL(`orcid://researcher/${RESEARCHER_ID}/works`) });
+    const ctx = createMockContext({
+      uri: new URL(`orcid://researcher/${RESEARCHER_ID}/works`),
+      errors: researcherWorksResource.errors,
+    });
     const params = researcherWorksResource.params!.parse({ orcid_id: RESEARCHER_ID });
     const result = await researcherWorksResource.handler(params, ctx);
 
     expect(result).toEqual(expect.schemaMatching(researcherWorksResource.output!));
     expect(result.workCount).toBe(2);
+    // The PMCID is held only at the work-group level; the source-local ID is not surfaced.
     expect(result.works[0]?.externalIds).toEqual([
       { type: 'doi', value: '10.1126/science.1225829' },
       { type: 'pmid', value: '22745249' },
+      { type: 'pmc', value: 'PMC6286148' },
     ]);
   });
 

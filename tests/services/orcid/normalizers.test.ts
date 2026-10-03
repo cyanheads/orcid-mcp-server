@@ -23,6 +23,9 @@ import type {
   RawWorksResponse,
 } from '@/services/orcid/types.js';
 
+/** The requested ORCID iD every fixture is normalized against. */
+const ORCID_ID = '0000-0002-1825-0097';
+
 // ---------------------------------------------------------------------------
 // normalizePerson
 // ---------------------------------------------------------------------------
@@ -78,12 +81,58 @@ describe('normalizePerson', () => {
     expect(result.countries).toEqual(['US']);
   });
 
+  it('keeps other names in upstream (descending display-index) order', () => {
+    // ORCID returns other-name[] by descending display-index; the order is kept as-is.
+    const raw: RawPerson = {
+      'other-names': {
+        'other-name': [
+          { content: 'Josiah Stinkney Carberry', 'display-index': 3 },
+          { content: 'J. Carberry', 'display-index': 2 },
+          { content: 'J. S. Carberry', 'display-index': 1 },
+        ],
+      },
+    };
+
+    expect(normalizePerson(raw).otherNames).toEqual([
+      'Josiah Stinkney Carberry',
+      'J. Carberry',
+      'J. S. Carberry',
+    ]);
+  });
+
+  it('returns no other names for an empty other-name list', () => {
+    const raw: RawPerson = { 'other-names': { 'other-name': [] } };
+    expect(normalizePerson(raw).otherNames).toEqual([]);
+  });
+
+  it('drops other names and keywords blank after trimming, keeping the rest verbatim and in order', () => {
+    const raw: RawPerson = {
+      'other-names': {
+        'other-name': [
+          { content: 'J. Carberry', 'display-index': 3 },
+          { content: '   ', 'display-index': 2 },
+          { content: ' J. S. Carberry ', 'display-index': 1 },
+          { content: '\t\r\n' },
+        ],
+      },
+      keywords: {
+        keyword: [{ content: 'psychoceramics' }, { content: '  ' }, { content: 'ionics ' }],
+      },
+    };
+
+    const result = normalizePerson(raw);
+
+    expect(result.otherNames).toEqual(['J. Carberry', ' J. S. Carberry ']);
+    expect(result.keywords).toEqual(['psychoceramics', 'ionics ']);
+  });
+
   it('returns safe defaults for a sparse record (all fields missing)', () => {
     const result = normalizePerson({});
 
     expect(result.givenNames).toBeUndefined();
     expect(result.familyName).toBeUndefined();
     expect(result.creditName).toBeUndefined();
+    expect(result.otherNames).toEqual([]);
     expect(result.biography).toBeUndefined();
     expect(result.keywords).toEqual([]);
     expect(result.researcherUrls).toEqual([]);
@@ -161,7 +210,7 @@ describe('normalizeWorks', () => {
       ],
     };
 
-    const works = normalizeWorks(raw);
+    const works = normalizeWorks(raw, ORCID_ID);
 
     expect(works).toHaveLength(1);
     const [work] = works;
@@ -192,7 +241,7 @@ describe('normalizeWorks', () => {
 
     // The legacy `work-type` key is decoy data: no live payload carries it, and reading
     // it would silently mistype every work summary.
-    const [work] = normalizeWorks(raw);
+    const [work] = normalizeWorks(raw, ORCID_ID);
     assert(work);
     expect(work.workType).toBe('dataset');
   });
@@ -201,19 +250,19 @@ describe('normalizeWorks', () => {
     const raw: RawWorksResponse = {
       group: [{ 'work-summary': [{ title: { title: { value: 'Untyped' } }, 'external-ids': {} }] }],
     };
-    const [work] = normalizeWorks(raw);
+    const [work] = normalizeWorks(raw, ORCID_ID);
     assert(work);
     expect(work.workType).toBeUndefined();
   });
 
   it('returns empty array for empty group list', () => {
-    expect(normalizeWorks({})).toEqual([]);
-    expect(normalizeWorks({ group: [] })).toEqual([]);
+    expect(normalizeWorks({}, ORCID_ID)).toEqual([]);
+    expect(normalizeWorks({ group: [] }, ORCID_ID)).toEqual([]);
   });
 
   it('skips groups with no work-summary', () => {
     const raw: RawWorksResponse = { group: [{ 'work-summary': [] }] };
-    expect(normalizeWorks(raw)).toEqual([]);
+    expect(normalizeWorks(raw, ORCID_ID)).toEqual([]);
   });
 
   it('normalizes year-only publication date', () => {
@@ -224,7 +273,7 @@ describe('normalizeWorks', () => {
         },
       ],
     };
-    const [work] = normalizeWorks(raw);
+    const [work] = normalizeWorks(raw, ORCID_ID);
     assert(work);
     expect(work.publicationDate).toBe('2020');
   });
@@ -247,12 +296,261 @@ describe('normalizeWorks', () => {
         },
       ],
     };
-    const [work] = normalizeWorks(raw);
+    const [work] = normalizeWorks(raw, ORCID_ID);
     assert(work);
     expect(work.externalIds).toHaveLength(1);
     const [pmid] = work.externalIds;
     assert(pmid);
     expect(pmid.type).toBe('pmid');
+  });
+});
+
+describe('normalizeWorks group identifiers', () => {
+  /** A raw identifier carrying ORCID's `external-id-normalized` block, as the live API emits. */
+  const rawId = (
+    type: string,
+    value: string,
+    opts: { normalized?: string; url?: string; relationship?: string } = {},
+  ) => ({
+    'external-id-type': type,
+    'external-id-value': value,
+    'external-id-normalized': { value: opts.normalized ?? value, transient: true },
+    'external-id-url': opts.url ? { value: opts.url } : null,
+    'external-id-relationship': opts.relationship ?? 'self',
+  });
+
+  // Mirrors the live group holding put-code 220918354 on 0000-0003-3632-5512: a Crossref
+  // representative with the DOI alone, beside an institutional import that also holds the
+  // PMID, PMCID, a part-of ISSN, and its own source-work-id. The group-level list unions
+  // the self identifiers of every summary.
+  const doi = '10.64898/2026.07.15.738563';
+  const doiUrl = `https://doi.org/${doi}`;
+  const liveGroup: RawWorksResponse = {
+    group: [
+      {
+        'external-ids': {
+          'external-id': [
+            rawId('pmc', 'PMC13405260', { normalized: '13405260' }),
+            rawId('doi', doi, { url: doiUrl }),
+            rawId('pmid', '42523422'),
+            rawId('source-work-id', '766428'),
+          ],
+        },
+        'work-summary': [
+          {
+            'put-code': 220918354,
+            title: { title: { value: 'Preprint deposited by Crossref' } },
+            'external-ids': { 'external-id': [rawId('doi', doi, { url: doiUrl })] },
+          },
+          {
+            'put-code': 221801320,
+            title: { title: { value: 'Same work from the institutional system' } },
+            'external-ids': {
+              'external-id': [
+                rawId('pmid', '42523422'),
+                rawId('pmc', 'PMC13405260', { normalized: '13405260' }),
+                rawId('doi', doi),
+                rawId('issn', '2692-8205', { relationship: 'part-of' }),
+                rawId('source-work-id', '766428'),
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  it('appends group-level identifiers the representative summary lacks, after its own', () => {
+    const [work] = normalizeWorks(liveGroup, ORCID_ID);
+    assert(work);
+    expect(work.putCode).toBe(220918354);
+    expect(work.title).toBe('Preprint deposited by Crossref');
+    expect(work.externalIds).toEqual([
+      { type: 'doi', value: doi, url: doiUrl, relationship: 'self' },
+      { type: 'pmc', value: 'PMC13405260', relationship: 'self' },
+      { type: 'pmid', value: '42523422', relationship: 'self' },
+    ]);
+  });
+
+  it('skips a group-level source-work-id but keeps the representative summary’s own', () => {
+    const raw: RawWorksResponse = {
+      group: [
+        {
+          'external-ids': {
+            'external-id': [rawId('source-work-id', '766428'), rawId('pmid', '42523422')],
+          },
+          'work-summary': [
+            {
+              'put-code': 221801320,
+              'external-ids': { 'external-id': [rawId('source-work-id', 'osu-1')] },
+            },
+            {
+              'put-code': 220918354,
+              'external-ids': { 'external-id': [rawId('source-work-id', '766428')] },
+            },
+          ],
+        },
+      ],
+    };
+    const [work] = normalizeWorks(raw, ORCID_ID);
+    assert(work);
+    expect(work.externalIds).toEqual([
+      { type: 'source-work-id', value: 'osu-1', relationship: 'self' },
+      { type: 'pmid', value: '42523422', relationship: 'self' },
+    ]);
+  });
+
+  it('does not reach into other summaries for a part-of identifier', () => {
+    const [work] = normalizeWorks(liveGroup, ORCID_ID);
+    assert(work);
+    // The ISSN lives only on the institutional summary, never at group level.
+    expect(work.externalIds.some((id) => id.type === 'issn')).toBe(false);
+    expect(work.externalIds).toHaveLength(3);
+  });
+
+  it('keeps a case-variant DOI once, in the representative summary’s spelling', () => {
+    const raw: RawWorksResponse = {
+      group: [
+        {
+          'external-ids': {
+            'external-id': [
+              rawId('doi', '10.1186/s13063-025-09270-2', {
+                url: 'https://doi.org/10.1186/s13063-025-09270-2',
+              }),
+              rawId('wosuid', 'WOS:001654148000001', { normalized: 'wos:001654148000001' }),
+            ],
+          },
+          'work-summary': [
+            {
+              'external-ids': {
+                'external-id': [
+                  rawId('doi', '10.1186/S13063-025-09270-2', {
+                    normalized: '10.1186/s13063-025-09270-2',
+                    url: 'https://doi.org/10.1186/S13063-025-09270-2',
+                  }),
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const [work] = normalizeWorks(raw, ORCID_ID);
+    assert(work);
+    expect(work.externalIds).toEqual([
+      {
+        type: 'doi',
+        value: '10.1186/S13063-025-09270-2',
+        url: 'https://doi.org/10.1186/S13063-025-09270-2',
+        relationship: 'self',
+      },
+      { type: 'wosuid', value: 'WOS:001654148000001', relationship: 'self' },
+    ]);
+  });
+
+  it('matches on the trimmed raw value when ORCID sends no normalized value', () => {
+    const raw: RawWorksResponse = {
+      group: [
+        {
+          'external-ids': {
+            'external-id': [
+              { 'external-id-type': 'pmid', 'external-id-value': ' 22745249 ' },
+              { 'external-id-type': 'pmid', 'external-id-value': '99999999' },
+            ],
+          },
+          'work-summary': [
+            {
+              'external-ids': {
+                'external-id': [{ 'external-id-type': 'pmid', 'external-id-value': '22745249' }],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const [work] = normalizeWorks(raw, ORCID_ID);
+    assert(work);
+    expect(work.externalIds).toEqual([
+      { type: 'pmid', value: '22745249' },
+      { type: 'pmid', value: '99999999' },
+    ]);
+  });
+
+  it('keeps a group-level self identifier that shares a value with a part-of identifier', () => {
+    const raw: RawWorksResponse = {
+      group: [
+        {
+          'external-ids': { 'external-id': [rawId('isbn', '9780306406157')] },
+          'work-summary': [
+            {
+              'external-ids': {
+                'external-id': [rawId('isbn', '9780306406157', { relationship: 'part-of' })],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const [work] = normalizeWorks(raw, ORCID_ID);
+    assert(work);
+    expect(work.externalIds).toEqual([
+      { type: 'isbn', value: '9780306406157', relationship: 'part-of' },
+      { type: 'isbn', value: '9780306406157', relationship: 'self' },
+    ]);
+  });
+
+  it('returns the representative’s own list unchanged when the group adds nothing new', () => {
+    const own = [
+      rawId('doi', '10.1126/science.aed6123', {
+        url: 'https://doi.org/10.1126/science.aed6123',
+      }),
+      rawId('issn', '0036-8075', { relationship: 'part-of' }),
+      { 'external-id-type': 'pmid', 'external-id-value': '41000000' },
+    ];
+    const expected = [
+      {
+        type: 'doi',
+        value: '10.1126/science.aed6123',
+        url: 'https://doi.org/10.1126/science.aed6123',
+        relationship: 'self',
+      },
+      { type: 'issn', value: '0036-8075', relationship: 'part-of' },
+      { type: 'pmid', value: '41000000' },
+    ];
+    const groupAddsNothing: RawWorksResponse = {
+      group: [
+        {
+          'external-ids': {
+            'external-id': [
+              rawId('doi', '10.1126/science.aed6123'),
+              rawId('issn', '0036-8075', { relationship: 'part-of' }),
+              rawId('source-work-id', 'abc'),
+            ],
+          },
+          'work-summary': [
+            { 'external-ids': { 'external-id': own } },
+            { 'external-ids': { 'external-id': [rawId('doi', '10.1126/science.aed6123')] } },
+          ],
+        },
+      ],
+    };
+    const noGroupList: RawWorksResponse = {
+      group: [{ 'work-summary': [{ 'external-ids': { 'external-id': own } }] }],
+    };
+    const emptyGroupList: RawWorksResponse = {
+      group: [
+        {
+          'external-ids': { 'external-id': [] },
+          'work-summary': [{ 'external-ids': { 'external-id': own } }],
+        },
+      ],
+    };
+
+    for (const raw of [groupAddsNothing, noGroupList, emptyGroupList]) {
+      const [work] = normalizeWorks(raw, ORCID_ID);
+      assert(work);
+      expect(work.externalIds).toEqual(expected);
+    }
   });
 });
 
@@ -332,7 +630,7 @@ describe('normalizeActivities', () => {
   };
 
   it('unwraps the singular-type key and returns employment fields', () => {
-    const result = normalizeActivities(raw, ['employment']);
+    const result = normalizeActivities(raw, ['employment'], ORCID_ID);
     expect(result).toHaveLength(1);
     const [employment] = result;
     assert(employment);
@@ -350,14 +648,14 @@ describe('normalizeActivities', () => {
   });
 
   it('returns all types when "all" is requested', () => {
-    const result = normalizeActivities(raw, ['all']);
+    const result = normalizeActivities(raw, ['all'], ORCID_ID);
     const types = result.map((a) => a.type);
     expect(types).toContain('employment');
     expect(types).toContain('education');
   });
 
   it('returns only requested types', () => {
-    const result = normalizeActivities(raw, ['education']);
+    const result = normalizeActivities(raw, ['education'], ORCID_ID);
     expect(result).toHaveLength(1);
     const [education] = result;
     assert(education);
@@ -367,7 +665,7 @@ describe('normalizeActivities', () => {
   });
 
   it('returns empty array when activities section is empty', () => {
-    const result = normalizeActivities({}, ['employment', 'education']);
+    const result = normalizeActivities({}, ['employment', 'education'], ORCID_ID);
     expect(result).toEqual([]);
   });
 
@@ -393,7 +691,7 @@ describe('normalizeActivities', () => {
         },
       } as RawActivities;
 
-      const result = normalizeActivities(payload, [requestedType as 'employment']);
+      const result = normalizeActivities(payload, [requestedType as 'employment'], ORCID_ID);
       expect(result).toHaveLength(1);
       const [affiliation] = result;
       assert(affiliation);
@@ -412,7 +710,7 @@ describe('normalizeActivities', () => {
     } as RawActivities;
 
     // A mis-keyed entry yields nothing rather than a stub carrying only `type`.
-    expect(normalizeActivities(payload, ['employment'])).toEqual([]);
+    expect(normalizeActivities(payload, ['employment'], ORCID_ID)).toEqual([]);
   });
 
   it('preserves absence for a summary with no dates or department', () => {
@@ -441,7 +739,7 @@ describe('normalizeActivities', () => {
       },
     };
 
-    const result = normalizeActivities(payload, ['qualifications']);
+    const result = normalizeActivities(payload, ['qualifications'], ORCID_ID);
     expect(result).toHaveLength(1);
     const [qualification] = result;
     assert(qualification);
@@ -490,7 +788,7 @@ describe('normalizeFundings', () => {
       ],
     };
 
-    const records = normalizeFundings(raw);
+    const records = normalizeFundings(raw, ORCID_ID);
 
     expect(records).toHaveLength(1);
     const [record] = records;
@@ -523,14 +821,190 @@ describe('normalizeFundings', () => {
       ],
     };
 
-    const [record] = normalizeFundings(raw);
+    const [record] = normalizeFundings(raw, ORCID_ID);
     assert(record);
     expect(record.grantNumbers).toEqual([]);
   });
 
   it('returns empty array for empty funding response', () => {
-    expect(normalizeFundings({})).toEqual([]);
-    expect(normalizeFundings({ group: [] })).toEqual([]);
+    expect(normalizeFundings({}, ORCID_ID)).toEqual([]);
+    expect(normalizeFundings({ group: [] }, ORCID_ID)).toEqual([]);
+  });
+
+  /** A funding summary with a year-month date pair, as ORCID emits it. */
+  const fundingVersion = (
+    title: string,
+    start: [string, string] | null,
+    end: [string, string] | null,
+  ) => ({
+    title: { title: { value: title } },
+    type: 'grant',
+    ...(start && { 'start-date': { year: { value: start[0] }, month: { value: start[1] } } }),
+    ...(end && { 'end-date': { year: { value: end[0] }, month: { value: end[1] } } }),
+    organization: { name: 'National Institutes of Health', address: { country: 'US' } },
+    'external-ids': {
+      'external-id': [{ 'external-id-type': 'grant_number', 'external-id-value': 'EY06338 NEI' }],
+    },
+  });
+
+  it('returns one record per funding group, listing distinct award periods by start date', () => {
+    // Mirrors the live EY06338 NEI group on 0000-0002-3489-8176: three researcher-entered
+    // versions of one grant, the preferred one first, one with a variant title.
+    const raw: RawFundingsResponse = {
+      group: [
+        {
+          'funding-summary': [
+            fundingVersion(
+              'Dopamine and alpha-2 agonists: Potential anti glaucoma drugs',
+              ['1991', '08'],
+              ['1994', '07'],
+            ),
+            fundingVersion(
+              'Dopamine and alpha-2 agonists: Potential anti glaucoma drugs',
+              ['1985', '01'],
+              null,
+            ),
+            fundingVersion(
+              'Dopamine and a-2 and 11 agonists: Potential anti glaucoma drugs',
+              ['1994', '08'],
+              ['1998', '07'],
+            ),
+          ],
+        },
+        {
+          'funding-summary': [
+            {
+              title: { title: { value: 'Unrelated award' } },
+              'start-date': { year: { value: '2001' } },
+              'external-ids': {
+                'external-id': [{ 'external-id-type': 'grant_number', 'external-id-value': 'X1' }],
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const records = normalizeFundings(raw, ORCID_ID);
+
+    expect(records).toHaveLength(2);
+    const [grant, other] = records;
+    assert(grant && other);
+    expect(grant).toEqual({
+      title: 'Dopamine and alpha-2 agonists: Potential anti glaucoma drugs',
+      type: 'grant',
+      funder: { name: 'National Institutes of Health', country: 'US' },
+      startDate: '1991-08',
+      endDate: '1994-07',
+      grantNumbers: ['EY06338 NEI'],
+      periods: [
+        { startDate: '1985-01' },
+        { startDate: '1991-08', endDate: '1994-07' },
+        { startDate: '1994-08', endDate: '1998-07' },
+      ],
+      sources: [],
+    });
+    expect(other.periods).toBeUndefined();
+  });
+
+  it('collapses a duplicate deposit to one record without periods', () => {
+    // Mirrors 0000-0002-1665-4768: DimensionsWizard deposited each grant twice, identically.
+    const deposit = {
+      title: { title: { value: 'CDC2 MODULATORS--NIM1 AND WEE1' } },
+      type: 'grant',
+      'start-date': { year: { value: '1992' }, month: { value: '09' }, day: { value: '30' } },
+      'end-date': null,
+      organization: { name: 'National Institute of General Medical Sciences' },
+      'external-ids': {
+        'external-id': [{ 'external-id-type': 'grant_number', 'external-id-value': 'F32GM015204' }],
+      },
+      url: { value: 'https://grants.uberresearch.com/100000057/F32GM015204' },
+    };
+    const raw = {
+      group: [{ 'funding-summary': [{ ...deposit }, { ...deposit }] }],
+    } as unknown as RawFundingsResponse;
+
+    const records = normalizeFundings(raw, ORCID_ID);
+
+    expect(records).toHaveLength(1);
+    const [record] = records;
+    assert(record);
+    expect(record.grantNumbers).toEqual(['F32GM015204']);
+    expect(record.startDate).toBe('1992-09-30');
+    expect(record.url).toBe('https://grants.uberresearch.com/100000057/F32GM015204');
+    expect(record.periods).toBeUndefined();
+  });
+
+  it('takes every field from the preferred version, and counts only dated versions as periods', () => {
+    const raw: RawFundingsResponse = {
+      group: [
+        {
+          'funding-summary': [
+            {
+              title: { title: { value: 'Training grant appointment' } },
+              type: 'salary-award',
+              'start-date': { year: { value: '2016' }, month: { value: '07' } },
+              'end-date': { year: { value: '2017' }, month: { value: '06' } },
+              organization: { name: 'NIGMS' },
+              'external-ids': {
+                'external-id': [
+                  { 'external-id-type': 'grant_number', 'external-id-value': 'T32GM008231' },
+                ],
+              },
+              url: { value: 'https://example.org/appointment' },
+            },
+            {
+              title: { title: { value: 'Whole training program' } },
+              type: 'grant',
+              'start-date': { year: { value: '1990' }, month: { value: '07' } },
+              'end-date': { year: { value: '2020' }, month: { value: '06' } },
+              organization: { name: 'National Institute of General Medical Sciences' },
+              'external-ids': {
+                'external-id': [
+                  { 'external-id-type': 'grant_number', 'external-id-value': 'T32GM008231-30' },
+                ],
+              },
+              url: { value: 'https://example.org/program' },
+            },
+            // Neither date: contributes no period.
+            { title: { title: { value: 'Undated version' } }, 'external-ids': {} },
+          ],
+        },
+      ],
+    };
+
+    const [record] = normalizeFundings(raw, ORCID_ID);
+    assert(record);
+    expect(record.title).toBe('Training grant appointment');
+    expect(record.type).toBe('salary-award');
+    expect(record.funder).toEqual({ name: 'NIGMS' });
+    expect(record.startDate).toBe('2016-07');
+    expect(record.endDate).toBe('2017-06');
+    expect(record.grantNumbers).toEqual(['T32GM008231']);
+    expect(record.url).toBe('https://example.org/appointment');
+    expect(record.periods).toEqual([
+      { startDate: '1990-07', endDate: '2020-06' },
+      { startDate: '2016-07', endDate: '2017-06' },
+    ]);
+  });
+
+  it('omits periods when only one version carries a date', () => {
+    const raw: RawFundingsResponse = {
+      group: [
+        {
+          'funding-summary': [
+            { 'start-date': { year: { value: '2010' } }, 'external-ids': {} },
+            { title: { title: { value: 'Undated' } }, 'external-ids': {} },
+          ],
+        },
+      ],
+    };
+    const records = normalizeFundings(raw, ORCID_ID);
+    expect(records).toHaveLength(1);
+    const [record] = records;
+    assert(record);
+    expect(record.startDate).toBe('2010');
+    expect(record.periods).toBeUndefined();
   });
 });
 
@@ -578,7 +1052,7 @@ describe('normalizePeerReviews', () => {
       ],
     };
 
-    const reviews = normalizePeerReviews(raw);
+    const reviews = normalizePeerReviews(raw, ORCID_ID);
 
     expect(reviews).toHaveLength(1);
     const [review] = reviews;
@@ -621,7 +1095,7 @@ describe('normalizePeerReviews', () => {
       ],
     };
 
-    const reviews = normalizePeerReviews(raw);
+    const reviews = normalizePeerReviews(raw, ORCID_ID);
     expect(reviews).toHaveLength(1);
     const [review] = reviews;
     assert(review);
@@ -630,8 +1104,8 @@ describe('normalizePeerReviews', () => {
   });
 
   it('returns empty array for sparse peer reviews response', () => {
-    expect(normalizePeerReviews({})).toEqual([]);
-    expect(normalizePeerReviews({ group: [] })).toEqual([]);
+    expect(normalizePeerReviews({}, ORCID_ID)).toEqual([]);
+    expect(normalizePeerReviews({ group: [] }, ORCID_ID)).toEqual([]);
   });
 
   it('omits groupIssn when the group carries no external ids', () => {
@@ -643,7 +1117,7 @@ describe('normalizePeerReviews', () => {
         },
       ],
     };
-    const [review] = normalizePeerReviews(raw);
+    const [review] = normalizePeerReviews(raw, ORCID_ID);
     assert(review);
     expect(review.groupIssn).toBeUndefined();
   });
@@ -752,7 +1226,7 @@ describe('normalizeBulkWorks', () => {
       ],
     };
 
-    const results = normalizeBulkWorks(raw);
+    const results = normalizeBulkWorks(raw, ORCID_ID);
 
     expect(results).toHaveLength(2);
     const [first, second] = results;
@@ -781,7 +1255,7 @@ describe('normalizeBulkWorks', () => {
       ],
     };
 
-    const results = normalizeBulkWorks(raw);
+    const results = normalizeBulkWorks(raw, ORCID_ID);
 
     expect(results).toHaveLength(1);
     const [entry] = results;
@@ -812,7 +1286,7 @@ describe('normalizeBulkWorks', () => {
       ],
     };
 
-    const results = normalizeBulkWorks(raw);
+    const results = normalizeBulkWorks(raw, ORCID_ID);
 
     expect(results).toHaveLength(2);
     const [workEntry, errorEntry] = results;
@@ -839,7 +1313,7 @@ describe('normalizeBulkWorks', () => {
       ],
     };
 
-    const results = normalizeBulkWorks(raw);
+    const results = normalizeBulkWorks(raw, ORCID_ID);
     expect((results[0] as { putCode?: number }).putCode).toBe(123);
   });
 
@@ -848,7 +1322,7 @@ describe('normalizeBulkWorks', () => {
       bulk: [{ error: { 'error-code': 9042 } }],
     };
 
-    const [entry] = normalizeBulkWorks(raw);
+    const [entry] = normalizeBulkWorks(raw, ORCID_ID);
     assert(entry);
     expect(entry.type).toBe('error');
     expect((entry as { message: string }).message).toContain('9042');
@@ -856,7 +1330,7 @@ describe('normalizeBulkWorks', () => {
   });
 
   it('returns an empty array for an empty bulk response', () => {
-    expect(normalizeBulkWorks({})).toEqual([]);
-    expect(normalizeBulkWorks({ bulk: [] })).toEqual([]);
+    expect(normalizeBulkWorks({}, ORCID_ID)).toEqual([]);
+    expect(normalizeBulkWorks({ bulk: [] }, ORCID_ID)).toEqual([]);
   });
 });

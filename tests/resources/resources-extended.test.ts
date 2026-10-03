@@ -1,6 +1,6 @@
 /**
- * @fileoverview Extended resource tests: param validation, URI prefix stripping,
- * and missing-field edge cases for researcher-profile and researcher-works resources.
+ * @fileoverview Extended resource tests: bare-iD param validation and missing-field
+ * edge cases for researcher-profile and researcher-works resources.
  * @module tests/resources/resources-extended.test
  */
 
@@ -49,12 +49,18 @@ describe('researcherProfileResource — param validation', () => {
     ).not.toThrow();
   });
 
-  it('accepts full URI form', () => {
+  it('accepts a bare iD with a lowercase x checksum (#57)', () => {
+    expect(() =>
+      researcherProfileResource.params!.parse({ orcid_id: '0000-0002-9079-593x' }),
+    ).not.toThrow();
+  });
+
+  it('rejects the full URI form — a URI segment cannot carry a slash (#57)', () => {
     expect(() =>
       researcherProfileResource.params!.parse({
         orcid_id: 'https://orcid.org/0000-0002-1825-0097',
       }),
-    ).not.toThrow();
+    ).toThrow();
   });
 });
 
@@ -71,6 +77,7 @@ describe('researcherProfileResource — output', () => {
     mockGetPerson.mockResolvedValueOnce({
       givenNames: 'Jennifer',
       familyName: 'Doudna',
+      otherNames: [],
       biography: 'Biochemist specializing in RNA structure and CRISPR.',
       keywords: [],
       researcherUrls: [],
@@ -79,7 +86,7 @@ describe('researcherProfileResource — output', () => {
       countries: [],
     });
 
-    const ctx = createMockContext({ tenantId: 'test-tenant' });
+    const ctx = createMockContext({ errors: researcherProfileResource.errors });
     const params = researcherProfileResource.params!.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await researcherProfileResource.handler(params, ctx);
 
@@ -90,6 +97,7 @@ describe('researcherProfileResource — output', () => {
     mockGetPerson.mockResolvedValueOnce({
       givenNames: 'Josiah',
       familyName: 'Carberry',
+      otherNames: [],
       keywords: [],
       researcherUrls: [],
       externalIdentifiers: [],
@@ -97,7 +105,7 @@ describe('researcherProfileResource — output', () => {
       countries: [],
     });
 
-    const ctx = createMockContext({ tenantId: 'test-tenant' });
+    const ctx = createMockContext({ errors: researcherProfileResource.errors });
     const params = researcherProfileResource.params!.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await researcherProfileResource.handler(params, ctx);
 
@@ -108,6 +116,7 @@ describe('researcherProfileResource — output', () => {
     mockGetPerson.mockResolvedValueOnce({
       givenNames: 'Jennifer',
       familyName: 'Doudna',
+      otherNames: [],
       keywords: [],
       researcherUrls: [],
       externalIdentifiers: [],
@@ -115,7 +124,7 @@ describe('researcherProfileResource — output', () => {
       countries: [],
     });
 
-    const ctx = createMockContext({ tenantId: 'test-tenant' });
+    const ctx = createMockContext({ errors: researcherProfileResource.errors });
     const params = researcherProfileResource.params!.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await researcherProfileResource.handler(params, ctx);
 
@@ -126,6 +135,7 @@ describe('researcherProfileResource — output', () => {
     mockGetPerson.mockResolvedValueOnce({
       givenNames: 'Jennifer',
       familyName: 'Doudna',
+      otherNames: [],
       keywords: ['CRISPR', 'RNA Biology', 'Genome Editing'],
       researcherUrls: [],
       externalIdentifiers: [],
@@ -133,7 +143,7 @@ describe('researcherProfileResource — output', () => {
       countries: [],
     });
 
-    const ctx = createMockContext({ tenantId: 'test-tenant' });
+    const ctx = createMockContext({ errors: researcherProfileResource.errors });
     const params = researcherProfileResource.params!.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await researcherProfileResource.handler(params, ctx);
 
@@ -144,6 +154,7 @@ describe('researcherProfileResource — output', () => {
     mockGetPerson.mockResolvedValueOnce({
       givenNames: 'Jennifer',
       familyName: 'Doudna',
+      otherNames: [],
       keywords: [],
       researcherUrls: [
         { name: 'Lab', url: 'https://doudnalab.org' },
@@ -154,7 +165,7 @@ describe('researcherProfileResource — output', () => {
       countries: [],
     });
 
-    const ctx = createMockContext({ tenantId: 'test-tenant' });
+    const ctx = createMockContext({ errors: researcherProfileResource.errors });
     const params = researcherProfileResource.params!.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await researcherProfileResource.handler(params, ctx);
 
@@ -203,7 +214,7 @@ describe('researcherWorksResource — output', () => {
       { title: 'Work C', externalIds: [] },
     ]);
 
-    const ctx = createMockContext({ tenantId: 'test-tenant' });
+    const ctx = createMockContext({ errors: researcherWorksResource.errors });
     const params = researcherWorksResource.params!.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await researcherWorksResource.handler(params, ctx);
 
@@ -220,7 +231,7 @@ describe('researcherWorksResource — output', () => {
       },
     ]);
 
-    const ctx = createMockContext({ tenantId: 'test-tenant' });
+    const ctx = createMockContext({ errors: researcherWorksResource.errors });
     const params = researcherWorksResource.params!.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await researcherWorksResource.handler(params, ctx);
 
@@ -236,7 +247,7 @@ describe('researcherWorksResource — output', () => {
       },
     ]);
 
-    const ctx = createMockContext({ tenantId: 'test-tenant' });
+    const ctx = createMockContext({ errors: researcherWorksResource.errors });
     const params = researcherWorksResource.params!.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await researcherWorksResource.handler(params, ctx);
 
@@ -253,7 +264,7 @@ describe('researcherWorksResource — output', () => {
       },
     ]);
 
-    const ctx = createMockContext({ tenantId: 'test-tenant' });
+    const ctx = createMockContext({ errors: researcherWorksResource.errors });
     const params = researcherWorksResource.params!.parse({ orcid_id: '0000-0002-1825-0097' });
     const result = await researcherWorksResource.handler(params, ctx);
 

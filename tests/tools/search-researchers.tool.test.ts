@@ -307,6 +307,252 @@ describe('orcidSearchResearchers', () => {
   });
 });
 
+describe('orcidSearchResearchers — rendered page shape (characterization)', () => {
+  it('renders the header and every record block exactly', () => {
+    const output = orcidSearchResearchers.output.parse({
+      results: [
+        {
+          orcidId: '0000-0001-9161-999X',
+          orcidUri: 'https://orcid.org/0000-0001-9161-999X',
+          givenNames: 'Jennifer',
+          familyNames: 'Doudna',
+          creditName: 'Jennifer A. Doudna',
+          otherNames: ['J. A. Doudna', 'Jennifer Anne Doudna'],
+          institutionNames: ['University of California, Berkeley', 'Gladstone Institutes'],
+        },
+        {
+          orcidId: '0000-0002-1825-0097',
+          orcidUri: 'https://orcid.org/0000-0002-1825-0097',
+          otherNames: [],
+          institutionNames: [],
+        },
+      ],
+      rows: 2,
+      start: 40,
+      nextStart: 42,
+    });
+
+    const blocks = orcidSearchResearchers.format!(output);
+    expect(blocks).toEqual([
+      {
+        type: 'text',
+        text: [
+          '## ORCID Search Results',
+          '**Returned:** 2 | **Offset:** 40',
+          '**Next Start:** 42',
+          '',
+          '### Jennifer A. Doudna',
+          '**ORCID iD:** 0000-0001-9161-999X',
+          '**ORCID URI:** https://orcid.org/0000-0001-9161-999X',
+          '**Name:** Jennifer Doudna',
+          '**Credit Name:** Jennifer A. Doudna',
+          '**Other Names:** J. A. Doudna, Jennifer Anne Doudna',
+          '**Institutions:** University of California, Berkeley; Gladstone Institutes',
+          '',
+          '### 0000-0002-1825-0097',
+          '**ORCID iD:** 0000-0002-1825-0097',
+          '**ORCID URI:** https://orcid.org/0000-0002-1825-0097',
+          '',
+        ].join('\n'),
+      },
+    ]);
+  });
+
+  it('returns an uncut default page with both surfaces intact', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({
+      numFound: 24,
+      results: Array.from({ length: 20 }, (_, i) => ({
+        orcidId: `0000-0000-0001-${String(i).padStart(4, '0')}`,
+        givenNames: 'Jane',
+        familyNames: 'Smith',
+        otherNames: [],
+        emails: [],
+        institutionNames: ['Example University'],
+      })),
+    });
+
+    const result = await runToolContract(orcidSearchResearchers, { family_name: 'Smith' });
+    const structured = result.structuredContent as {
+      results: unknown[];
+      rows: number;
+      start: number;
+      nextStart?: number;
+      numFound: number;
+      truncated: boolean;
+      notice?: string;
+    };
+
+    expect(structured.results).toHaveLength(20);
+    expect(structured).toMatchObject({
+      rows: 20,
+      start: 0,
+      nextStart: 20,
+      numFound: 24,
+      truncated: false,
+    });
+    expect(structured.notice).toBeUndefined();
+    expect(contentText(result)).toContain('**Returned:** 20 | **Offset:** 0\n**Next Start:** 20');
+    expect(contentText(result)).toContain('**Total Found:** 24');
+  });
+});
+
+describe('orcidSearchResearchers — response byte budget (#54)', () => {
+  const BUDGET = 64_000;
+  const bytesOf = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
+  const textBytes = (result: { content: readonly { type: string }[] }) =>
+    Buffer.byteLength(
+      result.content
+        .flatMap((block) => ('text' in block && typeof block.text === 'string' ? [block.text] : []))
+        .join(''),
+    );
+
+  type Researcher = {
+    orcidId: string;
+    givenNames?: string;
+    familyNames?: string;
+    creditName?: string;
+    otherNames: string[];
+    emails: string[];
+    institutionNames: string[];
+  };
+
+  /** A registry of `total` researchers whose record size varies with the index. */
+  function registry(total: number, nameless = false): Researcher[] {
+    return Array.from({ length: total }, (_, i) => ({
+      orcidId: `0000-0000-${String(Math.floor(i / 10_000)).padStart(4, '0')}-${String(i % 10_000).padStart(4, '0')}`,
+      ...(!nameless && i % 7 !== 0 && { givenNames: `Given${i}` }),
+      ...(!nameless && { familyNames: 'Smith' }),
+      ...(!nameless && i % 5 === 0 && { creditName: `G. Smith ${i}` }),
+      otherNames: !nameless && i % 3 === 0 ? [`Alias ${i}`] : [],
+      emails: [],
+      institutionNames: nameless
+        ? []
+        : Array.from({ length: i % 6 }, (_, k) => `Institution ${k} of record ${i}`),
+    }));
+  }
+
+  /** Serve `records` the way ORCID pages them: a slice at `start` of at most `rows`. */
+  function serve(records: Researcher[], numFound = records.length) {
+    mockExpandedSearch.mockImplementation(
+      async ({ rows, start }: { rows: number; start: number }) => ({
+        numFound,
+        results: records.slice(start, start + rows),
+      }),
+    );
+  }
+
+  type Page = {
+    results: { orcidId: string }[];
+    rows: number;
+    start: number;
+    nextStart?: number;
+    numFound: number;
+    truncated: boolean;
+    notice?: string;
+  };
+
+  it('cuts a 1,000-row page to fit both surfaces and continues exactly where it stopped', async () => {
+    const records = registry(2_500);
+    serve(records);
+
+    const first = await runToolContract(orcidSearchResearchers, {
+      family_name: 'Smith',
+      rows: 1000,
+    });
+    const page1 = first.structuredContent as Page;
+
+    expect(first.isError).toBeFalsy();
+    expect(bytesOf(first.structuredContent)).toBeLessThanOrEqual(BUDGET);
+    expect(textBytes(first)).toBeLessThanOrEqual(BUDGET);
+    expect(page1.rows).toBe(page1.results.length);
+    expect(page1.rows).toBeGreaterThan(0);
+    expect(page1.rows).toBeLessThan(1000);
+    expect(page1.nextStart).toBe(page1.start + page1.rows);
+    expect(page1.numFound).toBe(2_500);
+    expect(page1.truncated).toBe(false);
+    expect(contentText(first)).toContain(`**Returned:** ${page1.rows} | **Offset:** 0`);
+
+    const second = await runToolContract(orcidSearchResearchers, {
+      family_name: 'Smith',
+      rows: 1000,
+      start: page1.nextStart,
+    });
+    const page2 = second.structuredContent as Page;
+
+    expect(bytesOf(second.structuredContent)).toBeLessThanOrEqual(BUDGET);
+    expect(textBytes(second)).toBeLessThanOrEqual(BUDGET);
+    const ids1 = page1.results.map((r) => r.orcidId);
+    const ids2 = page2.results.map((r) => r.orcidId);
+    expect(ids1.filter((id) => ids2.includes(id))).toEqual([]);
+    // Together the two pages are one contiguous read of the upstream order.
+    expect([...ids1, ...ids2]).toEqual(
+      records.slice(0, page1.rows + page2.rows).map((r) => r.orcidId),
+    );
+    expect(page2.nextStart).toBe(page2.start + page2.rows);
+  });
+
+  it('holds the text surface to the budget when records render as large as their JSON', async () => {
+    // Name-less records render their iD as the heading, so text and JSON run neck and neck.
+    serve(registry(1_000, true), 24_632);
+
+    const result = await runToolContract(orcidSearchResearchers, {
+      query: 'email:*example.edu',
+      rows: 1000,
+    });
+    const page = result.structuredContent as Page;
+
+    expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(BUDGET);
+    expect(textBytes(result)).toBeLessThanOrEqual(BUDGET);
+    expect(page.rows).toBeLessThan(1000);
+    expect(page.nextStart).toBe(page.rows);
+    // The ceiling notice still rides the cut page, and truncated keeps its ceiling meaning.
+    expect(page.truncated).toBe(true);
+    expect(page.notice).toContain('10,000');
+  });
+
+  it('always returns the first record, however large', async () => {
+    serve([
+      {
+        orcidId: '0000-0000-0000-0001',
+        familyNames: 'Smith',
+        otherNames: [],
+        emails: [],
+        // ~100 KB on its own — past the budget before any other record is considered.
+        institutionNames: Array.from(
+          { length: 2_500 },
+          (_, k) => `Institution number ${k} of many`,
+        ),
+      },
+      ...registry(5),
+    ]);
+
+    const result = await runToolContract(orcidSearchResearchers, { family_name: 'Smith' });
+    const page = result.structuredContent as Page;
+
+    expect(bytesOf(result.structuredContent)).toBeGreaterThan(BUDGET);
+    expect(page.rows).toBe(1);
+    expect(page.results[0]?.orcidId).toBe('0000-0000-0000-0001');
+    expect(page.nextStart).toBe(1);
+  });
+
+  it('omits nextStart when a cut page reaches neither more matches nor a legal offset', async () => {
+    // A cut at start 9,990 still continues at most to the 10,000 ceiling.
+    const records = registry(11_000);
+    serve(records, 24_632);
+
+    const result = await runToolContract(orcidSearchResearchers, {
+      family_name: 'Smith',
+      rows: 1000,
+      start: 9_990,
+    });
+    const page = result.structuredContent as Page;
+
+    expect(page.rows).toBeLessThan(1000);
+    expect(page.rows).toBeGreaterThan(10);
+    expect(page.nextStart).toBeUndefined();
+  });
+});
+
 describe('orcidSearchResearchers — blank input is rejected at the schema (#34)', () => {
   it.each([
     ['no field at all', {}],

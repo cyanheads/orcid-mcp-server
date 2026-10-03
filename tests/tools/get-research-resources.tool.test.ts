@@ -4,7 +4,7 @@
  */
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { assert, beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetResearchResources } from '@/mcp-server/tools/definitions/get-research-resources.tool.js';
 
@@ -49,8 +49,29 @@ const sampleResources = [
     startDate: '2025-01-24',
     endDate: '2026-01-23',
     url: 'https://www.xras.org/public/requests/195990-ACCESS-CIS250068',
+    sources: [{ name: 'ACCESS', selfAsserted: false }],
   },
 ];
+
+describe('orcidGetResearchResources sources', () => {
+  it('carries the depositing system on both result surfaces', async () => {
+    mockGetResearchResources.mockResolvedValueOnce([
+      { putCode: 8093, externalIds: [], sources: [{ name: 'ACCESS', selfAsserted: false }] },
+    ]);
+
+    const result = await runToolContract(orcidGetResearchResources, {
+      orcid_id: '0000-0002-4788-2309',
+    });
+
+    expect(result.isError).toBeFalsy();
+    const structured = result.structuredContent as {
+      resources: { sources: { name?: string; selfAsserted: boolean }[] }[];
+    };
+    expect(structured.resources[0]?.sources).toEqual([{ name: 'ACCESS', selfAsserted: false }]);
+    const text = result.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
+    expect(text).toContain('**Sources:** ACCESS');
+  });
+});
 
 describe('orcidGetResearchResources', () => {
   beforeEach(() => {
@@ -106,17 +127,17 @@ describe('orcidGetResearchResources', () => {
       new McpError(JsonRpcErrorCode.NotFound, 'ORCID returned HTTP 404 Not Found.'),
     );
 
-    const ctx = createMockContext({ errors: orcidGetResearchResources.errors });
-    const input = orcidGetResearchResources.input.parse({ orcid_id: '0000-0000-0000-0001' });
-    const error = await Promise.resolve(orcidGetResearchResources.handler(input, ctx)).catch(
-      (e: unknown) => e,
-    );
+    const result = await runToolContract(orcidGetResearchResources, {
+      orcid_id: '0000-0000-0000-0001',
+    });
 
-    expect(error).toBeInstanceOf(McpError);
-    expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
-    const data = (error as McpError).data as { reason?: string; recovery?: { hint?: string } };
-    expect(data.reason).toBe('profile_not_found');
-    expect(data.recovery?.hint).toBeDefined();
+    expect(result.isError).toBe(true);
+    const { error } = result.structuredContent as {
+      error: { code: number; data: { reason: string; recovery: { hint: string } } };
+    };
+    expect(error.code).toBe(JsonRpcErrorCode.NotFound);
+    expect(error.data.reason).toBe('profile_not_found');
+    expect(error.data.recovery.hint).toContain('orcid_search_researchers');
     expect(mockGetResearchResources).toHaveBeenCalledTimes(1);
     expect(mockGetPerson).toHaveBeenCalledTimes(1);
   });
@@ -136,6 +157,7 @@ describe('orcidGetResearchResources', () => {
     const sparseResource = {
       putCode: 1234,
       externalIds: [],
+      sources: [],
     };
     mockGetResearchResources.mockResolvedValueOnce([sparseResource]);
 
@@ -167,21 +189,21 @@ describe('orcidGetResearchResources', () => {
     expect(result.orcidId).toBe('0000-0002-4788-2309');
   });
 
-  it('throws profile_not_found on 404', async () => {
+  it('fails with profile_not_found and the contract recovery hint on 404', async () => {
     mockGetResearchResources.mockRejectedValueOnce(
       new McpError(JsonRpcErrorCode.NotFound, 'ORCID returned HTTP 404 Not Found.'),
     );
 
-    const ctx = createMockContext({ errors: orcidGetResearchResources.errors });
-    const input = orcidGetResearchResources.input.parse({ orcid_id: '0000-0000-0000-0001' });
-    const error = await Promise.resolve(orcidGetResearchResources.handler(input, ctx)).catch(
-      (e: unknown) => e,
-    );
-    expect(error).toBeInstanceOf(McpError);
-    expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
-    const data = (error as McpError).data as { reason?: string; recovery?: { hint?: string } };
-    expect(data.reason).toBe('profile_not_found');
-    expect(data.recovery?.hint).toBeDefined();
+    const result = await runToolContract(orcidGetResearchResources, {
+      orcid_id: '0000-0000-0000-0001',
+    });
+    expect(result.isError).toBe(true);
+    const { error } = result.structuredContent as {
+      error: { code: number; data: { reason: string; recovery: { hint: string } } };
+    };
+    expect(error.code).toBe(JsonRpcErrorCode.NotFound);
+    expect(error.data.reason).toBe('profile_not_found');
+    expect(error.data.recovery.hint).toContain('orcid_search_researchers');
   });
 
   it('propagates non-404 service errors', async () => {
@@ -224,6 +246,7 @@ describe('orcidGetResearchResources', () => {
           startDate: '2025-01-24',
           endDate: '2026-01-23',
           url: 'https://www.xras.org/public/requests/195990',
+          sources: [{ name: 'ACCESS', selfAsserted: false }],
         },
       ],
     });
@@ -264,7 +287,7 @@ describe('orcidGetResearchResources', () => {
       orcidId: '0000-0002-4788-2309',
       orcidUri: 'https://orcid.org/0000-0002-4788-2309',
       resourceCount: 1,
-      resources: [{ putCode: 1, externalIds: [] }],
+      resources: [{ putCode: 1, externalIds: [], sources: [] }],
     });
 
     const blocks = orcidGetResearchResources.format!(output);

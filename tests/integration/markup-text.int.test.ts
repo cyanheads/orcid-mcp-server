@@ -78,7 +78,7 @@ describe('markup in ORCID free text', () => {
     const text = textOf(result);
     expect(text).toContain(`## ${CLEAN_TITLE}`);
     expect(text).toContain('**Subtitle:** in Arabidopsis');
-    expect(text).toContain('**Abstract:** Background Group I introns. Results Heavy atoms.');
+    expect(text).toContain('**Abstract:**\n> Background Group I introns. Results Heavy atoms.');
     // The citation renders verbatim inside its fenced block — the only markup left.
     expect(text).toContain(`\`\`\`\n${MARKUP_BIBTEX}\n\`\`\``);
     expect(text.replace(MARKUP_BIBTEX, '')).not.toMatch(/<\/?(i|h4)>/);
@@ -103,7 +103,7 @@ describe('markup in ORCID free text', () => {
   });
 
   it('the works resource returns the cleaned title', async () => {
-    const ctx = createMockContext({ tenantId: 'test-tenant' });
+    const ctx = createMockContext({ errors: researcherWorksResource.errors });
     const params = researcherWorksResource.params!.parse({ orcid_id: MARKUP_ID });
     const result = await researcherWorksResource.handler(params, ctx);
 

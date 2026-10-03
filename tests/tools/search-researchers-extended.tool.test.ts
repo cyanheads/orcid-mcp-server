@@ -5,8 +5,9 @@
  * @module tests/tools/search-researchers-extended.tool.test
  */
 
+import { z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidSearchResearchers } from '@/mcp-server/tools/definitions/search-researchers.tool.js';
 
@@ -80,7 +81,7 @@ describe('orcidSearchResearchers — Solr clause building', () => {
     expect(callParams.q).toBe('pmid-self:"22745249"');
   });
 
-  it('appends raw query field with AND to structured clauses', async () => {
+  it('appends raw query field with AND, as one group, to structured clauses', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
     const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
@@ -92,9 +93,7 @@ describe('orcidSearchResearchers — Solr clause building', () => {
 
     expect(mockExpandedSearch).toHaveBeenCalled();
     const [callParams] = mockExpandedSearch.mock.calls[0]!;
-    expect(callParams.q).toContain('family-name:"Doudna"');
-    expect(callParams.q).toContain('AND');
-    expect(callParams.q).toContain('email:*berkeley.edu');
+    expect(callParams.q).toBe('family-name:"Doudna" AND (email:*berkeley.edu)');
   });
 
   it('phrase-quotes given_name so multi-word names phrase-match (#9)', async () => {
@@ -148,7 +147,7 @@ describe('orcidSearchResearchers — Solr clause building', () => {
 
     const [callParams] = mockExpandedSearch.mock.calls[0]!;
     expect(callParams.q).toBe(
-      'given-names:"Jennifer" AND family-name:"Doudna" AND affiliation-org-name:"UC Berkeley" AND keyword:"CRISPR" AND ror-org-id:"https\\:\\/\\/ror.org\\/01an7q238" AND doi-self:"10.1126\\/science.1225829" AND pmid-self:"22745249" AND email:*berkeley.edu',
+      'given-names:"Jennifer" AND family-name:"Doudna" AND affiliation-org-name:"UC Berkeley" AND keyword:"CRISPR" AND ror-org-id:"https\\:\\/\\/ror.org\\/01an7q238" AND doi-self:"10.1126\\/science.1225829" AND pmid-self:"22745249" AND (email:*berkeley.edu)',
     );
   });
 
@@ -329,7 +328,7 @@ describe('orcidSearchResearchers — grant_number filter (#42)', () => {
         family_name: 'Doudna',
       }),
     ).toBe(
-      'family-name:"Doudna" AND pmid-self:"22745249" AND grant-numbers:"R01GM123456" AND email:*berkeley.edu',
+      'family-name:"Doudna" AND pmid-self:"22745249" AND grant-numbers:"R01GM123456" AND (email:*berkeley.edu)',
     );
   });
 
@@ -412,6 +411,216 @@ describe('orcidSearchResearchers — DOI/PMID URL forms (#44)', () => {
   });
 });
 
+describe('orcidSearchResearchers — ror_id forms (#55)', () => {
+  const CANONICAL_CLAUSE = 'ror-org-id:"https\\:\\/\\/ror.org\\/00cvxb145"';
+
+  /** The messages of every issue a parse reports, in order. */
+  function issueMessages(raw: Record<string, unknown>): string[] {
+    const result = orcidSearchResearchers.input.safeParse(raw);
+    return result.success ? [] : result.error.issues.map((issue) => issue.message);
+  }
+
+  it.each([
+    '00cvxb145',
+    'ror.org/00cvxb145',
+    'http://ror.org/00cvxb145',
+    'https://www.ror.org/00cvxb145/',
+    'https://ror.org/00CVXB145',
+    ' 00cvxb145 ',
+    'https://ror.org/00cvxb145',
+  ])('compiles %j to the canonical ror-org-id clause', async (rorId) => {
+    expect(await compiledQuery({ ror_id: rorId })).toBe(CANONICAL_CLAUSE);
+  });
+
+  it('rejects a shape-valid ID with wrong check digits with only the check-digit message', () => {
+    expect(issueMessages({ ror_id: 'https://ror.org/00cvxb146' })).toEqual([
+      'The ROR ID is invalid — its check digits do not match. Verify the ID and try again.',
+    ]);
+  });
+
+  it.each([
+    'Stanford University',
+    'grid.168010.e',
+    'https://ror.org/',
+    'HTTPS://ROR.ORG/00cvxb145',
+  ])('rejects %j with only the shape message', (rorId) => {
+    expect(issueMessages({ ror_id: rorId })).toEqual([
+      'Must be a ROR ID: 00cvxb145, ror.org/00cvxb145, or https://ror.org/00cvxb145.',
+    ]);
+  });
+
+  it.each(['', '   '])('treats ror_id %j beside another field as unset', async (rorId) => {
+    expect(await compiledQuery({ ror_id: rorId, family_name: 'Doudna' })).toBe(
+      'family-name:"Doudna"',
+    );
+  });
+
+  it('still rejects a blank ror_id supplied alone with the non-blank-field message', () => {
+    expect(issueMessages({ ror_id: '' })).toEqual([
+      'Provide at least one non-blank search field: given_name, family_name, affiliation, keyword, ror_id, doi, pmid, grant_number, or query.',
+    ]);
+  });
+
+  it('advertises a ror_id JSON Schema that admits exactly what the server accepts', () => {
+    const inputSchema = z.toJSONSchema(orcidSearchResearchers.input) as unknown as {
+      properties: { ror_id: { type: string; pattern: string; anyOf?: unknown } };
+    };
+    const { ror_id: advertised } = inputSchema.properties;
+    expect(advertised.type).toBe('string');
+    expect(advertised.anyOf).toBeUndefined();
+    const pattern = new RegExp(advertised.pattern);
+
+    // Blank, whitespace-only, and padded values are accepted (blank is unset), so the schema
+    // a form-based client validates against must admit them too.
+    for (const value of ['', '   ', ' 05gq02987 ', '00cvxb145', 'https://www.ror.org/00CVXB145/']) {
+      expect(pattern.test(value), value).toBe(true);
+      expect(
+        orcidSearchResearchers.input.safeParse({ ror_id: value, family_name: 'Doudna' }).success,
+      ).toBe(true);
+    }
+    // The shape rejections stay in the advertised grammar.
+    for (const value of [
+      'Stanford University',
+      'grid.168010.e',
+      'https://ror.org/',
+      'HTTPS://ROR.ORG/00cvxb145',
+    ]) {
+      expect(pattern.test(value), value).toBe(false);
+    }
+  });
+
+  it('runs no upstream search for a rejected ror_id', async () => {
+    const result = await runToolContract(orcidSearchResearchers, {
+      ror_id: 'https://ror.org/00cvxb146',
+    });
+    expect(result.isError).toBe(true);
+    expect(mockExpandedSearch).not.toHaveBeenCalled();
+  });
+});
+
+describe('orcidSearchResearchers — raw query grouping (#61)', () => {
+  it('groups a top-level OR so its alternatives survive the structured AND', async () => {
+    expect(
+      await compiledQuery({
+        family_name: 'Doudna',
+        query: 'given-names:Jennifer OR given-names:John',
+      }),
+    ).toBe('family-name:"Doudna" AND (given-names:Jennifer OR given-names:John)');
+  });
+
+  it('groups an already-parenthesized query again', async () => {
+    expect(
+      await compiledQuery({
+        family_name: 'Doudna',
+        query: '(given-names:Jennifer OR given-names:John)',
+      }),
+    ).toBe('family-name:"Doudna" AND ((given-names:Jennifer OR given-names:John))');
+  });
+
+  it.each([
+    ['-given-names:John', 'family-name:"Doudna" AND -given-names:John'],
+    ['NOT given-names:John', 'family-name:"Doudna" AND NOT given-names:John'],
+    ['!given-names:John', 'family-name:"Doudna" AND !given-names:John'],
+    [
+      '-given-names:John -given-names:"Mary Ann"',
+      'family-name:"Doudna" AND -given-names:John -given-names:"Mary Ann"',
+    ],
+    [
+      'NOT (given-names:John OR given-names:Jo*)',
+      'family-name:"Doudna" AND NOT (given-names:John OR given-names:Jo*)',
+    ],
+  ])('leaves the exclusion-only query %j ungrouped', async (query, expected) => {
+    expect(await compiledQuery({ family_name: 'Doudna', query })).toBe(expected);
+  });
+
+  it('groups a query that mixes an exclusion with a positive clause', async () => {
+    expect(
+      await compiledQuery({ family_name: 'Doudna', query: '-given-names:John keyword:crispr' }),
+    ).toBe('family-name:"Doudna" AND (-given-names:John keyword:crispr)');
+  });
+
+  it('forwards a query supplied alone byte-for-byte', async () => {
+    expect(await compiledQuery({ query: 'given-names:Jennifer OR given-names:John' })).toBe(
+      'given-names:Jennifer OR given-names:John',
+    );
+    expect(await compiledQuery({ query: '  -given-names:John  ' })).toBe('-given-names:John');
+  });
+});
+
+describe('orcidSearchResearchers — initials-only given_name (#53)', () => {
+  it.each([
+    ['J.', 'given-names:J*'],
+    ['J', 'given-names:J*'],
+    ['j.', 'given-names:j*'],
+    [' J. ', 'given-names:J*'],
+    ['J. A.', 'given-names:J* AND given-names:A*'],
+    ['J.A.', 'given-names:J* AND given-names:A*'],
+    // A decomposed accented initial is sent in its composed form.
+    ['É.', 'given-names:É*'],
+  ])('compiles %j to one prefix term per initial', async (givenName, expected) => {
+    expect(await compiledQuery({ given_name: givenName })).toBe(expected);
+  });
+
+  it.each([
+    ['Mary Ann', 'given-names:"Mary Ann"'],
+    ['J. Ann', 'given-names:"J. Ann"'],
+    ['Jo', 'given-names:"Jo"'],
+    ['伸', 'given-names:"伸"'],
+    ['.', 'given-names:"."'],
+    ['J*', 'given-names:"J\\*"'],
+  ])('keeps any other value %j as a phrase (#9)', async (givenName, expected) => {
+    expect(await compiledQuery({ given_name: givenName })).toBe(expected);
+  });
+
+  it('ANDs the prefix terms ahead of the other structured clauses', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({
+      numFound: 2,
+      results: [
+        {
+          orcidId: '0000-0001-9161-999X',
+          givenNames: 'Jennifer',
+          familyNames: 'Doudna',
+          otherNames: [],
+          emails: [],
+          institutionNames: [],
+        },
+        {
+          orcidId: '0000-0003-0697-2030',
+          givenNames: 'John',
+          familyNames: 'Doudna',
+          otherNames: [],
+          emails: [],
+          institutionNames: [],
+        },
+      ],
+    });
+
+    const result = await runToolContract(orcidSearchResearchers, {
+      given_name: 'J.',
+      family_name: 'Doudna',
+    });
+    const structured = result.structuredContent as {
+      results: { orcidId: string }[];
+      effectiveQuery: string;
+    };
+    const text = result.content
+      .flatMap((block) => ('text' in block && typeof block.text === 'string' ? [block.text] : []))
+      .join('\n');
+
+    expect(mockExpandedSearch.mock.calls[0]![0].q).toBe('given-names:J* AND family-name:"Doudna"');
+    expect(structured.effectiveQuery).toBe('given-names:J* AND family-name:"Doudna"');
+    expect(structured.results.map((r) => r.orcidId)).toEqual([
+      '0000-0001-9161-999X',
+      '0000-0003-0697-2030',
+    ]);
+    expect(text).toContain('**Effective Query:** given-names:J* AND family-name:"Doudna"');
+  });
+
+  it('counts an initials-only given_name as a non-blank search field', () => {
+    expect(orcidSearchResearchers.input.safeParse({ given_name: 'J.' }).success).toBe(true);
+  });
+});
+
 describe('orcidSearchResearchers — Solr value escaping (#18)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -489,29 +698,46 @@ describe('orcidSearchResearchers — query_failed contract (#31)', () => {
       ),
     );
 
-    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
-    const input = orcidSearchResearchers.input.parse({ query: 'family-name:[unclosed' });
-    const err = (await Promise.resolve(orcidSearchResearchers.handler(input, ctx)).catch(
-      (e: unknown) => e,
-    )) as McpError;
+    const result = await runToolContract(orcidSearchResearchers, {
+      query: 'family-name:[unclosed',
+    });
 
-    expect(err).toBeInstanceOf(McpError);
-    expect(err.code).toBe(JsonRpcErrorCode.InvalidParams);
-    const data = err.data as Record<string, unknown>;
+    expect(result.isError).toBe(true);
+    const { error } = result.structuredContent as {
+      error: {
+        code: number;
+        message: string;
+        data: { reason: string; recovery: { hint: string } };
+      };
+    };
+    expect(error.code).toBe(JsonRpcErrorCode.InvalidParams);
+    const { data } = error;
     expect(data.reason).toBe('query_failed');
-    expect((data.recovery as { hint: string }).hint).toContain('query');
+    expect(data.recovery.hint).toContain('query');
     // The submitted query is echoed so the agent can see what it sent.
-    expect(err.message).toContain('family-name:[unclosed');
+    expect(error.message).toContain('family-name:[unclosed');
     // Never the upstream endpoint.
     expect(JSON.stringify(data)).not.toContain('orcid.org');
   });
 
-  it('rethrows a transient upstream failure unchanged so the retryable signal survives', async () => {
-    const upstream = new McpError(
-      JsonRpcErrorCode.ServiceUnavailable,
-      'ORCID returned HTTP 503 Service Unavailable.',
-      { status: 503, retryAfter: '30' },
-    );
+  it.each([
+    [
+      'an outage',
+      new McpError(JsonRpcErrorCode.ServiceUnavailable, 'ORCID returned HTTP 503.', {
+        retryAfter: '30',
+      }),
+    ],
+    [
+      'the request deadline',
+      new McpError(JsonRpcErrorCode.Timeout, 'ORCID request exceeded its 25000ms retry deadline.', {
+        reason: 'retry_deadline_exceeded',
+      }),
+    ],
+    [
+      'a rate limit',
+      new McpError(JsonRpcErrorCode.RateLimited, 'ORCID returned HTTP 429.', { retryAfter: '5' }),
+    ],
+  ])('rethrows %s unchanged so the retryable signal survives', async (_, upstream) => {
     mockExpandedSearch.mockRejectedValueOnce(upstream);
 
     const ctx = createMockContext({ errors: orcidSearchResearchers.errors });

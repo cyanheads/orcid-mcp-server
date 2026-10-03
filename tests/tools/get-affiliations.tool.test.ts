@@ -33,6 +33,7 @@ const sampleAffiliations = [
     department: 'Molecular and Cell Biology',
     role: 'Professor',
     startDate: '2002',
+    sources: [{ name: 'UC Berkeley Research Information System', selfAsserted: false }],
   },
   {
     type: 'education',
@@ -40,8 +41,49 @@ const sampleAffiliations = [
     role: 'PhD',
     startDate: '1985',
     endDate: '1989',
+    sources: [],
   },
 ];
+
+describe('orcidGetAffiliations sources', () => {
+  it('carries who asserted each affiliation on both result surfaces', async () => {
+    mockGetAffiliations.mockResolvedValueOnce([
+      {
+        type: 'employment',
+        organization: { name: 'Oklahoma State University' },
+        sources: [
+          {
+            name: "Oklahoma State University's Research Information Management System",
+            selfAsserted: false,
+          },
+        ],
+      },
+      {
+        type: 'employment',
+        organization: { name: 'Oklahoma State University' },
+        sources: [{ name: 'David Ussery', selfAsserted: true }],
+      },
+    ]);
+
+    const result = await runToolContract(orcidGetAffiliations, { orcid_id: '0000-0003-3632-5512' });
+
+    expect(result.isError).toBeFalsy();
+    const structured = result.structuredContent as {
+      affiliations: { sources: { name?: string; selfAsserted: boolean }[] }[];
+    };
+    expect(structured.affiliations[0]?.sources).toEqual([
+      {
+        name: "Oklahoma State University's Research Information Management System",
+        selfAsserted: false,
+      },
+    ]);
+    const text = result.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
+    expect(text).toContain(
+      "  Sources: Oklahoma State University's Research Information Management System\n",
+    );
+    expect(text).toContain('  Sources: David Ussery (self-asserted)\n');
+  });
+});
 
 describe('orcidGetAffiliations', () => {
   beforeEach(() => {
@@ -166,21 +208,21 @@ describe('orcidGetAffiliations', () => {
     ).not.toThrow();
   });
 
-  it('throws profile_not_found McpError on 404', async () => {
+  it('fails with profile_not_found and the contract recovery hint on 404', async () => {
     mockGetAffiliations.mockRejectedValueOnce(
       new McpError(JsonRpcErrorCode.NotFound, 'ORCID returned HTTP 404 Not Found.'),
     );
 
-    const ctx = createMockContext({ errors: orcidGetAffiliations.errors });
-    const input = orcidGetAffiliations.input.parse({ orcid_id: '0000-0000-0000-0001' });
-    const error = await Promise.resolve(orcidGetAffiliations.handler(input, ctx)).catch(
-      (e: unknown) => e,
-    );
-    expect(error).toBeInstanceOf(McpError);
-    expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
-    const data = (error as McpError).data as { reason?: string; recovery?: { hint?: string } };
-    expect(data.reason).toBe('profile_not_found');
-    expect(data.recovery?.hint).toBeDefined();
+    const result = await runToolContract(orcidGetAffiliations, {
+      orcid_id: '0000-0000-0000-0001',
+    });
+    expect(result.isError).toBe(true);
+    const { error } = result.structuredContent as {
+      error: { code: number; data: { reason: string; recovery: { hint: string } } };
+    };
+    expect(error.code).toBe(JsonRpcErrorCode.NotFound);
+    expect(error.data.reason).toBe('profile_not_found');
+    expect(error.data.recovery.hint).toContain('orcid_search_researchers');
   });
 
   it('formats affiliations grouped by type with org details', () => {
@@ -212,7 +254,9 @@ describe('orcidGetAffiliations', () => {
       orcidId: '0000-0002-1825-0097',
       orcidUri: 'https://orcid.org/0000-0002-1825-0097',
       affiliationCount: 1,
-      affiliations: [{ type: 'qualifications', organization: { name: 'University of Oxford' } }],
+      affiliations: [
+        { type: 'qualifications', organization: { name: 'University of Oxford' }, sources: [] },
+      ],
       requestedTypes: ['qualifications'],
     });
 
@@ -233,6 +277,7 @@ describe('orcidGetAffiliations', () => {
           type: 'employment',
           organization: { name: 'Universität Bielefeld' },
           startDate: '2003-02-01',
+          sources: [],
         },
       ],
       requestedTypes: ['employment'],
@@ -253,6 +298,7 @@ describe('orcidGetAffiliations', () => {
           organization: { name: 'Harvard University' },
           startDate: '1985',
           endDate: '1989',
+          sources: [],
         },
       ],
       requestedTypes: ['education'],

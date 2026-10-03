@@ -1,8 +1,8 @@
 /**
- * @fileoverview Tests for the response byte budget shared by orcid_get_works and
- * orcid_get_work_detail (#36): admission at the exact boundary, the always-admitted first
- * record, the reservation a cut response carries, the larger-surface record cost, and lazy,
- * linear measurement.
+ * @fileoverview Tests for the response byte budget shared by orcid_search_researchers (#54),
+ * orcid_get_works, and orcid_get_work_detail (#36): admission at the exact boundary, the
+ * always-admitted first record, the reservation a cut response carries, the larger-surface
+ * record cost, and lazy, linear measurement.
  * @module tests/tools/response-budget.test
  */
 

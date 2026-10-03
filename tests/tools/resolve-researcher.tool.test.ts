@@ -111,7 +111,8 @@ describe('orcidResolveResearcher', () => {
   });
 
   it('falls back to anchor-only query when name+anchor returns nothing', async () => {
-    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] }); // name + doi
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] }); // other names + doi
     mockExpandedSearch.mockResolvedValueOnce({
       numFound: 1,
       results: [doudnaResult],
@@ -291,11 +292,13 @@ describe('orcidResolveResearcher — count/query pairing (#15)', () => {
     expect(enrichment.primaryTotalFound).toBe(0);
   });
 
-  it('keeps queryUsed/totalFound paired through both relaxed stages in sequence', async () => {
+  it('keeps queryUsed/totalFound paired through every relaxed stage in sequence', async () => {
     // Stage 0 primary (name + doi + affiliation) → 0
     // Stage 1 drop-affiliation (name + doi) → 0
-    // Stage 2 anchor-only (doi) → 4
+    // Stage 2 other names (other-names + doi) → 0
+    // Stage 3 anchor-only (doi) → 4
     mockExpandedSearch
+      .mockResolvedValueOnce({ numFound: 0, results: [] })
       .mockResolvedValueOnce({ numFound: 0, results: [] })
       .mockResolvedValueOnce({ numFound: 0, results: [] })
       .mockResolvedValueOnce({ numFound: 4, results: [doudnaResult] });
@@ -309,8 +312,13 @@ describe('orcidResolveResearcher — count/query pairing (#15)', () => {
     await orcidResolveResearcher.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
 
-    // Three upstream calls: primary, drop-affiliation, anchor-only.
-    expect(mockExpandedSearch).toHaveBeenCalledTimes(3);
+    // Four upstream calls: primary, drop-affiliation, other names, anchor-only.
+    expect(mockExpandedSearch.mock.calls.map(([params]) => params.q)).toEqual([
+      'given-and-family-names:"Jennifer Doudna" AND doi-self:"10.1126\\/science.1225829" AND affiliation-org-name:"University of California Berkeley"',
+      'given-and-family-names:"Jennifer Doudna" AND doi-self:"10.1126\\/science.1225829"',
+      'other-names:"Jennifer Doudna" AND doi-self:"10.1126\\/science.1225829"',
+      'doi-self:"10.1126\\/science.1225829"',
+    ]);
 
     // Effective query is the anchor-only stage that finally matched (DOI slash escaped).
     expect(enrichment.queryUsed).toBe('doi-self:"10.1126\\/science.1225829"');
@@ -331,9 +339,11 @@ describe('orcidResolveResearcher — dual DOI+PMID anchor fallback (#19)', () =>
 
   it('recovers via the PMID anchor when a wrong DOI zeroes the combined query', async () => {
     // Stage 0 combined (name AND doi AND pmid) → 0 because the DOI is wrong.
-    // Stage 1 anchor-only DOI → 0 (still the wrong DOI).
-    // Stage 2 anchor-only PMID → 1 (the valid PMID) — must NOT be discarded.
+    // Stage 1 other names (other-names AND doi AND pmid) → 0.
+    // Stage 2 anchor-only DOI → 0 (still the wrong DOI).
+    // Stage 3 anchor-only PMID → 1 (the valid PMID) — must NOT be discarded.
     mockExpandedSearch
+      .mockResolvedValueOnce({ numFound: 0, results: [] })
       .mockResolvedValueOnce({ numFound: 0, results: [] })
       .mockResolvedValueOnce({ numFound: 0, results: [] })
       .mockResolvedValueOnce({ numFound: 1, results: [doudnaResult] });
@@ -348,8 +358,8 @@ describe('orcidResolveResearcher — dual DOI+PMID anchor fallback (#19)', () =>
     const result = await orcidResolveResearcher.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
 
-    // Three upstream calls: combined primary, DOI-only, PMID-only.
-    expect(mockExpandedSearch).toHaveBeenCalledTimes(3);
+    // Four upstream calls: combined primary, other names, DOI-only, PMID-only.
+    expect(mockExpandedSearch).toHaveBeenCalledTimes(4);
     // The valid PMID anchor produced the candidate and is reported as the anchor used.
     expect(result.candidates).toHaveLength(1);
     expect(result.candidates[0]!.anchorType).toBe('pmid');
@@ -359,8 +369,10 @@ describe('orcidResolveResearcher — dual DOI+PMID anchor fallback (#19)', () =>
 
   it('prefers the DOI anchor and never tries PMID when the DOI matches', async () => {
     // Stage 0 combined (name AND doi AND pmid) → 0 because the PMID is wrong.
-    // Stage 1 anchor-only DOI → matches, so the PMID clause is never queried.
+    // Stage 1 other names (other-names AND doi AND pmid) → 0.
+    // Stage 2 anchor-only DOI → matches, so the PMID clause is never queried.
     mockExpandedSearch
+      .mockResolvedValueOnce({ numFound: 0, results: [] })
       .mockResolvedValueOnce({ numFound: 0, results: [] })
       .mockResolvedValueOnce({ numFound: 2, results: [doudnaResult] });
 
@@ -373,7 +385,7 @@ describe('orcidResolveResearcher — dual DOI+PMID anchor fallback (#19)', () =>
     const result = await orcidResolveResearcher.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
 
-    expect(mockExpandedSearch).toHaveBeenCalledTimes(2); // combined, DOI-only (PMID skipped)
+    expect(mockExpandedSearch).toHaveBeenCalledTimes(3); // combined, other names, DOI-only (PMID skipped)
     expect(result.candidates[0]!.anchorType).toBe('doi');
     expect(enrichment.relaxedQuery).toBe('doi-self:"10.1126\\/science.1225829"');
   });

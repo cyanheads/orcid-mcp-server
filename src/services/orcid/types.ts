@@ -4,9 +4,27 @@
  */
 
 // ---------------------------------------------------------------------------
-// Raw API shapes — all fields optional because ORCID data is self-reported and
-// visibility settings may suppress any section or field.
+// Raw API shapes — all fields optional because each item carries only what its source
+// (the researcher or a member organization) recorded, and visibility settings may
+// suppress any section or field.
 // ---------------------------------------------------------------------------
+
+/** An ORCID iD or member client reference inside a `source` block. */
+export type RawOrcidPathRef = { uri?: string; path?: string; host?: string };
+
+/**
+ * Who added an activity item. Exactly one of `source-orcid` (a person, or a legacy client)
+ * and `source-client-id` (a member organization system) is set. `assertion-origin-*` names
+ * the party the source asserted on behalf of; when absent the source is the assertion origin.
+ */
+export type RawSource = {
+  'source-orcid'?: RawOrcidPathRef | null;
+  'source-client-id'?: RawOrcidPathRef | null;
+  'source-name'?: { value?: string } | null;
+  'assertion-origin-orcid'?: RawOrcidPathRef | null;
+  'assertion-origin-client-id'?: RawOrcidPathRef | null;
+  'assertion-origin-name'?: { value?: string } | null;
+};
 
 /** A date value returned by ORCID (year, month, day all optional). */
 export type OrcidDate = {
@@ -44,6 +62,7 @@ export type RawAffiliationSummary = {
   'end-date'?: OrcidDate | null;
   organization?: RawOrganization | null;
   url?: { value?: string } | null;
+  source?: RawSource | null;
 };
 
 /**
@@ -107,7 +126,9 @@ export type RawActivities = {
 export type RawWorkExternalId = {
   'external-id-type'?: string;
   'external-id-value'?: string;
-  'external-id-url'?: { value?: string };
+  /** ORCID's canonical form of the value (lower-cased DOI, `PMC` prefix stripped). */
+  'external-id-normalized'?: { value?: string; transient?: boolean } | null;
+  'external-id-url'?: { value?: string } | null;
   'external-id-relationship'?: string;
 };
 
@@ -120,6 +141,10 @@ export type RawPerson = {
     'given-names'?: { value?: string };
     'family-name'?: { value?: string };
     'credit-name'?: { value?: string };
+  };
+  /** Listed by descending `display-index`, the order the ORCID record shows them. */
+  'other-names'?: {
+    'other-name'?: Array<{ content?: string; 'display-index'?: number }>;
   };
   biography?: { content?: string };
   keywords?: {
@@ -164,17 +189,18 @@ export type RawWorkSummary = {
   'external-ids'?: {
     'external-id'?: RawWorkExternalId[];
   };
-  source?: {
-    'source-name'?: { value?: string };
-  };
+  source?: RawSource | null;
   visibility?: string;
 };
 
-/** Works group (works are grouped by external ID intersection). */
+/**
+ * Works group — one work, holding one summary per source, preferred version first.
+ * The group-level `external-ids` union the `self` identifiers of every summary.
+ */
 export type RawWorksGroup = {
   'external-ids'?: {
     'external-id'?: RawWorkExternalId[];
-  };
+  } | null;
   'work-summary'?: RawWorkSummary[];
 };
 
@@ -184,7 +210,7 @@ export type RawWorksResponse = {
   'last-modified-date'?: { value?: number };
 };
 
-/** Full work detail as returned by /work/{putCode}. */
+/** Full work detail, as each `work` entry of the bulk `/works/{putCodes}` response carries it. */
 export type RawWorkDetail = {
   'put-code'?: number;
   path?: string;
@@ -212,6 +238,7 @@ export type RawWorkDetail = {
   'language-code'?: string | null;
   country?: { value?: string } | null;
   visibility?: string | null;
+  source?: RawSource | null;
 };
 
 /** Contributor entry from a full work detail record. */
@@ -230,16 +257,20 @@ export type RawFundingSummary = {
   'put-code'?: number;
   title?: { title?: { value?: string } };
   type?: string;
-  'start-date'?: OrcidDate;
-  'end-date'?: OrcidDate;
+  'start-date'?: OrcidDate | null;
+  'end-date'?: OrcidDate | null;
   organization?: RawOrganization;
   'external-ids'?: {
     'external-id'?: RawWorkExternalId[];
   };
   url?: { value?: string };
+  source?: RawSource | null;
 };
 
-/** Funding group. */
+/**
+ * Funding group — one funding item, holding one summary per source or deposit sharing a
+ * grant identifier, preferred version first.
+ */
 export type RawFundingGroup = {
   'funding-summary'?: RawFundingSummary[];
 };
@@ -257,6 +288,7 @@ export type RawPeerReviewSummary = {
   'completion-date'?: OrcidDate;
   'convening-organization'?: RawOrganization | null;
   'review-url'?: { value?: string } | null;
+  source?: RawSource | null;
 };
 
 /**
@@ -302,6 +334,7 @@ export type RawResearchResourceSummary = {
   'display-index'?: string | null;
   'created-date'?: { value?: number } | null;
   'last-modified-date'?: { value?: number } | null;
+  source?: RawSource | null;
   proposal?: {
     title?: {
       title?: { value?: string } | null;
@@ -375,6 +408,16 @@ export type ExternalIdentifier = {
   relationship?: string;
 };
 
+/** Who asserted an item on the ORCID record. */
+export type Source = {
+  /** `source-name`: the person or member system that added the item. */
+  name?: string;
+  /** `assertion-origin-name`: set when the source added the item on that party's behalf. */
+  assertionOriginName?: string;
+  /** The asserting party (assertion origin when recorded, else the source) is the requested iD. */
+  selfAsserted: boolean;
+};
+
 /** Normalized organization with optional disambiguator. */
 export type Organization = {
   name?: string;
@@ -393,9 +436,10 @@ export type Affiliation = {
   startDate?: NormalizedDate;
   endDate?: NormalizedDate;
   url?: string;
+  sources: Source[];
 };
 
-/** Normalized work record. */
+/** Normalized work record — one per ORCID work group. */
 export type Work = {
   putCode?: number;
   title?: string;
@@ -404,6 +448,8 @@ export type Work = {
   journalTitle?: string;
   url?: string;
   externalIds: ExternalIdentifier[];
+  /** Every distinct source in the work group, the representative summary's first. */
+  sources: Source[];
 };
 
 /** Normalized contributor from a full work detail. */
@@ -428,9 +474,16 @@ export type WorkDetail = {
   externalIds: ExternalIdentifier[];
   contributors: WorkContributor[];
   languageCode?: string;
+  sources: Source[];
 };
 
-/** Normalized funding record. */
+/** One award period recorded by a version of a funding item. */
+export type FundingPeriod = {
+  startDate?: NormalizedDate;
+  endDate?: NormalizedDate;
+};
+
+/** Normalized funding record — one per ORCID funding group, from its preferred version. */
 export type FundingRecord = {
   title?: string;
   type?: string;
@@ -439,6 +492,10 @@ export type FundingRecord = {
   endDate?: NormalizedDate;
   grantNumbers: string[];
   url?: string;
+  /** Every distinct dated period across the group's versions, when there are two or more. */
+  periods?: FundingPeriod[];
+  /** Every distinct source in the funding group, the representative summary's first. */
+  sources: Source[];
 };
 
 /** Normalized peer review record. */
@@ -449,6 +506,7 @@ export type PeerReview = {
   conveningOrganization?: Organization;
   reviewUrl?: string;
   groupIssn?: string;
+  sources: Source[];
 };
 
 /** Normalized expanded search result. */
@@ -477,4 +535,5 @@ export type ResearchResource = {
   startDate?: NormalizedDate;
   endDate?: NormalizedDate;
   url?: string;
+  sources: Source[];
 };

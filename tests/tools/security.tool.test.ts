@@ -1,7 +1,8 @@
 /**
  * @fileoverview Security tests: injection attempts, oversized inputs, assertion that no
  * secrets/env values or upstream transport details leak into tool output or error messages,
- * and that upstream markup is stripped before it reaches either result surface.
+ * that upstream markup is stripped before it reaches either result surface, and that line
+ * breaks in third-party record text cannot open a heading or label in `content[]`.
  * @module tests/tools/security.tool.test
  */
 
@@ -12,11 +13,21 @@ import { orcidGetAffiliations } from '@/mcp-server/tools/definitions/get-affilia
 import { orcidGetFunding } from '@/mcp-server/tools/definitions/get-funding.tool.js';
 import { orcidGetPeerReviews } from '@/mcp-server/tools/definitions/get-peer-reviews.tool.js';
 import { orcidGetProfile } from '@/mcp-server/tools/definitions/get-profile.tool.js';
+import { orcidGetResearchResources } from '@/mcp-server/tools/definitions/get-research-resources.tool.js';
 import { orcidGetWorkDetail } from '@/mcp-server/tools/definitions/get-work-detail.tool.js';
 import { orcidGetWorks } from '@/mcp-server/tools/definitions/get-works.tool.js';
 import { orcidResolveResearcher } from '@/mcp-server/tools/definitions/resolve-researcher.tool.js';
 import { orcidSearchResearchers } from '@/mcp-server/tools/definitions/search-researchers.tool.js';
-import { normalizeBulkWorks, normalizeWorks } from '@/services/orcid/normalizers.js';
+import {
+  normalizeActivities,
+  normalizeBulkWorks,
+  normalizeExpandedSearch,
+  normalizeFundings,
+  normalizePeerReviews,
+  normalizePerson,
+  normalizeResearchResources,
+  normalizeWorks,
+} from '@/services/orcid/normalizers.js';
 
 const mockExpandedSearch = vi.fn();
 const mockGetPerson = vi.fn();
@@ -25,6 +36,7 @@ const mockGetWorkDetails = vi.fn();
 const mockGetAffiliations = vi.fn();
 const mockGetFundings = vi.fn();
 const mockGetPeerReviews = vi.fn();
+const mockGetResearchResources = vi.fn();
 
 vi.mock('@/services/orcid/orcid-service.js', () => ({
   getOrcidService: () => ({
@@ -35,6 +47,7 @@ vi.mock('@/services/orcid/orcid-service.js', () => ({
     getAffiliations: mockGetAffiliations,
     getFundings: mockGetFundings,
     getPeerReviews: mockGetPeerReviews,
+    getResearchResources: mockGetResearchResources,
   }),
   normalizeOrcidId: (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim(),
 }));
@@ -49,6 +62,7 @@ beforeEach(() => {
     mockGetAffiliations,
     mockGetFundings,
     mockGetPeerReviews,
+    mockGetResearchResources,
   ]) {
     mock.mockReset();
     mock.mockRejectedValue(new Error('unmocked fetch'));
@@ -87,13 +101,29 @@ describe('security: injection attempts are forwarded as query strings, not execu
 
     expect(mockExpandedSearch).toHaveBeenCalled();
     const [callParams] = mockExpandedSearch.mock.calls[0]!;
-    expect(callParams.q).toContain(
-      'given-names:Jennifer AND (family-name:Doudna OR family-name:*)',
-    );
+    expect(callParams.q).toBe('given-names:Jennifer AND (family-name:Doudna OR family-name:*)');
+  });
+
+  it('search_researchers: a raw query beside structured fields joins as one group (#61)', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+
+    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
+    const input = orcidSearchResearchers.input.parse({
+      family_name: 'Doudna',
+      query: 'given-names:Jennifer OR *:*',
+    });
+    await orcidSearchResearchers.handler(input, ctx);
+
+    const [callParams] = mockExpandedSearch.mock.calls[0]!;
+    // The raw operators stay live, but only inside the group the structured filter scopes.
+    expect(callParams.q).toBe('family-name:"Doudna" AND (given-names:Jennifer OR *:*)');
   });
 
   it('resolve_researcher: injection in name is forwarded as-is to expandedSearch', async () => {
-    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+    // The phrase finds nothing, so the other-names stage follows — two responses.
+    mockExpandedSearch
+      .mockResolvedValueOnce({ numFound: 0, results: [] })
+      .mockResolvedValueOnce({ numFound: 0, results: [] });
 
     const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
@@ -101,18 +131,37 @@ describe('security: injection attempts are forwarded as query strings, not execu
     });
     await orcidResolveResearcher.handler(input, ctx);
 
-    expect(mockExpandedSearch).toHaveBeenCalled();
-    const [callParams] = mockExpandedSearch.mock.calls[0]!;
-    // The injected string is wrapped in a Solr field clause, and its embedded quote is
-    // escaped, so the DELETE suffix stays inside the phrase literal rather than breaking out.
-    expect(callParams.q).toContain('given-and-family-names:');
-    expect(callParams.q).toContain('given-and-family-names:"Jennifer Doudna\\";');
-    expect(typeof callParams.q).toBe('string');
+    // The injected string is wrapped in a Solr field clause on every stage, and its embedded
+    // quote is escaped, so the DELETE suffix stays inside the phrase literal.
+    expect(mockExpandedSearch.mock.calls.map(([params]) => params.q)).toEqual([
+      'given-and-family-names:"Jennifer Doudna\\"; DELETE FROM records \\-\\-"',
+      'other-names:"Jennifer Doudna\\"; DELETE FROM records \\-\\-"',
+    ]);
   });
 
+  it.each([
+    ['J. Smith" OR *:*', 'given-and-family-names:"Smith\\" OR \\*\\:\\*"~1'],
+    ['J. Smith" OR (x:*)', 'given-and-family-names:"Smith\\" OR \\(x\\:\\*\\)"~1'],
+    ['J. Smith"', 'given-and-family-names:("Smith\\"" AND J*)'],
+  ])(
+    'resolve_researcher: injection in byline words %j is escaped inside the byline phrase (#53)',
+    async (name, byline) => {
+      mockExpandedSearch.mockResolvedValue({ numFound: 0, results: [] });
+
+      const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
+      await orcidResolveResearcher.handler(orcidResolveResearcher.input.parse({ name }), ctx);
+
+      // Phrase, byline, then other names; only the bare initial letter is left unescaped.
+      const queries = mockExpandedSearch.mock.calls.map(([params]) => params.q);
+      expect(queries).toHaveLength(3);
+      expect(queries[1]).toBe(byline);
+    },
+  );
+
   it('resolve_researcher: injection in affiliation is escaped inside the Solr phrase clause', async () => {
-    // Primary returns nothing, so a relaxed pass fires — provide two responses.
+    // Primary returns nothing, so the drop-affiliation and other-names stages fire.
     mockExpandedSearch
+      .mockResolvedValueOnce({ numFound: 0, results: [] })
       .mockResolvedValueOnce({ numFound: 0, results: [] })
       .mockResolvedValueOnce({ numFound: 0, results: [] });
 
@@ -167,8 +216,7 @@ describe('security: injection attempts are forwarded as query strings, not execu
   });
 
   it('resolve_researcher: a PMID URL has only its prefix stripped; the body stays escaped', async () => {
-    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
-    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+    mockExpandedSearch.mockResolvedValue({ numFound: 0, results: [] });
 
     const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
@@ -182,8 +230,7 @@ describe('security: injection attempts are forwarded as query strings, not execu
   });
 
   it('resolve_researcher: a DOI anchor with inner whitespace stays one phrase clause (#47)', async () => {
-    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
-    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+    mockExpandedSearch.mockResolvedValue({ numFound: 0, results: [] });
 
     const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
@@ -192,10 +239,11 @@ describe('security: injection attempts are forwarded as query strings, not execu
     });
     await orcidResolveResearcher.handler(input, ctx);
 
-    const [primary] = mockExpandedSearch.mock.calls[0]!;
-    const [anchorOnly] = mockExpandedSearch.mock.calls[1]!;
-    expect(primary.q).toBe('given-and-family-names:"Jane Roe" AND doi-self:"10.1000\\/x OR smith"');
-    expect(anchorOnly.q).toBe('doi-self:"10.1000\\/x OR smith"');
+    expect(mockExpandedSearch.mock.calls.map(([params]) => params.q)).toEqual([
+      'given-and-family-names:"Jane Roe" AND doi-self:"10.1000\\/x OR smith"',
+      'other-names:"Jane Roe" AND doi-self:"10.1000\\/x OR smith"',
+      'doi-self:"10.1000\\/x OR smith"',
+    ]);
   });
 });
 
@@ -297,6 +345,7 @@ describe('security: no secrets or env values appear in tool output or error mess
         {
           title: 'A Paper',
           externalIds: [{ type: 'doi', value: '10.1/test' }],
+          sources: [],
         },
       ],
     });
@@ -318,6 +367,7 @@ describe('security: no secrets or env values appear in tool output or error mess
           organization: { name: 'UC Berkeley', country: 'US' },
           role: 'Professor',
           startDate: '2002',
+          sources: [],
         },
       ],
       requestedTypes: ['employment'],
@@ -384,9 +434,12 @@ describe('security: upstream markup never reaches either surface as markup (#37)
 
   it('get_works: script, image, and link tags in a deposited title are stripped', async () => {
     mockGetWorks.mockResolvedValueOnce(
-      normalizeWorks({
-        group: [{ 'work-summary': [{ 'put-code': 1, title: { title: { value: hostile } } }] }],
-      }),
+      normalizeWorks(
+        {
+          group: [{ 'work-summary': [{ 'put-code': 1, title: { title: { value: hostile } } }] }],
+        },
+        '0000-0002-1825-0097',
+      ),
     );
 
     const result = await runToolContract(orcidGetWorks, { orcid_id: '0000-0002-1825-0097' });
@@ -402,7 +455,10 @@ describe('security: upstream markup never reaches either surface as markup (#37)
 
   it('get_work_detail: the same tags in a deposited abstract are stripped', async () => {
     mockGetWorkDetails.mockResolvedValueOnce(
-      normalizeBulkWorks({ bulk: [{ work: { 'put-code': 1, 'short-description': hostile } }] }),
+      normalizeBulkWorks(
+        { bulk: [{ work: { 'put-code': 1, 'short-description': hostile } }] },
+        '0000-0002-1825-0097',
+      ),
     );
 
     const result = await runToolContract(orcidGetWorkDetail, {
@@ -413,5 +469,427 @@ describe('security: upstream markup never reaches either surface as markup (#37)
 
     expect(wire).not.toMatch(/<(script|img|a)\b/);
     expect(wire).not.toContain('onerror');
+  });
+});
+
+/**
+ * Every third-party text field a tool renders carries `\r\n## Forged` through the real
+ * normalizer. In `content[]` no line may open with it: inline slots fold the break to a space
+ * (` ## Forged`), and blockquoted prose keeps it inside the quote (`> ## Forged`). The counts
+ * pin that every injected field actually reached the text, so a field dropped by a fixture
+ * typo cannot pass vacuously. `structuredContent` keeps every value verbatim, CR/LF included.
+ */
+describe('security: third-party text cannot forge structure in content[] (#63)', () => {
+  const ID = '0000-0002-1825-0097';
+  const FORGED = '\r\n## Forged';
+  const forged = (value: string) => `${value}${FORGED}`;
+
+  /** A member-system source asserting on the researcher's behalf, both names forged. */
+  const forgedSource = () => ({
+    'source-client-id': { uri: 'https://orcid.org/client/APP-1', path: 'APP-1', host: 'orcid.org' },
+    'source-name': { value: forged('Member System') },
+    'assertion-origin-orcid': { uri: `https://orcid.org/${ID}`, path: ID, host: 'orcid.org' },
+    'assertion-origin-name': { value: forged('Josiah Carberry') },
+  });
+
+  /** An organization's disambiguated identifier and its source, both forged. */
+  const forgedOrgId = () => ({
+    'disambiguated-organization-identifier': forged('https://ror.org/05gq02987'),
+    'disambiguation-source': forged('ROR'),
+  });
+
+  const textOf = (result: { content: { type: string; text?: string }[] }) =>
+    result.content.map((block) => block.text ?? '').join('\n');
+
+  /** Occurrences of the raw forged suffix in the serialized structured result. */
+  const verbatimCount = (structured: unknown) =>
+    JSON.stringify(structured).split(JSON.stringify(FORGED).slice(1, -1)).length - 1;
+
+  function expectContained(text: string, counts: { inline: number; quoted: number }) {
+    expect(text).not.toMatch(/^[ \t]*#+ Forged/m);
+    expect(text.match(/^> ## Forged$/gm)?.length ?? 0).toBe(counts.quoted);
+    expect(text.match(/ ## Forged/g)?.length ?? 0).toBe(counts.inline + counts.quoted);
+  }
+
+  it('orcid_get_profile quotes the biography and flattens names, keywords, and identifiers', async () => {
+    mockGetPerson.mockResolvedValueOnce(
+      normalizePerson({
+        name: {
+          'given-names': { value: forged('Josiah') },
+          'family-name': { value: forged('Carberry') },
+          'credit-name': { value: forged('J. S. Carberry') },
+        },
+        'other-names': {
+          'other-name': [{ content: forged('Josiah Stinkney Carberry') }, { content: 'J. C.' }],
+        },
+        biography: { content: forged('Josiah Carberry is a fictitious person.') },
+        keywords: { keyword: [{ content: forged('psychoceramics') }, { content: 'ionics' }] },
+        'researcher-urls': {
+          'researcher-url': [
+            { 'url-name': forged('Lab'), url: { value: forged('https://example.org') } },
+          ],
+        },
+        'external-identifiers': {
+          'external-identifier': [
+            {
+              'external-id-type': forged('Scopus Author ID'),
+              'external-id-value': forged('6603342255'),
+              'external-id-url': { value: forged('https://www.scopus.com/a/6603342255') },
+              'external-id-relationship': 'self',
+            },
+          ],
+        },
+      }),
+    );
+
+    const result = await runToolContract(orcidGetProfile, { orcid_id: ID });
+    const text = textOf(result);
+
+    // given, family, credit, one other name, one keyword, url name and url, identifier type,
+    // value, and url
+    expectContained(text, { inline: 10, quoted: 1 });
+    expect(text).toContain(
+      '### Biography\n> Josiah Carberry is a fictitious person.\n> ## Forged\n',
+    );
+    expect(text).toContain('**Name:** Josiah ## Forged Carberry ## Forged\n');
+    expect(text).toContain('**Other Names:** Josiah Stinkney Carberry ## Forged, J. C.\n');
+    expect(text).toContain('- **Lab ## Forged:** https://example.org ## Forged\n');
+    expect(verbatimCount(result.structuredContent)).toBe(11);
+    expect((result.structuredContent as { familyName?: string }).familyName).toBe(
+      'Carberry\r\n## Forged',
+    );
+  });
+
+  it('orcid_get_works flattens the title, journal, identifier, and source names', async () => {
+    mockGetWorks.mockResolvedValueOnce(
+      normalizeWorks(
+        {
+          group: [
+            {
+              'work-summary': [
+                {
+                  'put-code': 1,
+                  title: { title: { value: forged('A title') } },
+                  'journal-title': { value: forged('Journal') },
+                  url: { value: forged('https://example.org/work') },
+                  'external-ids': {
+                    'external-id': [
+                      {
+                        'external-id-type': 'doi',
+                        'external-id-value': forged('10.1/x'),
+                        'external-id-url': { value: forged('https://doi.org/10.1/x') },
+                        'external-id-relationship': 'self',
+                      },
+                    ],
+                  },
+                  source: forgedSource(),
+                },
+              ],
+            },
+          ],
+        },
+        ID,
+      ),
+    );
+
+    const result = await runToolContract(orcidGetWorks, { orcid_id: ID });
+    const text = textOf(result);
+
+    // title, journal, url, identifier value and url, source and origin names
+    expectContained(text, { inline: 7, quoted: 0 });
+    expect(text).toContain('### A title ## Forged\n');
+    expect(text).toContain('**URL:** https://example.org/work ## Forged\n');
+    expect(text).toContain(
+      '**Sources:** Josiah Carberry ## Forged via Member System ## Forged (self-asserted)',
+    );
+    expect(verbatimCount(result.structuredContent)).toBe(7);
+  });
+
+  it('orcid_get_work_detail quotes the abstract, flattens inline fields, and fences the citation', async () => {
+    const citation = '@article{x,\n```\n## Escaped the fence\n}';
+    mockGetWorkDetails.mockResolvedValueOnce(
+      normalizeBulkWorks(
+        {
+          bulk: [
+            {
+              work: {
+                'put-code': 1,
+                title: { title: { value: forged('Title') }, subtitle: { value: forged('Sub') } },
+                'journal-title': { value: forged('Journal') },
+                'short-description': forged('Abstract text.'),
+                citation: { 'citation-type': 'bibtex', 'citation-value': citation },
+                url: { value: forged('https://example.org/work') },
+                'external-ids': {
+                  'external-id': [
+                    {
+                      'external-id-type': 'doi',
+                      'external-id-value': forged('10.1/x'),
+                      'external-id-url': { value: forged('https://doi.org/10.1/x') },
+                    },
+                  ],
+                },
+                contributors: {
+                  contributor: [
+                    {
+                      'credit-name': { value: forged('Josiah Carberry') },
+                      'contributor-attributes': { 'contributor-role': 'author' },
+                    },
+                    { 'credit-name': { value: forged('Second Author') } },
+                  ],
+                },
+                source: forgedSource(),
+              },
+            },
+          ],
+        },
+        ID,
+      ),
+    );
+
+    const result = await runToolContract(orcidGetWorkDetail, { orcid_id: ID, put_codes: [1] });
+    const text = textOf(result);
+
+    // title, subtitle, journal, url, identifier value and url, two contributors, source and
+    // origin names
+    expectContained(text, { inline: 10, quoted: 1 });
+    expect(text).toContain('## Title ## Forged\n');
+    expect(text).toContain('**URL:** https://example.org/work ## Forged\n');
+    expect(text).toContain('**Abstract:**\n> Abstract text.\n> ## Forged\n');
+    expect(text).toContain('- Josiah Carberry ## Forged — author\n');
+    expect(text).toContain(`\n\`\`\`\`\n${citation}\n\`\`\`\``);
+    expect(text.split('\n').filter((line) => line === '````')).toHaveLength(2);
+    expect(verbatimCount(result.structuredContent)).toBe(11);
+  });
+
+  it('orcid_get_affiliations flattens organization, city, department, role, and sources', async () => {
+    mockGetAffiliations.mockResolvedValueOnce(
+      normalizeActivities(
+        {
+          employments: {
+            'affiliation-group': [
+              {
+                summaries: [
+                  {
+                    'employment-summary': {
+                      organization: {
+                        name: forged('Brown University'),
+                        address: { city: forged('Providence'), country: 'US' },
+                        'disambiguated-organization': forgedOrgId(),
+                      },
+                      'department-name': forged('Psychoceramics'),
+                      'role-title': forged('Professor'),
+                      url: { value: forged('https://example.org/appointment') },
+                      source: forgedSource(),
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+        ['employment'],
+        ID,
+      ),
+    );
+
+    const result = await runToolContract(orcidGetAffiliations, { orcid_id: ID });
+    const text = textOf(result);
+
+    // organization, city, department, role, org ID and its source, url, source and origin names
+    expectContained(text, { inline: 9, quoted: 0 });
+    expect(text).toContain('**Brown University ## Forged**\n');
+    expect(text).toContain('  Org ID: https://ror.org/05gq02987 ## Forged (ROR ## Forged)\n');
+    expect(text).toContain('  URL: https://example.org/appointment ## Forged\n');
+    expect(verbatimCount(result.structuredContent)).toBe(9);
+  });
+
+  it('orcid_get_funding flattens the title, funder, city, grant number, and sources', async () => {
+    mockGetFundings.mockResolvedValueOnce(
+      normalizeFundings(
+        {
+          group: [
+            {
+              'funding-summary': [
+                {
+                  title: { title: { value: forged('Grant title') } },
+                  type: 'grant',
+                  organization: {
+                    name: forged('Funder'),
+                    address: { city: forged('Bethesda'), country: 'US' },
+                    'disambiguated-organization': forgedOrgId(),
+                  },
+                  'external-ids': {
+                    'external-id': [
+                      { 'external-id-type': 'grant_number', 'external-id-value': forged('R01') },
+                    ],
+                  },
+                  url: { value: forged('https://example.org/grant') },
+                  source: forgedSource(),
+                },
+              ],
+            },
+          ],
+        },
+        ID,
+      ),
+    );
+
+    const result = await runToolContract(orcidGetFunding, { orcid_id: ID });
+    const text = textOf(result);
+
+    // title, funder, city, funder ID and its source, grant number, url, source and origin names
+    expectContained(text, { inline: 9, quoted: 0 });
+    expect(text).toContain('### Grant title ## Forged\n');
+    expect(text).toContain('**Funder ID:** https://ror.org/05gq02987 ## Forged (ROR ## Forged)\n');
+    expect(text).toContain('**URL:** https://example.org/grant ## Forged\n');
+    expect(verbatimCount(result.structuredContent)).toBe(9);
+  });
+
+  it('orcid_get_peer_reviews flattens both heading forms, the convening organization, and sources', async () => {
+    mockGetPeerReviews.mockResolvedValueOnce(
+      normalizePeerReviews(
+        {
+          group: [
+            {
+              'external-ids': {
+                'external-id': [{ 'external-id-value': forged('issn:1476-4687') }],
+              },
+              'peer-review-group': [
+                {
+                  'peer-review-summary': [
+                    {
+                      'convening-organization': {
+                        name: forged('Nature'),
+                        address: { city: forged('London'), country: 'GB' },
+                        'disambiguated-organization': forgedOrgId(),
+                      },
+                      'review-url': { value: forged('https://example.org/review') },
+                      source: forgedSource(),
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              'peer-review-group': [
+                {
+                  'peer-review-summary': [
+                    { 'convening-organization': { name: forged('Review Service') } },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        ID,
+      ),
+    );
+
+    const result = await runToolContract(orcidGetPeerReviews, { orcid_id: ID });
+    const text = textOf(result);
+
+    // ISSN heading, convening organization, city, org ID and its source, url, source and
+    // origin names; then the organization heading of the review with no ISSN
+    expectContained(text, { inline: 9, quoted: 0 });
+    expect(text).toContain('### Journal ISSN 1476-4687 ## Forged\n');
+    expect(text).toContain('**Convening organization:** Nature ## Forged\n');
+    expect(text).toContain('**URL:** https://example.org/review ## Forged\n');
+    expect(text).toContain('**Org ID:** https://ror.org/05gq02987 ## Forged (ROR ## Forged)\n');
+    expect(text).toContain('### Review Service ## Forged\n');
+    expect(verbatimCount(result.structuredContent)).toBe(9);
+  });
+
+  it('orcid_get_research_resources flattens the title, host, identifier, and sources', async () => {
+    mockGetResearchResources.mockResolvedValueOnce(
+      normalizeResearchResources(
+        {
+          group: [
+            {
+              'research-resource-summary': [
+                {
+                  'put-code': 7001,
+                  source: forgedSource(),
+                  proposal: {
+                    title: { title: { value: forged('Allocation') } },
+                    hosts: {
+                      organization: [
+                        {
+                          name: forged('Supercomputing Center'),
+                          address: { city: forged('Pittsburgh'), country: 'US' },
+                          'disambiguated-organization': forgedOrgId(),
+                        },
+                      ],
+                    },
+                    'external-ids': {
+                      'external-id': [
+                        {
+                          'external-id-type': 'uri',
+                          'external-id-value': forged('alloc-1'),
+                          'external-id-url': { value: forged('https://example.org/alloc-1') },
+                        },
+                      ],
+                    },
+                    url: { value: forged('https://example.org/allocation') },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        ID,
+      ),
+    );
+
+    const result = await runToolContract(orcidGetResearchResources, { orcid_id: ID });
+    const text = textOf(result);
+
+    // title, host name and city, host ID and its source, url, identifier value and url, source
+    // and origin names
+    expectContained(text, { inline: 10, quoted: 0 });
+    expect(text).toContain('**Host:** Supercomputing Center ## Forged, Pittsburgh ## Forged, US\n');
+    expect(text).toContain('**Host ID:** https://ror.org/05gq02987 ## Forged (ROR ## Forged)\n');
+    expect(text).toContain('**URL:** https://example.org/allocation ## Forged\n');
+    expect(verbatimCount(result.structuredContent)).toBe(10);
+  });
+
+  /** One expanded-search record with every name field and institution forged. */
+  const forgedSearch = () =>
+    normalizeExpandedSearch({
+      'expanded-result': [
+        {
+          'orcid-id': ID,
+          'given-names': forged('Josiah'),
+          'family-names': forged('Carberry'),
+          'credit-name': forged('J. S. Carberry'),
+          'other-name': [forged('Josiah Stinkney Carberry')],
+          email: [],
+          'institution-name': [forged('Brown University')],
+        },
+      ],
+      'num-found': 1,
+    });
+
+  it('orcid_search_researchers flattens the heading, names, other names, and institutions', async () => {
+    mockExpandedSearch.mockResolvedValueOnce(forgedSearch());
+
+    const result = await runToolContract(orcidSearchResearchers, { family_name: 'Carberry' });
+    const text = textOf(result);
+
+    // credit name twice (heading and its own line), given, family, other name, institution
+    expectContained(text, { inline: 6, quoted: 0 });
+    expect(text).toContain('### J. S. Carberry ## Forged\n');
+    expect(verbatimCount(result.structuredContent)).toBe(5);
+  });
+
+  it('orcid_resolve_researcher flattens the heading, names, and institutions', async () => {
+    mockExpandedSearch.mockResolvedValueOnce(forgedSearch());
+
+    const result = await runToolContract(orcidResolveResearcher, { name: 'Josiah Carberry' });
+    const text = textOf(result);
+
+    // credit name twice (heading and its own line), given, family, institution
+    expectContained(text, { inline: 5, quoted: 0 });
+    expect(text).toContain('### 1. J. S. Carberry ## Forged\n');
+    expect(verbatimCount(result.structuredContent)).toBe(4);
   });
 });

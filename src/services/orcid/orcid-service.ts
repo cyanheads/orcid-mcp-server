@@ -23,7 +23,6 @@ import {
   normalizePeerReviews,
   normalizePerson,
   normalizeResearchResources,
-  normalizeWorkDetail,
   normalizeWorks,
 } from './normalizers.js';
 import { normalizeOrcidId } from './orcid-id.js';
@@ -40,11 +39,9 @@ import type {
   RawPeerReviewsResponse,
   RawPerson,
   RawResearchResourcesResponse,
-  RawWorkDetail,
   RawWorksResponse,
   ResearchResource,
   Work,
-  WorkDetail,
 } from './types.js';
 
 /**
@@ -53,6 +50,16 @@ import type {
  * alone cannot tell a bad query from an outage.
  */
 const SOLR_QUERY_REJECTION = 'RemoteSolrException';
+
+/**
+ * Wall-clock budget for every ORCID request one tool call makes, covering each attempt,
+ * backoff, honored `Retry-After`, and body read. A request ORCID never answers ends here as
+ * `Timeout` instead of at the runtime's fetch idle timeout, once per attempt, and a call that
+ * makes several requests (`orcid_resolve_researcher`'s fallback stages) shares the one budget
+ * rather than spending it per request. The fast-failure retry ladder (about 9 s of backoff)
+ * fits inside it, and the call ends inside a 60 s client timeout.
+ */
+const CALL_DEADLINE_MS = 25_000;
 
 /** Re-exported from the shared ORCID iD parser/validator (`./orcid-id.js`). */
 export { normalizeOrcidId };
@@ -68,11 +75,6 @@ export type AffiliationType =
   | 'services'
   | 'all';
 
-/** Common fetch options forwarded to network layer. */
-export type FetchOptions = {
-  signal?: AbortSignal;
-};
-
 /** Search parameters for expanded-search endpoint. */
 export type SearchParams = {
   q: string;
@@ -82,16 +84,25 @@ export type SearchParams = {
 
 export class OrcidService {
   private readonly baseUrl: string;
+  /** The version the server reports in `initialize`, resolved by the framework from package.json. */
+  private readonly version: string;
+  /** When each tool call's {@link CALL_DEADLINE_MS} budget ends, keyed by its handler Context. */
+  private readonly callDeadlines = new WeakMap<Context, number>();
 
-  constructor(_config: AppConfig, _storage: StorageService) {
+  constructor(config: AppConfig, _storage: StorageService) {
     this.baseUrl = getServerConfig().orcidApiBaseUrl.replace(/\/$/, '');
+    this.version = config.mcpServerVersion;
   }
 
-  /** Build base request headers required by the ORCID Public API. */
+  /**
+   * Build base request headers required by the ORCID Public API. The product token stays
+   * literal: `config.mcpServerName` is the scoped npm name, and `@` and `/` are not valid in a
+   * User-Agent product token.
+   */
   private headers(): Record<string, string> {
     return {
       Accept: 'application/json',
-      'User-Agent': 'orcid-mcp-server/0.3.1 (https://github.com/cyanheads/orcid-mcp-server)',
+      'User-Agent': `orcid-mcp-server/${this.version} (https://github.com/cyanheads/orcid-mcp-server)`,
     };
   }
 
@@ -143,32 +154,75 @@ export class OrcidService {
     return error;
   }
 
-  /** Fetch a URL with retry and timeout, returning parsed JSON. */
-  private fetchJson<T>(url: string, ctx: Context, options?: FetchOptions): Promise<T> {
-    const signal = options?.signal ?? ctx.signal;
+  /**
+   * Milliseconds left of the call's {@link CALL_DEADLINE_MS} budget. The clock starts at the
+   * call's first ORCID request; every later request on the same `ctx` gets what remains.
+   */
+  private remainingBudgetMs(ctx: Context): number {
+    let endsAt = this.callDeadlines.get(ctx);
+    if (endsAt === undefined) {
+      endsAt = Date.now() + CALL_DEADLINE_MS;
+      this.callDeadlines.set(ctx, endsAt);
+    }
+    return Math.max(0, endsAt - Date.now());
+  }
+
+  /**
+   * Fetch a URL with retry under what remains of the call's {@link CALL_DEADLINE_MS} budget,
+   * returning parsed JSON.
+   *
+   * Each attempt runs on `withRetry`'s attempt signal, so the deadline or a caller abort stops a
+   * request already in flight, body read included. Expiry surfaces as `withRetry`'s `Timeout`
+   * (`data.reason: 'retry_deadline_exceeded'`); a caller abort rethrows as-is and outranks it.
+   * A transport rejection while that signal is live (refused, reset, DNS) and a 2xx body that
+   * is not JSON (empty, cut off, a proxy page) each become a transient `ServiceUnavailable` that
+   * names ORCID only, retried like an outage. The runtime's message can carry the request URL
+   * and the parser's quotes the body, so both stay on `cause` and the URL in the server log
+   * (#28, #31).
+   */
+  private fetchJson<T>(url: string, ctx: Context): Promise<T> {
     // Create a RequestContext from the handler Context for withRetry's structured logging.
     const reqCtx = requestContextService.createRequestContext({
       operation: 'OrcidService.fetchJson',
       parentContext: { requestId: ctx.requestId, tenantId: ctx.tenantId, traceId: ctx.traceId },
     });
     return withRetry(
-      async () => {
-        const response = await fetch(url, {
-          headers: this.headers(),
-          signal,
-        });
+      async ({ signal }) => {
+        const unreachable = (error: unknown): never => {
+          if (signal.aborted) throw error;
+          ctx.log.warning('ORCID request failed in transport.', { url, error: String(error) });
+          throw serviceUnavailable('The ORCID API could not be reached.', undefined, {
+            cause: error,
+          });
+        };
+        const response = await fetch(url, { headers: this.headers(), signal }).catch(unreachable);
         if (!response.ok) {
           throw await this.upstreamError(response, url, ctx);
         }
-        const text = await response.text();
+        const text = await response.text().catch(unreachable);
         this.assertNotHtml(text, url, ctx);
-        return JSON.parse(text) as T;
+        try {
+          return JSON.parse(text) as T;
+        } catch (error) {
+          ctx.log.warning('ORCID returned a 2xx body that is not JSON.', {
+            url,
+            status: response.status,
+            bodyBytes: text.length,
+          });
+          throw serviceUnavailable(
+            'ORCID API returned a response that is not valid JSON.',
+            undefined,
+            { cause: error },
+          );
+        }
       },
       {
-        operation: 'OrcidService.fetchJson',
+        // Embedded in the deadline-expiry message the client sees, so it names the upstream.
+        operation: 'ORCID request',
         context: reqCtx,
         baseDelayMs: 1000,
-        signal,
+        deadlineMs: this.remainingBudgetMs(ctx),
+        signal: ctx.signal,
       },
     );
   }
@@ -208,7 +262,7 @@ export class OrcidService {
     const url = `${this.baseUrl}/${id}/works`;
     ctx.log.debug('ORCID getWorks', { orcidId: id });
     const raw = await this.fetchJson<RawWorksResponse>(url, ctx);
-    return normalizeWorks(raw);
+    return normalizeWorks(raw, id);
   }
 
   /**
@@ -224,7 +278,7 @@ export class OrcidService {
     const url = `${this.baseUrl}/${id}/activities`;
     ctx.log.debug('ORCID getAffiliations', { orcidId: id, types });
     const raw = await this.fetchJson<RawActivities>(url, ctx);
-    return normalizeActivities(raw, types);
+    return normalizeActivities(raw, types, id);
   }
 
   /**
@@ -235,7 +289,7 @@ export class OrcidService {
     const url = `${this.baseUrl}/${id}/fundings`;
     ctx.log.debug('ORCID getFundings', { orcidId: id });
     const raw = await this.fetchJson<RawFundingsResponse>(url, ctx);
-    return normalizeFundings(raw);
+    return normalizeFundings(raw, id);
   }
 
   /**
@@ -246,19 +300,7 @@ export class OrcidService {
     const url = `${this.baseUrl}/${id}/peer-reviews`;
     ctx.log.debug('ORCID getPeerReviews', { orcidId: id });
     const raw = await this.fetchJson<RawPeerReviewsResponse>(url, ctx);
-    return normalizePeerReviews(raw);
-  }
-
-  /**
-   * Fetch the full detail for a single work by its put-code.
-   * Returns abstract, all contributors with roles, full external IDs, and citation.
-   */
-  async getWorkDetail(orcidId: string, putCode: number, ctx: Context): Promise<WorkDetail> {
-    const id = normalizeOrcidId(orcidId);
-    const url = `${this.baseUrl}/${id}/work/${putCode}`;
-    ctx.log.debug('ORCID getWorkDetail', { orcidId: id, putCode });
-    const raw = await this.fetchJson<RawWorkDetail>(url, ctx);
-    return normalizeWorkDetail(raw);
+    return normalizePeerReviews(raw, id);
   }
 
   /**
@@ -277,7 +319,7 @@ export class OrcidService {
     const url = `${this.baseUrl}/${id}/works/${codesStr}`;
     ctx.log.debug('ORCID getWorkDetails (bulk)', { orcidId: id, count: putCodes.length });
     const raw = await this.fetchJson<RawBulkWorksResponse>(url, ctx);
-    return normalizeBulkWorks(raw);
+    return normalizeBulkWorks(raw, id);
   }
 
   /**
@@ -289,7 +331,7 @@ export class OrcidService {
     const url = `${this.baseUrl}/${id}/research-resources`;
     ctx.log.debug('ORCID getResearchResources', { orcidId: id });
     const raw = await this.fetchJson<RawResearchResourcesResponse>(url, ctx);
-    return normalizeResearchResources(raw);
+    return normalizeResearchResources(raw, id);
   }
 }
 

@@ -4,7 +4,7 @@
  */
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { assert, beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetFunding } from '@/mcp-server/tools/definitions/get-funding.tool.js';
 
@@ -29,6 +29,7 @@ const sampleFunding = [
     endDate: '2020',
     grantNumbers: ['R01GM123456', 'R01GM789012'],
     url: 'https://grantome.com/grant/NIH/R01-GM123456',
+    sources: [{ name: 'Jennifer Doudna', selfAsserted: true }],
   },
 ];
 
@@ -80,8 +81,9 @@ describe('orcidGetFunding', () => {
     const enrichment = getEnrichment(ctx);
 
     expect(result.fundingCount).toBe(0);
-    expect(enrichment.notice).toBeDefined();
-    expect(enrichment.notice).toContain('self-reported');
+    expect(enrichment.notice).toBe(
+      'No funding records found. Funding reaches ORCID from the researcher or from member organizations, and most records carry none. Absence does not imply no funding.',
+    );
   });
 
   it('handles sparse funding record (no funder, no dates)', async () => {
@@ -118,21 +120,19 @@ describe('orcidGetFunding', () => {
     ).not.toThrow();
   });
 
-  it('throws profile_not_found McpError on 404', async () => {
+  it('fails with profile_not_found and the contract recovery hint on 404', async () => {
     mockGetFundings.mockRejectedValueOnce(
       new McpError(JsonRpcErrorCode.NotFound, 'ORCID returned HTTP 404 Not Found.'),
     );
 
-    const ctx = createMockContext({ errors: orcidGetFunding.errors });
-    const input = orcidGetFunding.input.parse({ orcid_id: '0000-0000-0000-0001' });
-    const error = await Promise.resolve(orcidGetFunding.handler(input, ctx)).catch(
-      (e: unknown) => e,
-    );
-    expect(error).toBeInstanceOf(McpError);
-    expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
-    const data = (error as McpError).data as { reason?: string; recovery?: { hint?: string } };
-    expect(data.reason).toBe('profile_not_found');
-    expect(data.recovery?.hint).toBeDefined();
+    const result = await runToolContract(orcidGetFunding, { orcid_id: '0000-0000-0000-0001' });
+    expect(result.isError).toBe(true);
+    const { error } = result.structuredContent as {
+      error: { code: number; data: { reason: string; recovery: { hint: string } } };
+    };
+    expect(error.code).toBe(JsonRpcErrorCode.NotFound);
+    expect(error.data.reason).toBe('profile_not_found');
+    expect(error.data.recovery.hint).toContain('orcid_search_researchers');
   });
 
   it('formats funding records with all key fields visible', () => {
@@ -159,6 +159,75 @@ describe('orcidGetFunding', () => {
     expect(text).toContain('**Total Funding Records:** 1');
   });
 
+  it('carries distinct award periods on both result surfaces', async () => {
+    mockGetFundings.mockResolvedValueOnce([
+      {
+        title: 'Dopamine and alpha-2 agonists: Potential anti glaucoma drugs',
+        startDate: '1991-08',
+        endDate: '1994-07',
+        grantNumbers: ['EY06338 NEI'],
+        periods: [
+          { startDate: '1985-01' },
+          { startDate: '1991-08', endDate: '1994-07' },
+          { startDate: '1994-08', endDate: '1998-07' },
+        ],
+        sources: [{ name: 'David Potter', selfAsserted: true }],
+      },
+      { title: 'Single-version grant', startDate: '2001', grantNumbers: ['X1'], sources: [] },
+    ]);
+
+    const result = await runToolContract(orcidGetFunding, { orcid_id: '0000-0002-3489-8176' });
+
+    expect(result.isError).toBeFalsy();
+    const structured = result.structuredContent as {
+      fundingCount: number;
+      funding: { periods?: { startDate?: string; endDate?: string }[] }[];
+    };
+    expect(structured.fundingCount).toBe(2);
+    expect(structured.funding[0]?.periods).toEqual([
+      { startDate: '1985-01' },
+      { startDate: '1991-08', endDate: '1994-07' },
+      { startDate: '1994-08', endDate: '1998-07' },
+    ]);
+    expect(structured.funding[1]?.periods).toBeUndefined();
+    const text = result.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
+    expect(text).toContain('**Periods:** 1985-01; 1991-08 – 1994-07; 1994-08 – 1998-07');
+    expect(text.match(/\*\*Periods:\*\*/g)).toHaveLength(1);
+  });
+
+  it('carries every source of the funding item on both result surfaces', async () => {
+    mockGetFundings.mockResolvedValueOnce([
+      {
+        title: 'T32GM008231',
+        grantNumbers: ['T32GM008231'],
+        sources: [
+          { name: 'A Researcher', selfAsserted: true },
+          { name: 'DimensionsWizard', assertionOriginName: 'A Researcher', selfAsserted: true },
+          { name: 'American Cancer Society', selfAsserted: false },
+        ],
+      },
+    ]);
+
+    const result = await runToolContract(orcidGetFunding, { orcid_id: '0000-0003-1566-2229' });
+
+    expect(result.isError).toBeFalsy();
+    const structured = result.structuredContent as {
+      funding: {
+        sources: { name?: string; assertionOriginName?: string; selfAsserted: boolean }[];
+      }[];
+    };
+    expect(structured.funding[0]?.sources).toHaveLength(3);
+    expect(structured.funding[0]?.sources[1]).toEqual({
+      name: 'DimensionsWizard',
+      assertionOriginName: 'A Researcher',
+      selfAsserted: true,
+    });
+    const text = result.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
+    expect(text).toContain(
+      '**Sources:** A Researcher (self-asserted); A Researcher via DimensionsWizard (self-asserted); American Cancer Society\n',
+    );
+  });
+
   it('formats empty funding', () => {
     const output = orcidGetFunding.output.parse({
       orcidId: '0000-0002-1825-0097',
@@ -177,7 +246,7 @@ describe('orcidGetFunding', () => {
       orcidId: '0000-0002-1825-0097',
       orcidUri: 'https://orcid.org/0000-0002-1825-0097',
       fundingCount: 1,
-      funding: [{ grantNumbers: [] }],
+      funding: [{ grantNumbers: [], sources: [] }],
     });
 
     const blocks = orcidGetFunding.format!(output);

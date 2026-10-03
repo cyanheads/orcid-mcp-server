@@ -34,12 +34,18 @@ const H4_ABSTRACT =
 const IN_VIVO_BIBTEX =
   '@article{PPR:PPR1226445,\n\ttitle = {Amplified genome editing by  <i>in vivo</i>  editor production},\n\tauthor = {Ngo W and Doudna JA},\n\tdoi = {10.64898/2026.01.13.699115}\n}';
 
+/** The requested iD — the record the captured strings come from. */
+const ORCID_ID = '0000-0001-9161-999X';
+
 function summaryWith(fields: Partial<RawWorkSummary>) {
-  return normalizeWorks({ group: [{ 'work-summary': [{ 'put-code': 1, ...fields }] }] })[0];
+  return normalizeWorks(
+    { group: [{ 'work-summary': [{ 'put-code': 1, ...fields }] }] },
+    ORCID_ID,
+  )[0];
 }
 
 function detailWith(fields: Partial<RawWorkDetail>) {
-  return normalizeWorkDetail({ 'put-code': 1, ...fields });
+  return normalizeWorkDetail({ 'put-code': 1, ...fields }, ORCID_ID);
 }
 
 describe('work text boundary — unchanged behavior', () => {
@@ -136,17 +142,20 @@ describe('work text boundary — markup is stripped to plain text', () => {
   });
 
   it('cleans titles reached through the bulk works endpoint, citation untouched', () => {
-    const [entry] = normalizeBulkWorks({
-      bulk: [
-        {
-          work: {
-            'put-code': 215949395,
-            title: { title: { value: IN_VIVO_TITLE } },
-            citation: { 'citation-type': 'bibtex', 'citation-value': IN_VIVO_BIBTEX },
+    const [entry] = normalizeBulkWorks(
+      {
+        bulk: [
+          {
+            work: {
+              'put-code': 215949395,
+              title: { title: { value: IN_VIVO_TITLE } },
+              citation: { 'citation-type': 'bibtex', 'citation-value': IN_VIVO_BIBTEX },
+            },
           },
-        },
-      ],
-    });
+        ],
+      },
+      ORCID_ID,
+    );
     assert(entry?.type === 'work');
     expect(entry.detail.title).toBe('Amplified genome editing by in vivo editor production');
     expect(entry.detail.citation?.value).toBe(IN_VIVO_BIBTEX);
@@ -167,32 +176,38 @@ describe('work text boundary — markup is stripped to plain text', () => {
   });
 
   it('cleans funding titles', () => {
-    const [record] = normalizeFundings({
-      group: [
-        {
-          'funding-summary': [
-            { title: { title: { value: 'Editing  <i>in planta</i>  genomes' } } },
-          ],
-        },
-      ],
-    });
+    const [record] = normalizeFundings(
+      {
+        group: [
+          {
+            'funding-summary': [
+              { title: { title: { value: 'Editing  <i>in planta</i>  genomes' } } },
+            ],
+          },
+        ],
+      },
+      ORCID_ID,
+    );
     assert(record);
     expect(record.title).toBe('Editing in planta genomes');
   });
 
   it('cleans research-resource titles', () => {
-    const [resource] = normalizeResearchResources({
-      group: [
-        {
-          'research-resource-summary': [
-            {
-              'put-code': 7001,
-              proposal: { title: { title: { value: 'Cryo-EM of <i>E. coli</i> ribosomes' } } },
-            },
-          ],
-        },
-      ],
-    });
+    const [resource] = normalizeResearchResources(
+      {
+        group: [
+          {
+            'research-resource-summary': [
+              {
+                'put-code': 7001,
+                proposal: { title: { title: { value: 'Cryo-EM of <i>E. coli</i> ribosomes' } } },
+              },
+            ],
+          },
+        ],
+      },
+      ORCID_ID,
+    );
     assert(resource);
     expect(resource.title).toBe('Cryo-EM of E. coli ribosomes');
   });

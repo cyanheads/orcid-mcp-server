@@ -44,13 +44,49 @@ const workDetailA = {
     { name: 'Doudna JA', role: 'author', sequence: 'additional', orcidId: '0000-0001-9161-999X' },
   ],
   languageCode: 'en',
+  sources: [{ name: 'Crossref', selfAsserted: false }],
 };
 
 const workDetailB = {
   putCode: 99999,
   externalIds: [],
   contributors: [],
+  sources: [],
 };
+
+describe('orcidGetWorkDetail sources', () => {
+  it("carries the put-code's own source on both result surfaces", async () => {
+    mockGetWorkDetails.mockResolvedValueOnce([
+      {
+        type: 'work',
+        detail: {
+          ...workDetailB,
+          putCode: 220918354,
+          sources: [{ name: 'Crossref', selfAsserted: false }],
+        },
+      },
+      {
+        type: 'work',
+        detail: { ...workDetailB, putCode: 165310276, sources: [] },
+      },
+    ]);
+
+    const result = await runToolContract(orcidGetWorkDetail, {
+      orcid_id: '0000-0003-3632-5512',
+      put_codes: [220918354, 165310276],
+    });
+
+    expect(result.isError).toBeFalsy();
+    const structured = result.structuredContent as {
+      works: { putCode: number; sources: { name?: string; selfAsserted: boolean }[] }[];
+    };
+    expect(structured.works[0]?.sources).toEqual([{ name: 'Crossref', selfAsserted: false }]);
+    expect(structured.works[1]?.sources).toEqual([]);
+    const text = result.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
+    expect(text).toContain('**Put-code:** 220918354\n**Sources:** Crossref');
+    expect(text.match(/\*\*Sources:\*\*/g)).toHaveLength(1);
+  });
+});
 
 describe('orcidGetWorkDetail', () => {
   beforeEach(() => {
@@ -268,28 +304,24 @@ describe('orcidGetWorkDetail', () => {
       }),
     );
 
-    const ctx = createMockContext({ errors: orcidGetWorkDetail.errors });
-    const input = orcidGetWorkDetail.input.parse({
+    const result = await runToolContract(orcidGetWorkDetail, {
       orcid_id: '9999-9999-9999-9994',
       put_codes: [1],
     });
-    const error = await Promise.resolve(orcidGetWorkDetail.handler(input, ctx)).catch(
-      (e: unknown) => e,
-    );
 
-    expect(error).toBeInstanceOf(McpError);
-    expect((error as McpError).code).toBe(JsonRpcErrorCode.NotFound);
-
-    const data = (error as McpError).data as { reason?: string; recovery?: { hint?: string } };
-    expect(data.reason).toBe('profile_not_found');
-    expect(data.recovery?.hint).toBeDefined();
+    expect(result.isError).toBe(true);
+    const { error } = result.structuredContent as {
+      error: { code: number; data: { reason: string; recovery: { hint: string } } };
+    };
+    expect(error.code).toBe(JsonRpcErrorCode.NotFound);
+    expect(error.data.reason).toBe('profile_not_found');
+    expect(error.data.recovery.hint).toContain('orcid_search_researchers');
 
     // Redaction: fresh data must not inherit the caught error's transport fields.
-    const raw = (error as McpError).data as Record<string, unknown>;
-    expect(raw).not.toHaveProperty('url');
-    expect(raw).not.toHaveProperty('status');
-    expect(raw).not.toHaveProperty('statusText');
-    expect(raw).not.toHaveProperty('body');
+    expect(error.data).not.toHaveProperty('url');
+    expect(error.data).not.toHaveProperty('status');
+    expect(error.data).not.toHaveProperty('statusText');
+    expect(error.data).not.toHaveProperty('body');
   });
 
   it('preserves the code for a transient ServiceUnavailable failure and redacts transport details', async () => {
@@ -367,13 +399,18 @@ describe('orcidGetWorkDetail', () => {
     expect(text).not.toContain('fetch_failed');
   });
 
-  it('keeps a Timeout as Timeout with its sanitized message and forwarded retryable', async () => {
+  it('keeps a Timeout as Timeout with its sanitized message, retryable, and deadline reason (#64)', async () => {
     mockGetWorkDetails.mockRejectedValueOnce(
-      new McpError(JsonRpcErrorCode.Timeout, 'ORCID returned HTTP 504 Gateway Timeout.', {
+      new McpError(JsonRpcErrorCode.Timeout, 'ORCID request exceeded its 25000ms retry deadline.', {
+        url: 'https://pub.orcid.org/v3.0/0000-0001-9161-999X/works/1',
         status: 504,
         statusText: 'Gateway Timeout',
         body: '<html>upstream gateway page</html>',
         retryable: true,
+        reason: 'retry_deadline_exceeded',
+        deadlineMs: 25_000,
+        elapsedMs: 25_000,
+        retryAttempts: 1,
       }),
     );
 
@@ -389,7 +426,7 @@ describe('orcidGetWorkDetail', () => {
     ).error;
     expect(envelope.code).toBe(JsonRpcErrorCode.Timeout);
     expect(envelope.message).toBe('ORCID bulk works endpoint timed out for 0000-0001-9161-999X.');
-    expect(envelope.data).toStrictEqual({ retryable: true });
+    expect(envelope.data).toStrictEqual({ retryable: true, reason: 'retry_deadline_exceeded' });
   });
 
   describe('an exhausted upstream rate limit', () => {
@@ -487,25 +524,32 @@ describe('orcidGetWorkDetail', () => {
   });
 
   it('wraps an unexpected (non-McpError) service failure as fetch_failed', async () => {
-    mockGetWorkDetails.mockRejectedValueOnce(new Error('Network timeout'));
+    mockGetWorkDetails
+      .mockRejectedValueOnce(new Error('Network timeout'))
+      .mockRejectedValueOnce(new Error('Network timeout'));
+    const rawInput = { orcid_id: '0000-0001-9161-999X', put_codes: [215949386] };
 
     const ctx = createMockContext({ errors: orcidGetWorkDetail.errors });
-    const input = orcidGetWorkDetail.input.parse({
-      orcid_id: '0000-0001-9161-999X',
-      put_codes: [215949386],
-    });
+    const input = orcidGetWorkDetail.input.parse(rawInput);
     const error = await Promise.resolve(orcidGetWorkDetail.handler(input, ctx)).catch(
       (e: unknown) => e,
     );
 
     expect(error).toBeInstanceOf(McpError);
     expect((error as McpError).code).toBe(JsonRpcErrorCode.InternalError);
-    const data = (error as McpError).data as { reason?: string; recovery?: { hint?: string } };
+    const data = (error as McpError).data as { reason?: string };
     expect(data.reason).toBe('fetch_failed');
-    expect(data.recovery?.hint).toBeDefined();
     // The original error is chained as cause for server-side debugging but never serialized.
     expect((error as McpError).cause).toBeInstanceOf(Error);
     expect(data).not.toHaveProperty('url');
+
+    // On the wire the framework fills the contract's recovery hint for the reason.
+    const result = await runToolContract(orcidGetWorkDetail, rawInput);
+    const { error: envelope } = result.structuredContent as {
+      error: { data: { reason: string; recovery: { hint: string } } };
+    };
+    expect(envelope.data.reason).toBe('fetch_failed');
+    expect(envelope.data.recovery.hint).toContain('Retry the request');
   });
 
   it('wraps a non-NotFound McpError from the service as fetch_failed with fresh data', async () => {
@@ -571,8 +615,10 @@ describe('orcidGetWorkDetail', () => {
         **Journal:** Science
         **URL:** https://doi.org/10.1126/science.1225829
         **IDs:** doi:10.1126/science.1225829 (https://doi.org/10.1126/science.1225829) [self], pmid:22745249
+        **Sources:** Crossref
 
-        **Abstract:** We describe the application of the type II CRISPR-Cas9 system for programmable genome editing.
+        **Abstract:**
+        > We describe the application of the type II CRISPR-Cas9 system for programmable genome editing.
 
         **Contributors:**
         - Jinek M — author (first)
@@ -615,6 +661,7 @@ describe('orcidGetWorkDetail', () => {
           externalIds: [{ type: 'doi', value: '10.1126/science.1225829' }],
           contributors: [{ name: 'Jinek M', role: 'author', sequence: 'first' }],
           languageCode: 'en',
+          sources: [{ name: 'Crossref', selfAsserted: false }],
         },
       ],
       errors: [],
@@ -637,6 +684,7 @@ describe('orcidGetWorkDetail', () => {
     expect(text).toContain('Jinek M');
     expect(text).toContain('author');
     expect(text).toContain('en');
+    expect(text).toContain('**Sources:** Crossref');
     expect(text).toContain('Works resolved:** 1');
     expect(text).toContain('Errors:** 0');
   });
@@ -646,8 +694,8 @@ describe('orcidGetWorkDetail', () => {
       orcidId: '0000-0001-9161-999X',
       orcidUri: 'https://orcid.org/0000-0001-9161-999X',
       works: [
-        { putCode: 1, title: 'First Work', externalIds: [], contributors: [] },
-        { putCode: 2, title: 'Second Work', externalIds: [], contributors: [] },
+        { putCode: 1, title: 'First Work', externalIds: [], contributors: [], sources: [] },
+        { putCode: 2, title: 'Second Work', externalIds: [], contributors: [], sources: [] },
       ],
       errors: [],
     });
@@ -662,7 +710,7 @@ describe('orcidGetWorkDetail', () => {
     const output = orcidGetWorkDetail.output.parse({
       orcidId: '0000-0002-1825-0097',
       orcidUri: 'https://orcid.org/0000-0002-1825-0097',
-      works: [{ putCode: 1, externalIds: [], contributors: [] }],
+      works: [{ putCode: 1, externalIds: [], contributors: [], sources: [] }],
       errors: [],
     });
 
@@ -689,7 +737,7 @@ describe('orcidGetWorkDetail', () => {
     const output = orcidGetWorkDetail.output.parse({
       orcidId: '0000-0001-9161-999X',
       orcidUri: 'https://orcid.org/0000-0001-9161-999X',
-      works: [{ putCode: 1, title: 'First Work', externalIds: [], contributors: [] }],
+      works: [{ putCode: 1, title: 'First Work', externalIds: [], contributors: [], sources: [] }],
       errors: [],
       deferredPutCodes: [2, 3],
     });
@@ -719,6 +767,13 @@ describe('orcidGetWorkDetail', () => {
       abstract: 'ä'.repeat(abstractLength / 2),
       externalIds: [{ type: 'doi', value: `10.1038/${putCode}`, relationship: 'self' }],
       contributors: [{ name: 'Doudna JA', role: 'author', sequence: 'first' }],
+      sources: [
+        {
+          name: 'Europe PubMed Central',
+          assertionOriginName: 'Jennifer Doudna',
+          selfAsserted: true,
+        },
+      ],
     });
 
     /**
@@ -777,8 +832,9 @@ describe('orcidGetWorkDetail', () => {
       // Records are kept in upstream order; what is deferred is the rest, in request order.
       expect(returned).toEqual(hundred.toReversed().slice(0, returned.length));
       expect(structured.deferredPutCodes).toEqual(hundred.slice(0, 100 - returned.length));
-      expect(structured.notice).toContain(`${100 - returned.length} put-codes`);
-      expect(structured.notice).toContain('deferredPutCodes');
+      expect(structured.notice).toBe(
+        `Adding the next record would exceed the 64,000-byte response budget, so ${100 - returned.length} put-codes were deferred. Call orcid_get_work_detail again with deferredPutCodes as put_codes to fetch them.`,
+      );
 
       const text = textOf(result);
       expect(text).toContain(`> ${structured.notice}`);
@@ -811,17 +867,23 @@ describe('orcidGetWorkDetail', () => {
       expect(structured.works.map((w) => w.putCode)).toEqual([300_002]);
       expect(structured.deferredPutCodes).toEqual([300_000, 300_001]);
       expect(bytesOf(result.structuredContent)).toBeGreaterThan(BUDGET);
+      // The notice stays true when the one admitted record alone overflowed the budget.
+      expect(structured.notice).toBe(
+        'Adding the next record would exceed the 64,000-byte response budget, so 2 put-codes were deferred. Call orcid_get_work_detail again with deferredPutCodes as put_codes to fetch them.',
+      );
     });
 
     it('keeps the whole response under 130,000 bytes when the text outweighs the structured records', async () => {
       // Untitled records whose contributors carry no field: `{}` in JSON, `- (unnamed)` in text.
+      // 100 contributors is the most a record keeps whole (#52), so each stays uncut.
       mockGetWorkDetails.mockImplementation(async (_id: string, putCodes: number[]) =>
         putCodes.map((putCode) => ({
           type: 'work',
           detail: {
             putCode,
             externalIds: [],
-            contributors: Array.from({ length: 200 }, () => ({})),
+            contributors: Array.from({ length: 100 }, () => ({})),
+            sources: [],
           },
         })),
       );
@@ -831,6 +893,24 @@ describe('orcidGetWorkDetail', () => {
       expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(BUDGET);
       expect(bytesOf(result.structuredContent) + textBytes).toBeLessThan(130_000);
       expect(structured.deferredPutCodes).toHaveLength(100 - structured.works.length);
+    });
+
+    it('charges the quoted abstract, so the quote prefix can defer a record (#63)', async () => {
+      // A one-character line costs 3 JSON bytes (`a\n`) but 4 rendered bytes (`> a` and its
+      // newline): two records fit the budget as JSON or as unquoted text, not as quoted text.
+      const abstract = Array.from({ length: 9_000 }, () => 'a').join('\n');
+      mockGetWorkDetails.mockResolvedValueOnce(
+        [1, 2].map((putCode) => ({
+          type: 'work',
+          detail: { putCode, abstract, externalIds: [], contributors: [], sources: [] },
+        })),
+      );
+      const { result, structured } = await call([1, 2]);
+
+      expect(structured.works.map((w) => w.putCode)).toEqual([1]);
+      expect(structured.deferredPutCodes).toEqual([2]);
+      expect(Buffer.byteLength(textOf(result))).toBeLessThanOrEqual(BUDGET);
+      expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(BUDGET);
     });
 
     describe('a repeated put-code (#49)', () => {
@@ -876,7 +956,9 @@ describe('orcidGetWorkDetail', () => {
 
         expect(structured.errors).toEqual([]);
         expect(structured.deferredPutCodes).toEqual([a]);
-        expect(structured.notice).toContain('1 put-code was deferred');
+        expect(structured.notice).toBe(
+          'Adding the next record would exceed the 64,000-byte response budget, so 1 put-code was deferred. Call orcid_get_work_detail again with deferredPutCodes as put_codes to fetch it.',
+        );
       });
     });
 
@@ -888,6 +970,245 @@ describe('orcidGetWorkDetail', () => {
       expect(structured).not.toHaveProperty('deferredPutCodes');
       expect(structured).not.toHaveProperty('notice');
       expect(textOf(result)).not.toContain('Deferred');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Per-record contributor and citation caps (#52)
+  // ---------------------------------------------------------------------------
+
+  describe('per-record contributor and citation caps (#52)', () => {
+    const BUDGET = 64_000;
+    const OWNER = '0000-0003-4643-515X';
+    const bytesOf = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
+    const textOf = (result: { content: { type: string; text?: string }[] }) =>
+      result.content.map((block) => block.text ?? '').join('');
+
+    type Contributor = { name?: string; orcidId?: string; role?: string; sequence?: string };
+    type CappedWork = {
+      putCode: number;
+      contributors: Contributor[];
+      contributorCount?: number;
+      contributorsTruncated?: boolean;
+      citation?: { type: string; value: string };
+      citationOmitted?: boolean;
+    };
+    type CappedResult = { works: CappedWork[]; deferredPutCodes?: number[]; notice?: string };
+
+    /**
+     * `count` contributors in upstream order, shaped like a large-collaboration deposit: every
+     * third carries some other researcher's iD, and each index in `ownerAt` carries the owner's.
+     */
+    function contributorsOf(count: number, ownerAt: number[] = []): Contributor[] {
+      const owners = new Set(ownerAt);
+      return Array.from({ length: count }, (_, i) => ({
+        name: `Author${i}, A.`,
+        ...(owners.has(i)
+          ? { orcidId: OWNER }
+          : i % 3 === 0 && { orcidId: `0000-0001-0000-${String(i).padStart(4, '0')}` }),
+        role: 'author',
+        sequence: i === 0 ? 'first' : 'additional',
+      }));
+    }
+
+    const workWith = (
+      putCode: number,
+      contributors: Contributor[],
+      citation?: { type: string; value: string },
+    ) => ({
+      putCode,
+      title: `Work ${putCode}`,
+      workType: 'journal-article',
+      externalIds: [{ type: 'doi', value: `10.1000/${putCode}`, relationship: 'self' }],
+      contributors,
+      ...(citation && { citation }),
+      sources: [{ name: 'INSPIRE-HEP', selfAsserted: false }],
+    });
+
+    async function call(orcidId: string, details: { putCode: number }[]) {
+      mockGetWorkDetails.mockResolvedValueOnce(details.map((detail) => ({ type: 'work', detail })));
+      const result = await runToolContract(orcidGetWorkDetail, {
+        orcid_id: orcidId,
+        put_codes: details.map((detail) => detail.putCode),
+      });
+      expect(result.isError).toBeFalsy();
+      return { result, structured: result.structuredContent as CappedResult, text: textOf(result) };
+    }
+
+    beforeEach(() => {
+      mockGetWorkDetails.mockReset();
+    });
+
+    it("keeps the first 100 contributors plus the owner's entry and fits both surfaces", async () => {
+      const source = contributorsOf(5_246, [2_091]);
+      const { result, structured, text } = await call(OWNER, [workWith(73_747_988, source)]);
+
+      expect(structured.works).toHaveLength(1);
+      const [work] = structured.works;
+      assert(work);
+      expect(work.contributors).toHaveLength(101);
+      expect(work.contributors.slice(0, 100)).toStrictEqual(source.slice(0, 100));
+      expect(work.contributors[100]).toStrictEqual(source[2_091]);
+      expect(work.contributorCount).toBe(5_246);
+      expect(work.contributorsTruncated).toBe(true);
+      expect(work).not.toHaveProperty('citationOmitted');
+
+      expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(BUDGET);
+      expect(Buffer.byteLength(text)).toBeLessThanOrEqual(BUDGET);
+      expect(text).toContain('\n**Contributors (first 100 of 5,246, plus the record owner):**\n');
+      expect(text).toContain(`\n- Author2091, A. — author (additional) [${OWNER}]`);
+      expect(text).not.toContain('- Author100, A.');
+      expect(text.match(/^- Author/gm)).toHaveLength(101);
+    });
+
+    it('matches the owner on the normalized iD when the input is an ORCID URI', async () => {
+      const source = contributorsOf(300, [250]);
+      const { structured } = await call(`https://orcid.org/${OWNER}`, [workWith(1, source)]);
+
+      expect(structured.works[0]?.contributors.at(-1)).toStrictEqual(source[250]);
+      expect(structured.works[0]?.contributors).toHaveLength(101);
+    });
+
+    it('returns two capped large-collaboration records together with no deferral', async () => {
+      const { result, structured, text } = await call(OWNER, [
+        workWith(72_709_805, contributorsOf(3_084, [1_500])),
+        workWith(73_747_988, contributorsOf(5_246, [2_091])),
+      ]);
+
+      expect(structured.works.map((work) => work.putCode)).toEqual([72_709_805, 73_747_988]);
+      expect(structured.works.map((work) => work.contributorCount)).toEqual([3_084, 5_246]);
+      expect(structured.works.map((work) => work.contributors.length)).toEqual([101, 101]);
+      expect(structured).not.toHaveProperty('deferredPutCodes');
+      expect(structured).not.toHaveProperty('notice');
+      expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(BUDGET);
+      expect(Buffer.byteLength(text)).toBeLessThanOrEqual(BUDGET);
+    });
+
+    it('drops a citation over 8,192 bytes and keeps exactly 100 contributors when none is the owner', async () => {
+      const authors = Array.from({ length: 3_614 }, (_, i) => `Author${i}, A.`).join(' and ');
+      const bibtex = `@article{Abbott:2016blz,\n  author = {${authors}},\n  title = {Observation of Gravitational Waves}\n}`;
+      expect(Buffer.byteLength(bibtex)).toBeGreaterThan(60_000);
+      const { result, structured, text } = await call('0000-0002-5354-5683', [
+        workWith(41_050_822, contributorsOf(3_614), { type: 'bibtex', value: bibtex }),
+      ]);
+
+      const [work] = structured.works;
+      assert(work);
+      expect(work).not.toHaveProperty('citation');
+      expect(work.citationOmitted).toBe(true);
+      expect(work.contributorCount).toBe(3_614);
+      expect(work.contributorsTruncated).toBe(true);
+      expect(work.contributors).toHaveLength(100);
+
+      expect(text).toContain('\n**Contributors (first 100 of 3,614):**\n');
+      expect(text).toContain(
+        '\n**Citation:** omitted — the deposited citation exceeds 8,192 bytes',
+      );
+      expect(text).not.toContain('**Citation (');
+      expect(text).not.toContain('@article{Abbott');
+      expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(BUDGET);
+    });
+
+    it('leaves exactly 100 contributors whole and cuts 101', async () => {
+      const whole = workWith(1, contributorsOf(100));
+      const cut = workWith(2, contributorsOf(101));
+      const { structured, text } = await call(OWNER, [whole, cut]);
+
+      expect(structured.works[0]).toStrictEqual(whole);
+      expect(structured.works[1]?.contributors).toStrictEqual(cut.contributors.slice(0, 100));
+      expect(structured.works[1]?.contributorCount).toBe(101);
+      expect(structured.works[1]?.contributorsTruncated).toBe(true);
+      expect(text).toContain('**Put-code:** 1\n');
+      expect(text.match(/^\*\*Contributors:\*\*$/gm)).toHaveLength(1);
+      expect(text).toContain('\n**Contributors (first 100 of 101):**\n');
+    });
+
+    it('never repeats an owner entry inside the first 100 and keeps every later one in order', async () => {
+      const roles = new Map([
+        [120, 'conceptualization'],
+        [121, 'writing-original-draft'],
+        [300, 'supervision'],
+      ]);
+      const source = contributorsOf(400, [10, 120, 121, 300]).map((c, i) => {
+        const role = roles.get(i);
+        return role ? { ...c, role } : c;
+      });
+      const { structured, text } = await call(OWNER, [workWith(1, source)]);
+
+      const kept = structured.works[0]?.contributors ?? [];
+      expect(kept).toStrictEqual([...source.slice(0, 100), source[120], source[121], source[300]]);
+      expect(kept.filter((c) => c.orcidId === OWNER)).toHaveLength(4);
+      expect(text).toContain('\n**Contributors (first 100 of 400, plus the record owner):**\n');
+      expect(text).toContain(`- Author300, A. — supervision (additional) [${OWNER}]`);
+    });
+
+    it('matches the owner by iD only, never by name', async () => {
+      const source = contributorsOf(200, [3]);
+      source[150] = { name: 'Author3, A.', role: 'author', sequence: 'additional' };
+      const { structured, text } = await call(OWNER, [workWith(1, source)]);
+
+      expect(structured.works[0]?.contributors).toStrictEqual(source.slice(0, 100));
+      expect(text).toContain('\n**Contributors (first 100 of 200):**\n');
+    });
+
+    it.each([
+      ['8,192 one-byte characters', 'a'.repeat(8_192), true],
+      ['8,193 one-byte characters', 'a'.repeat(8_193), false],
+      ['4,096 two-byte characters (8,192 bytes)', 'ä'.repeat(4_096), true],
+      ['4,097 two-byte characters (8,194 bytes)', 'ä'.repeat(4_097), false],
+    ])('bounds the citation by UTF-8 bytes: %s', async (_, value, kept) => {
+      const citation = { type: 'bibtex', value };
+      const { structured, text } = await call(OWNER, [workWith(1, contributorsOf(3), citation)]);
+
+      const [work] = structured.works;
+      assert(work);
+      if (kept) {
+        expect(work.citation).toStrictEqual(citation);
+        expect(work).not.toHaveProperty('citationOmitted');
+        expect(text).toContain('**Citation (bibtex):**');
+        expect(text).not.toContain('**Citation:** omitted');
+      } else {
+        expect(work).not.toHaveProperty('citation');
+        expect(work.citationOmitted).toBe(true);
+        expect(text).toContain(
+          '**Citation:** omitted — the deposited citation exceeds 8,192 bytes',
+        );
+        expect(text).not.toContain(value);
+      }
+    });
+
+    it('pages capped records through the budget, each put-code exactly once', async () => {
+      const codes = Array.from({ length: 12 }, (_, i) => 500_000 + i);
+      mockGetWorkDetails.mockImplementation(async (_id: string, putCodes: number[]) =>
+        putCodes.map((code) => ({
+          type: 'work',
+          detail: workWith(code, contributorsOf(5_000, [4_000])),
+        })),
+      );
+
+      const resolved: number[] = [];
+      let pending: number[] | undefined = codes;
+      let calls = 0;
+      while (pending) {
+        const result = await runToolContract(orcidGetWorkDetail, {
+          orcid_id: OWNER,
+          put_codes: pending,
+        });
+        const structured = result.structuredContent as CappedResult;
+        expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(BUDGET);
+        expect(Buffer.byteLength(textOf(result))).toBeLessThanOrEqual(BUDGET);
+        expect(structured.works.length).toBeGreaterThan(1);
+        for (const work of structured.works) {
+          expect(work.contributors).toHaveLength(101);
+          expect(work.contributorCount).toBe(5_000);
+        }
+        resolved.push(...structured.works.map((work) => work.putCode));
+        pending = structured.deferredPutCodes;
+        calls++;
+      }
+
+      expect(resolved.toSorted((a, b) => a - b)).toEqual(codes);
+      expect(calls).toBeGreaterThan(1);
     });
   });
 });

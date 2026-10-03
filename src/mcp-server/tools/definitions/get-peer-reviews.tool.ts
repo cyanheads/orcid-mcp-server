@@ -1,11 +1,15 @@
 /**
  * @fileoverview Fetch peer review activity records for an ORCID researcher:
- * convening organizations, reviewer roles, review types, and ISSN-keyed groups.
+ * reviewer roles, review types, ISSN-keyed groups, and convening organizations. A review
+ * with a journal ISSN is headed by it, since the convening organization is often the
+ * service that imported the review.
  * @module mcp-server/tools/definitions/get-peer-reviews.tool
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { SourceSchema, sourcesText } from '@/mcp-server/tools/record-sources.js';
+import { singleLine } from '@/mcp-server/tools/third-party-text.js';
 import { orcidIdSchema } from '@/services/orcid/orcid-id.js';
 import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
 import type { PeerReview } from '@/services/orcid/types.js';
@@ -13,7 +17,7 @@ import type { PeerReview } from '@/services/orcid/types.js';
 export const orcidGetPeerReviews = tool('orcid_get_peer_reviews', {
   title: 'Get ORCID Researcher Peer Reviews',
   description:
-    "Fetch peer review activity for an ORCID researcher: convening organizations (journals and publishers), reviewer role (reviewer, editor, chair, etc.), review type, completion dates, and ISSN-keyed group identifiers. Use to assess editorial activity, journal affiliations, and the scope of a researcher's peer review contributions. Peer review records are self-reported or imported by participating publishers — coverage varies by researcher.",
+    "Fetch peer review activity for an ORCID researcher: reviewer role (reviewer, editor, chair, etc.), review type, completion dates, ISSN-keyed group identifiers, and the convening organization as ORCID records it — often the service that imported the review (e.g. Publons, Clarivate). ORCID returns no journal name; groupIssn is the key to the journal, and a review that has one is headed by it. Use to assess editorial activity, journal affiliations, and the scope of a researcher's peer review contributions. Reviews come from the researcher or from member organizations that import them; sources names who added each, and coverage varies by researcher.",
   annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
@@ -47,7 +51,9 @@ export const orcidGetPeerReviews = tool('orcid_get_peer_reviews', {
                 name: z
                   .string()
                   .optional()
-                  .describe('Convening organization name (journal or publisher).'),
+                  .describe(
+                    'Convening organization name as ORCID records it — often the service that imported the review (e.g. Publons).',
+                  ),
                 city: z.string().optional().describe('Convening organization city.'),
                 country: z.string().optional().describe('Convening organization country.'),
                 disambiguatedId: z
@@ -60,12 +66,21 @@ export const orcidGetPeerReviews = tool('orcid_get_peer_reviews', {
                   .describe('Source of disambiguation (ROR, GRID, RINGGOLD, etc.).'),
               })
               .optional()
-              .describe('Journal or publisher that convened the review.'),
+              .describe(
+                'Organization ORCID records as convening the review, often the importing service. Identify the journal by groupIssn.',
+              ),
             reviewUrl: z.string().optional().describe('URL for the review record, if available.'),
             groupIssn: z
               .string()
               .optional()
-              .describe('ISSN of the journal group this review belongs to, if available.'),
+              .describe(
+                'ISSN of the journal group this review belongs to, if available — the key to the journal name, which ORCID does not return.',
+              ),
+            sources: z
+              .array(SourceSchema)
+              .describe(
+                'The party that added this review to the ORCID record — the researcher, or a member organization such as a review-import service or publisher. Empty when ORCID records no source.',
+              ),
           })
           .describe('Peer review record.'),
       )
@@ -105,7 +120,6 @@ export const orcidGetPeerReviews = tool('orcid_get_peer_reviews', {
         throw ctx.fail(
           'profile_not_found',
           `ORCID iD ${normalizeOrcidId(input.orcid_id)} not found`,
-          { ...ctx.recoveryFor('profile_not_found') },
         );
       }
       throw err;
@@ -119,7 +133,7 @@ export const orcidGetPeerReviews = tool('orcid_get_peer_reviews', {
 
     if (reviews.length === 0) {
       ctx.enrich.notice(
-        'No peer review records found. Coverage depends on researcher self-reporting and publisher participation in ORCID peer review import.',
+        'No peer review records found. Reviews reach ORCID from the researcher or from member organizations that import them, so coverage varies; absence does not mean no review activity.',
       );
     }
 
@@ -144,21 +158,29 @@ export const orcidGetPeerReviews = tool('orcid_get_peer_reviews', {
 
     lines.push('');
     for (const r of result.peerReviews) {
-      const orgName = r.conveningOrganization?.name ?? 'Unknown organization';
-      lines.push(`### ${orgName}`);
+      // The ISSN keys the journal; the convening organization is often the importing
+      // service, so it heads a review only when no ISSN is recorded.
+      const orgName = r.conveningOrganization?.name;
+      if (r.groupIssn) {
+        lines.push(`### Journal ISSN ${singleLine(r.groupIssn)}`);
+        if (orgName) lines.push(`**Convening organization:** ${singleLine(orgName)}`);
+      } else {
+        lines.push(`### ${singleLine(orgName ?? 'Unknown organization')}`);
+      }
       if (r.reviewerRole) lines.push(`**Role:** ${r.reviewerRole}`);
       if (r.reviewType) lines.push(`**Type:** ${r.reviewType}`);
       if (r.completionDate) lines.push(`**Completed:** ${r.completionDate}`);
-      if (r.groupIssn) lines.push(`**Journal ISSN:** ${r.groupIssn}`);
-      if (r.reviewUrl) lines.push(`**URL:** ${r.reviewUrl}`);
+      if (r.reviewUrl) lines.push(`**URL:** ${singleLine(r.reviewUrl)}`);
+      const sources = sourcesText(r.sources);
+      if (sources) lines.push(`**Sources:** ${sources}`);
       // Render all conveningOrganization sub-fields for format parity
       if (r.conveningOrganization?.city)
-        lines.push(`**Org City:** ${r.conveningOrganization.city}`);
+        lines.push(`**Org City:** ${singleLine(r.conveningOrganization.city)}`);
       if (r.conveningOrganization?.country)
         lines.push(`**Org Country:** ${r.conveningOrganization.country}`);
       if (r.conveningOrganization?.disambiguatedId) {
         lines.push(
-          `**Org ID:** ${r.conveningOrganization.disambiguatedId} (${r.conveningOrganization.disambiguationSource ?? 'unknown source'})`,
+          `**Org ID:** ${singleLine(r.conveningOrganization.disambiguatedId)} (${singleLine(r.conveningOrganization.disambiguationSource ?? 'unknown source')})`,
         );
       }
       lines.push('');

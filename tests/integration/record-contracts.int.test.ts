@@ -18,6 +18,10 @@ import {
   BULK_FAILURE_ID,
   createOrcidFetchMock,
   initOrcidServiceForTests,
+  LARGE_COLLAB_CITATION,
+  LARGE_COLLAB_CONTRIBUTORS,
+  LARGE_COLLAB_ID,
+  LARGE_COLLAB_PUT_CODE,
   MISSING_ID,
   RATE_LIMITED_ID,
   RESEARCHER_ID,
@@ -46,6 +50,7 @@ toolContractSuite(orcidGetProfile, {
         orcidId: RESEARCHER_ID,
         orcidUri: `https://orcid.org/${RESEARCHER_ID}`,
         familyName: 'Doudna',
+        otherNames: ['Josiah Stinkney Carberry', 'J. Carberry', 'J. S. Carberry'],
       },
       assert: (result) => {
         const structured = result.structuredContent as {
@@ -55,6 +60,13 @@ toolContractSuite(orcidGetProfile, {
           type: 'Scopus Author ID',
           value: '6603342255',
         });
+        const text = result.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
+        expect(text).toContain(
+          '**Credit Name:** Jennifer A. Doudna\n**Other Names:** Josiah Stinkney Carberry, J. Carberry, J. S. Carberry\n**ORCID URI:**',
+        );
+        // Every section is populated, so no empty-section notice reaches either surface.
+        expect(result.structuredContent).not.toHaveProperty('notice');
+        expect(text).not.toContain('This profile has no public');
       },
     },
     {
@@ -84,6 +96,48 @@ toolContractSuite(orcidGetWorks, {
         offset: 0,
         nextOffset: 1,
         truncated: true,
+      },
+    },
+    {
+      name: 'carries identifiers another source in the work group holds',
+      input: { orcid_id: RESEARCHER_ID, limit: 1 },
+      assert: (result) => {
+        const structured = result.structuredContent as {
+          works: { externalIds?: { type: string; value: string; relationship?: string }[] }[];
+        };
+        expect(structured.works[0]?.externalIds).toEqual([
+          {
+            type: 'doi',
+            value: '10.1126/science.1225829',
+            url: 'https://doi.org/10.1126/science.1225829',
+            relationship: 'self',
+          },
+          { type: 'pmid', value: '22745249', relationship: 'self' },
+          { type: 'pmc', value: 'PMC6286148', relationship: 'self' },
+        ]);
+        const text = result.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
+        expect(text).toContain('pmid:22745249 [self], pmc:PMC6286148 [self]');
+        expect(text).not.toContain('inst-000417');
+      },
+    },
+    {
+      name: 'lists every source in the work group, and none for a sourceless summary',
+      input: { orcid_id: RESEARCHER_ID },
+      assert: (result) => {
+        const structured = result.structuredContent as { works: { sources: unknown[] }[] };
+        expect(structured.works[0]?.sources).toEqual([
+          { name: 'Crossref', selfAsserted: false },
+          {
+            name: 'Europe PubMed Central',
+            assertionOriginName: 'Jennifer Doudna',
+            selfAsserted: true,
+          },
+        ]);
+        expect(structured.works[1]?.sources).toEqual([]);
+        const text = result.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
+        expect(text).toContain(
+          '**Sources:** Crossref; Jennifer Doudna via Europe PubMed Central (self-asserted)\n',
+        );
       },
     },
     {
@@ -123,7 +177,48 @@ toolContractSuite(orcidGetWorkDetail, {
         expect(structured.works[0]?.putCode).toBe(RESOLVED_PUT_CODE);
         expect(structured.works[0]?.abstract).toContain('RNA-programmable');
         expect(structured.works[0]?.contributors).toHaveLength(2);
+        expect((structured.works[0] as { sources?: unknown }).sources).toEqual([
+          { name: 'Crossref', selfAsserted: false },
+        ]);
         expect(structured.errors[0]?.putCode).toBe(UNRESOLVED_PUT_CODE);
+      },
+    },
+    {
+      name: 'caps a large-collaboration record: first 100 contributors plus the owner, no citation (#52)',
+      input: { orcid_id: LARGE_COLLAB_ID, put_codes: [LARGE_COLLAB_PUT_CODE] },
+      assert: (result) => {
+        const [work] = (
+          result.structuredContent as {
+            works: {
+              putCode: number;
+              contributors: { name?: string; orcidId?: string }[];
+              contributorCount?: number;
+              contributorsTruncated?: boolean;
+              citation?: unknown;
+              citationOmitted?: boolean;
+            }[];
+          }
+        ).works;
+        expect(Buffer.byteLength(LARGE_COLLAB_CITATION)).toBeGreaterThan(8_192);
+        expect(work?.putCode).toBe(LARGE_COLLAB_PUT_CODE);
+        expect(work?.contributors).toHaveLength(101);
+        expect(work?.contributors[99]).toEqual({ name: 'Author 99', role: 'author' });
+        expect(work?.contributors[100]).toEqual({
+          name: 'Owner R.',
+          orcidId: LARGE_COLLAB_ID,
+          role: 'author',
+        });
+        expect(work?.contributorCount).toBe(LARGE_COLLAB_CONTRIBUTORS);
+        expect(work?.contributorsTruncated).toBe(true);
+        expect(work).not.toHaveProperty('citation');
+        expect(work?.citationOmitted).toBe(true);
+        const text = result.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
+        expect(text).toContain(
+          `**Contributors (first 100 of ${LARGE_COLLAB_CONTRIBUTORS}, plus the record owner):**`,
+        );
+        expect(text).toContain(
+          '**Citation:** omitted — the deposited citation exceeds 8,192 bytes',
+        );
       },
     },
   ],

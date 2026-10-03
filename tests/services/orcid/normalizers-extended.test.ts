@@ -1,7 +1,7 @@
 /**
  * @fileoverview Extended normalizer tests: normalizeDate with full date, normalizeOrg
- * edge cases, normalizeActivities multi-type and all-types, normalizePerson keyword
- * filtering, normalizeFundings URL, normalizePeerReviews with ROR org.
+ * edge cases, normalizeActivities multi-type and all-types, normalizePerson keyword and
+ * other-name filtering, normalizeFundings URL, normalizePeerReviews with ROR org.
  * @module tests/services/orcid/normalizers-extended.test
  */
 
@@ -21,6 +21,9 @@ import type {
   RawPerson,
   RawWorksResponse,
 } from '@/services/orcid/types.js';
+
+/** The requested ORCID iD every fixture is normalized against. */
+const ORCID_ID = '0000-0002-1825-0097';
 
 // ---------------------------------------------------------------------------
 // normalizePerson edge cases
@@ -46,6 +49,15 @@ describe('normalizePerson — edge cases', () => {
     };
     const result = normalizePerson(raw);
     expect(result.keywords).toEqual(['Genomics']);
+  });
+
+  it('drops other names with blank or missing content', () => {
+    const raw: RawPerson = {
+      'other-names': {
+        'other-name': [{ content: 'J. Carberry' }, { content: '' }, {}, { content: 'J. S. C.' }],
+      },
+    };
+    expect(normalizePerson(raw).otherNames).toEqual(['J. Carberry', 'J. S. C.']);
   });
 
   it('normalizes multiple external identifiers', () => {
@@ -126,7 +138,7 @@ describe('normalizeWorks — date normalization', () => {
         },
       ],
     };
-    const [work] = normalizeWorks(raw);
+    const [work] = normalizeWorks(raw, ORCID_ID);
     assert(work);
     expect(work.publicationDate).toBe('2012-08-17');
   });
@@ -147,7 +159,7 @@ describe('normalizeWorks — date normalization', () => {
         },
       ],
     };
-    const [work] = normalizeWorks(raw);
+    const [work] = normalizeWorks(raw, ORCID_ID);
     assert(work);
     expect(work.publicationDate).toBe('2020-03');
   });
@@ -165,7 +177,7 @@ describe('normalizeWorks — date normalization', () => {
         },
       ],
     };
-    const [work] = normalizeWorks(raw);
+    const [work] = normalizeWorks(raw, ORCID_ID);
     assert(work);
     expect(work.url).toBe('https://doi.org/10.1/test');
   });
@@ -190,7 +202,7 @@ describe('normalizeWorks — date normalization', () => {
         },
       ],
     };
-    const [work] = normalizeWorks(raw);
+    const [work] = normalizeWorks(raw, ORCID_ID);
     assert(work);
     const [doi] = work.externalIds;
     assert(doi);
@@ -252,7 +264,7 @@ describe('normalizeActivities — multiple types', () => {
   };
 
   it('returns employment + education when both types requested', () => {
-    const result = normalizeActivities(fullRaw, ['employment', 'education']);
+    const result = normalizeActivities(fullRaw, ['employment', 'education'], ORCID_ID);
     expect(result).toHaveLength(2);
     const types = result.map((a) => a.type);
     expect(types).toContain('employment');
@@ -260,7 +272,7 @@ describe('normalizeActivities — multiple types', () => {
   });
 
   it('returns memberships when memberships type requested', () => {
-    const result = normalizeActivities(fullRaw, ['memberships']);
+    const result = normalizeActivities(fullRaw, ['memberships'], ORCID_ID);
     expect(result).toHaveLength(1);
     const [membership] = result;
     assert(membership);
@@ -270,7 +282,7 @@ describe('normalizeActivities — multiple types', () => {
   });
 
   it('returns all types when "all" is in types array', () => {
-    const result = normalizeActivities(fullRaw, ['all']);
+    const result = normalizeActivities(fullRaw, ['all'], ORCID_ID);
     const types = new Set(result.map((a) => a.type));
     expect(types.has('employment')).toBe(true);
     expect(types.has('education')).toBe(true);
@@ -278,7 +290,7 @@ describe('normalizeActivities — multiple types', () => {
   });
 
   it('returns empty array when requested type section is absent', () => {
-    const result = normalizeActivities(fullRaw, ['distinctions']);
+    const result = normalizeActivities(fullRaw, ['distinctions'], ORCID_ID);
     expect(result).toEqual([]);
   });
 
@@ -300,7 +312,7 @@ describe('normalizeActivities — multiple types', () => {
         ],
       },
     };
-    const [employment] = normalizeActivities(raw, ['employment']);
+    const [employment] = normalizeActivities(raw, ['employment'], ORCID_ID);
     assert(employment);
     expect(employment.url).toBe('https://example.org/researcher');
   });
@@ -329,7 +341,7 @@ describe('normalizeActivities — multiple types', () => {
         ],
       },
     };
-    const [service] = normalizeActivities(raw, ['services']);
+    const [service] = normalizeActivities(raw, ['services'], ORCID_ID);
     assert(service);
     expect(service.organization?.disambiguatedId).toBe('https://ror.org/0018yg518');
     expect(service.organization?.disambiguationSource).toBe('ROR');
@@ -358,7 +370,7 @@ describe('normalizeActivities — multiple types', () => {
         ],
       },
     };
-    const result = normalizeActivities(raw, ['distinctions']);
+    const result = normalizeActivities(raw, ['distinctions'], ORCID_ID);
     expect(result).toHaveLength(2);
     expect(result.map((a) => a.role)).toEqual(['Medal of Honour', 'Fellow']);
   });
@@ -383,7 +395,7 @@ describe('normalizeFundings — edge cases', () => {
         },
       ],
     };
-    const [record] = normalizeFundings(raw);
+    const [record] = normalizeFundings(raw, ORCID_ID);
     assert(record);
     expect(record.url).toBe('https://grantome.com/test');
   });
@@ -402,8 +414,9 @@ describe('normalizeFundings — edge cases', () => {
         },
       ],
     };
-    const records = normalizeFundings(raw);
-    expect(records).toHaveLength(3);
+    const records = normalizeFundings(raw, ORCID_ID);
+    // One record per group, each from its first (preferred) summary, in group order.
+    expect(records.map((r) => r.title)).toEqual(['Grant A', 'Grant C']);
   });
 
   it('handles funding with full date normalization', () => {
@@ -420,7 +433,7 @@ describe('normalizeFundings — edge cases', () => {
         },
       ],
     };
-    const [record] = normalizeFundings(raw);
+    const [record] = normalizeFundings(raw, ORCID_ID);
     assert(record);
     expect(record.startDate).toBe('2015-06');
     expect(record.endDate).toBe('2020-12');
@@ -434,7 +447,7 @@ describe('normalizeFundings — edge cases', () => {
         },
       ],
     };
-    const [record] = normalizeFundings(raw);
+    const [record] = normalizeFundings(raw, ORCID_ID);
     assert(record);
     expect(record.grantNumbers).toEqual([]);
   });
@@ -443,7 +456,7 @@ describe('normalizeFundings — edge cases', () => {
     const raw: RawFundingsResponse = {
       group: [{ 'funding-summary': [] }],
     };
-    const records = normalizeFundings(raw);
+    const records = normalizeFundings(raw, ORCID_ID);
     expect(records).toEqual([]);
   });
 });
@@ -474,7 +487,7 @@ describe('normalizePeerReviews — edge cases', () => {
         },
       ],
     };
-    const [review] = normalizePeerReviews(raw);
+    const [review] = normalizePeerReviews(raw, ORCID_ID);
     assert(review);
     expect(review.completionDate).toBe('2021-03-15');
   });
@@ -508,7 +521,7 @@ describe('normalizePeerReviews — edge cases', () => {
         },
       ],
     };
-    const [review] = normalizePeerReviews(raw);
+    const [review] = normalizePeerReviews(raw, ORCID_ID);
     assert(review);
     expect(review.conveningOrganization?.disambiguatedId).toBe('https://ror.org/00abcd');
     expect(review.conveningOrganization?.disambiguationSource).toBe('ROR');
@@ -531,7 +544,7 @@ describe('normalizePeerReviews — edge cases', () => {
         },
       ],
     };
-    const reviews = normalizePeerReviews(raw);
+    const reviews = normalizePeerReviews(raw, ORCID_ID);
     expect(reviews).toHaveLength(2);
     const [reviewer, editor] = reviews;
     assert(reviewer);
@@ -549,7 +562,7 @@ describe('normalizePeerReviews — edge cases', () => {
         },
       ],
     };
-    const reviews = normalizePeerReviews(raw);
+    const reviews = normalizePeerReviews(raw, ORCID_ID);
     expect(reviews).toEqual([]);
   });
 });

@@ -7,7 +7,7 @@
  */
 
 import { resource, z } from '@cyanheads/mcp-ts-core';
-import { invalidParams, JsonRpcErrorCode, McpError, notFound } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { isValidOrcidId, orcidIdParamSchema } from '@/services/orcid/orcid-id.js';
 import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
 
@@ -61,27 +61,45 @@ export const researcherWorksResource = resource('orcid://researcher/{orcid_id}/w
       .describe('The first 25 works for this ORCID iD; use orcid_get_works to page the full list.'),
   }),
 
+  errors: [
+    {
+      reason: 'invalid_orcid_id',
+      code: JsonRpcErrorCode.InvalidParams,
+      when: 'The ORCID iD fails its ISO 7064 check digit; rejected before any upstream call.',
+      recovery:
+        'Check the ORCID iD for a mistyped digit — the last character is a checksum of the first 15 digits.',
+    },
+    {
+      reason: 'profile_not_found',
+      code: JsonRpcErrorCode.NotFound,
+      when: 'ORCID has no record for the iD.',
+      recovery: 'Verify the ORCID iD or use orcid_search_researchers to find a public record.',
+    },
+  ],
+
   async handler(params, ctx) {
     // Reject a checksum-invalid iD locally, before any upstream call — mirrors the
     // tool route's InvalidParams. The regex-only param schema matched the shape; the
-    // ISO 7064 check digit is verified here.
-    if (!isValidOrcidId(params.orcid_id)) {
-      throw invalidParams(
-        `The ORCID iD ${params.orcid_id} is invalid — its ISO 7064 check digit does not match. Verify the iD and try again.`,
+    // ISO 7064 check digit is verified here, on the canonical (uppercase-X) iD.
+    const bareId = normalizeOrcidId(params.orcid_id);
+    if (!isValidOrcidId(bareId)) {
+      throw ctx.fail(
+        'invalid_orcid_id',
+        `The ORCID iD ${bareId} is invalid — its ISO 7064 check digit does not match. Verify the iD and try again.`,
       );
     }
 
     const service = getOrcidService();
-    const bareId = normalizeOrcidId(params.orcid_id);
 
     ctx.log.debug('orcid-researcher-works resource', { orcidId: bareId });
 
     let works: Awaited<ReturnType<typeof service.getWorks>>;
     try {
-      works = await service.getWorks(params.orcid_id, ctx);
+      works = await service.getWorks(bareId, ctx);
     } catch (err) {
       if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
-        throw notFound(
+        throw ctx.fail(
+          'profile_not_found',
           `No works record found for ORCID iD ${bareId}. The record may not exist or may be fully private.`,
           { orcidId: bareId },
           { cause: err },

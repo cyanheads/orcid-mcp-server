@@ -3,6 +3,8 @@
  * typed domain objects. Preserves absence as unknown rather than inventing defaults.
  * Work, funding, and research-resource titles and work abstracts pass through the
  * `toPlainText` markup boundary; identifiers, URLs, and the deposited citation do not.
+ * Every activity record carries `sources` — who asserted it — so the activity normalizers
+ * take the requested ORCID iD to decide `selfAsserted`.
  * @module services/orcid/normalizers
  */
 
@@ -15,6 +17,7 @@ import type {
   ExpandedSearchResponse,
   ExpandedSearchResult,
   ExternalIdentifier,
+  FundingPeriod,
   FundingRecord,
   NormalizedDate,
   OrcidDate,
@@ -29,12 +32,14 @@ import type {
   RawFundingGroup,
   RawFundingSummary,
   RawFundingsResponse,
+  RawOrcidPathRef,
   RawOrganization,
   RawPeerReviewGroup,
   RawPeerReviewsResponse,
   RawPerson,
   RawResearchResourceGroup,
   RawResearchResourcesResponse,
+  RawSource,
   RawWorkContributor,
   RawWorkDetail,
   RawWorkExternalId,
@@ -42,6 +47,7 @@ import type {
   RawWorksGroup,
   RawWorksResponse,
   ResearchResource,
+  Source,
   Work,
   WorkContributor,
   WorkDetail,
@@ -95,6 +101,87 @@ function normalizeExternalIds(raw: RawWorkExternalId[] | undefined): ExternalIde
   return raw.map(normalizeExternalId).filter((id): id is ExternalIdentifier => id !== undefined);
 }
 
+/**
+ * Who asserted an item, and whether that party is the requested iD. The asserting party is
+ * the assertion origin when one is recorded, otherwise the source. Only an `-orcid` reference
+ * can be the researcher: a member client's path can share the iD format (Crossref's does).
+ */
+function normalizeSource(raw: RawSource, orcidId: string): Source {
+  const hasOrigin = Boolean(raw['assertion-origin-orcid'] || raw['assertion-origin-client-id']);
+  const assertingOrcid = hasOrigin
+    ? raw['assertion-origin-orcid']?.path
+    : raw['source-orcid']?.path;
+  const name = raw['source-name']?.value;
+  const assertionOriginName = raw['assertion-origin-name']?.value;
+  return {
+    ...(name && { name }),
+    ...(assertionOriginName && { assertionOriginName }),
+    selfAsserted: assertingOrcid === orcidId,
+  };
+}
+
+/** Identity of an asserting party: its source reference plus its assertion-origin reference. */
+function sourceKey(raw: RawSource): string {
+  const ref = (kind: string, r: RawOrcidPathRef | null | undefined) =>
+    r?.path ? `${kind}:${r.path}` : undefined;
+  return JSON.stringify([
+    ref('orcid', raw['source-orcid']) ?? ref('client', raw['source-client-id']),
+    ref('orcid', raw['assertion-origin-orcid']) ?? ref('client', raw['assertion-origin-client-id']),
+  ]);
+}
+
+/**
+ * The sources of one record's summaries in summary order, each asserting party once. A
+ * summary with no `source` block contributes none.
+ */
+function normalizeSources(
+  summaries: ReadonlyArray<{ source?: RawSource | null }>,
+  orcidId: string,
+): Source[] {
+  const seen = new Set<string>();
+  return summaries.flatMap(({ source }) => {
+    if (!source) return [];
+    const key = sourceKey(source);
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [normalizeSource(source, orcidId)];
+  });
+}
+
+/** Identifier type whose value is local to the source that issued it. */
+const SOURCE_WORK_ID = 'source-work-id';
+
+/**
+ * Identity of an external identifier for de-duplication: type, relationship, and ORCID's
+ * normalized value (the trimmed raw value when absent). The normalized value folds the
+ * spellings sources disagree on — DOI case, a `PMC` prefix.
+ */
+function externalIdKey(raw: RawWorkExternalId): string {
+  const value = raw['external-id-normalized']?.value || raw['external-id-value']?.trim();
+  return JSON.stringify([raw['external-id-type'], raw['external-id-relationship'], value]);
+}
+
+/**
+ * A work group's identifiers: the representative summary's own list in upstream order,
+ * then each group-level identifier not already present, in group order. A group-level
+ * `source-work-id` is skipped — detached from its source it would read as the
+ * representative's own.
+ */
+function workGroupExternalIds(
+  group: RawWorksGroup,
+  representative: RawWorkSummary,
+): RawWorkExternalId[] {
+  const own = representative['external-ids']?.['external-id'] ?? [];
+  const seen = new Set(own.map(externalIdKey));
+  const added = (group['external-ids']?.['external-id'] ?? []).filter((id) => {
+    const key = externalIdKey(id);
+    if (id['external-id-type'] === SOURCE_WORK_ID || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return [...own, ...added];
+}
+
 type NonAllAffiliationType = Exclude<AffiliationType, 'all'>;
 
 const ALL_AFFILIATION_TYPES: NonAllAffiliationType[] = [
@@ -129,9 +216,9 @@ const AFFILIATION_SUMMARY_KEYS: Record<NonAllAffiliationType, AffiliationSummary
   services: 'service-summary',
 };
 
-function normalizeSummary(raw: RawAffiliationSummary, type: string): Affiliation {
+function normalizeSummary(raw: RawAffiliationSummary, type: string, orcidId: string): Affiliation {
   const org = normalizeOrg(raw.organization);
-  const aff: Affiliation = { type };
+  const aff: Affiliation = { type, sources: normalizeSources([raw], orcidId) };
   if (org) aff.organization = org;
   if (raw['department-name']) aff.department = raw['department-name'];
   if (raw['role-title']) aff.role = raw['role-title'];
@@ -151,19 +238,21 @@ function normalizeSummary(raw: RawAffiliationSummary, type: string): Affiliation
 function extractSummariesFromGroup(
   group: RawAffiliationGroup | undefined,
   type: NonAllAffiliationType,
+  orcidId: string,
 ): Affiliation[] {
   const key = AFFILIATION_SUMMARY_KEYS[type];
   return (group?.summaries ?? []).flatMap((entry) => {
     const summary = entry[key];
-    return summary ? [normalizeSummary(summary, type)] : [];
+    return summary ? [normalizeSummary(summary, type, orcidId)] : [];
   });
 }
 
 function extractGroupSummaries(
   groups: RawAffiliationGroup[] | undefined,
   type: NonAllAffiliationType,
+  orcidId: string,
 ): Affiliation[] {
-  return (groups ?? []).flatMap((g) => extractSummariesFromGroup(g, type));
+  return (groups ?? []).flatMap((g) => extractSummariesFromGroup(g, type, orcidId));
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +264,8 @@ export type NormalizedPerson = {
   givenNames?: string;
   familyName?: string;
   creditName?: string;
+  /** Other names in upstream order; entries blank after trimming dropped. */
+  otherNames: string[];
   biography?: string;
   keywords: string[];
   researcherUrls: Array<{ name?: string; url: string }>;
@@ -186,6 +277,7 @@ export type NormalizedPerson = {
 export function normalizePerson(raw: RawPerson): NormalizedPerson {
   const name = raw.name;
   const result: NormalizedPerson = {
+    otherNames: [],
     keywords: [],
     researcherUrls: [],
     externalIdentifiers: [],
@@ -202,7 +294,11 @@ export function normalizePerson(raw: RawPerson): NormalizedPerson {
   const biography = raw.biography?.content?.trim() || undefined;
   if (biography) result.biography = biography;
 
-  result.keywords = raw.keywords?.keyword?.map((k) => k.content ?? '').filter(Boolean) ?? [];
+  // An entry blank after trimming carries nothing; every other value is kept verbatim.
+  const nonBlank = (values: (string | undefined)[] | undefined) =>
+    (values ?? []).filter((value): value is string => Boolean(value?.trim()));
+  result.otherNames = nonBlank(raw['other-names']?.['other-name']?.map((n) => n.content));
+  result.keywords = nonBlank(raw.keywords?.keyword?.map((k) => k.content));
 
   result.researcherUrls =
     raw['researcher-urls']?.['researcher-url']?.flatMap((u) => {
@@ -234,9 +330,12 @@ export function normalizePerson(raw: RawPerson): NormalizedPerson {
   return result;
 }
 
-function normalizeWorkSummary(raw: RawWorkSummary): Work {
-  const externalIds = normalizeExternalIds(raw['external-ids']?.['external-id']);
-  const work: Work = { externalIds };
+function normalizeWorkSummary(
+  raw: RawWorkSummary,
+  rawIds: RawWorkExternalId[],
+  sources: Source[],
+): Work {
+  const work: Work = { externalIds: normalizeExternalIds(rawIds), sources };
   if (raw['put-code'] != null) work.putCode = raw['put-code'];
   const title = toPlainText(raw.title?.title?.value);
   if (title) work.title = title;
@@ -249,16 +348,31 @@ function normalizeWorkSummary(raw: RawWorkSummary): Work {
   return work;
 }
 
-export function normalizeWorks(raw: RawWorksResponse): Work[] {
+/**
+ * One record per ORCID work group, built from `work-summary[0]` — ORCID sorts each group
+ * so its preferred version comes first — carrying the identifiers and sources of the
+ * whole group. `orcidId` is the requested iD, which `selfAsserted` compares against.
+ */
+export function normalizeWorks(raw: RawWorksResponse, orcidId: string): Work[] {
   return (raw.group ?? []).flatMap((g: RawWorksGroup) => {
-    // Return the first (preferred) work summary per group
-    const preferred = g['work-summary']?.[0];
+    const summaries = g['work-summary'] ?? [];
+    const preferred = summaries[0];
     if (!preferred) return [];
-    return [normalizeWorkSummary(preferred)];
+    return [
+      normalizeWorkSummary(
+        preferred,
+        workGroupExternalIds(g, preferred),
+        normalizeSources(summaries, orcidId),
+      ),
+    ];
   });
 }
 
-export function normalizeActivities(raw: RawActivities, types: AffiliationType[]): Affiliation[] {
+export function normalizeActivities(
+  raw: RawActivities,
+  types: AffiliationType[],
+  orcidId: string,
+): Affiliation[] {
   const resolvedTypes = types.includes('all')
     ? ALL_AFFILIATION_TYPES
     : (types as NonAllAffiliationType[]);
@@ -268,16 +382,16 @@ export function normalizeActivities(raw: RawActivities, types: AffiliationType[]
     const section = (
       raw as Record<string, { 'affiliation-group'?: RawAffiliationGroup[] } | undefined>
     )[key];
-    return extractGroupSummaries(section?.['affiliation-group'], type);
+    return extractGroupSummaries(section?.['affiliation-group'], type, orcidId);
   });
 }
 
-function normalizeFundingSummary(raw: RawFundingSummary): FundingRecord {
+function normalizeFundingSummary(raw: RawFundingSummary, sources: Source[]): FundingRecord {
   const funder = normalizeOrg(raw.organization);
   const grantNumbers = normalizeExternalIds(raw['external-ids']?.['external-id'])
     .filter((id) => id.type === 'grant_number')
     .map((id) => id.value);
-  const record: FundingRecord = { grantNumbers };
+  const record: FundingRecord = { grantNumbers, sources };
   const title = toPlainText(raw.title?.title?.value);
   if (title) record.title = title;
   if (raw.type) record.type = raw.type;
@@ -290,13 +404,48 @@ function normalizeFundingSummary(raw: RawFundingSummary): FundingRecord {
   return record;
 }
 
-export function normalizeFundings(raw: RawFundingsResponse): FundingRecord[] {
-  return (raw.group ?? []).flatMap((g: RawFundingGroup) =>
-    (g['funding-summary'] ?? []).map((s) => normalizeFundingSummary(s)),
+/**
+ * Every distinct dated period across a funding group's versions, ordered by start date
+ * (a period with no start last), or undefined when fewer than two are distinct. A version
+ * with neither date contributes none. One grant number can cover distinct award periods,
+ * so differing versions stay visible rather than collapsing into a span none recorded.
+ */
+function fundingPeriods(summaries: RawFundingSummary[]): FundingPeriod[] | undefined {
+  const distinct = new Map<string, FundingPeriod>();
+  for (const s of summaries) {
+    const startDate = normalizeDate(s['start-date']);
+    const endDate = normalizeDate(s['end-date']);
+    if (!startDate && !endDate) continue;
+    distinct.set(JSON.stringify([startDate, endDate]), {
+      ...(startDate && { startDate }),
+      ...(endDate && { endDate }),
+    });
+  }
+  if (distinct.size < 2) return;
+  const startKey = (p: FundingPeriod) => p.startDate ?? '￿';
+  return [...distinct.values()].sort((a, b) =>
+    startKey(a) < startKey(b) ? -1 : startKey(a) > startKey(b) ? 1 : 0,
   );
 }
 
-export function normalizePeerReviews(raw: RawPeerReviewsResponse): PeerReview[] {
+/**
+ * One record per ORCID funding group, built from `funding-summary[0]` (ORCID's preferred
+ * version) with the sources of every version, plus `periods` when the versions record
+ * distinct award periods. `orcidId` is the requested iD, which `selfAsserted` compares against.
+ */
+export function normalizeFundings(raw: RawFundingsResponse, orcidId: string): FundingRecord[] {
+  return (raw.group ?? []).flatMap((g: RawFundingGroup) => {
+    const summaries = g['funding-summary'] ?? [];
+    const preferred = summaries[0];
+    if (!preferred) return [];
+    const record = normalizeFundingSummary(preferred, normalizeSources(summaries, orcidId));
+    const periods = fundingPeriods(summaries);
+    if (periods) record.periods = periods;
+    return [record];
+  });
+}
+
+export function normalizePeerReviews(raw: RawPeerReviewsResponse, orcidId: string): PeerReview[] {
   return (raw.group ?? []).flatMap((g: RawPeerReviewGroup) => {
     // ORCID types the group identifier `peer-review` and carries the ISSN inside the
     // value as `issn:1476-4687`. Non-journal groups use other prefixes (`orcid-generated:`),
@@ -309,7 +458,7 @@ export function normalizePeerReviews(raw: RawPeerReviewsResponse): PeerReview[] 
     return (g['peer-review-group'] ?? []).flatMap((prg) =>
       (prg['peer-review-summary'] ?? []).map((s): PeerReview => {
         const org = normalizeOrg(s['convening-organization']);
-        const review: PeerReview = {};
+        const review: PeerReview = { sources: normalizeSources([s], orcidId) };
         if (s['reviewer-role']) review.reviewerRole = s['reviewer-role'];
         if (s['review-type']) review.reviewType = s['review-type'];
         const completionDate = normalizeDate(s['completion-date']);
@@ -356,13 +505,14 @@ function normalizeContributor(raw: RawWorkContributor): WorkContributor {
   return contributor;
 }
 
-export function normalizeWorkDetail(raw: RawWorkDetail): WorkDetail {
+export function normalizeWorkDetail(raw: RawWorkDetail, orcidId: string): WorkDetail {
   const externalIds = normalizeExternalIds(raw['external-ids']?.['external-id']);
   const contributors = (raw.contributors?.contributor ?? []).map(normalizeContributor);
   const detail: WorkDetail = {
     putCode: raw['put-code'] ?? 0,
     externalIds,
     contributors,
+    sources: normalizeSources([raw], orcidId),
   };
   const titleVal = toPlainText(raw.title?.title?.value);
   if (titleVal) detail.title = titleVal;
@@ -403,7 +553,7 @@ function extractInvalidPutCode(message: string): number | undefined {
  * Each entry is either a `work` (full detail) or an `error` (not-found or access denied).
  * Error entries are surfaced as BulkWorkResult errors rather than failing the whole call.
  */
-export function normalizeBulkWorks(raw: RawBulkWorksResponse): BulkWorkResult[] {
+export function normalizeBulkWorks(raw: RawBulkWorksResponse, orcidId: string): BulkWorkResult[] {
   return (raw.bulk ?? []).map((entry): BulkWorkResult => {
     if (entry.error) {
       const msg =
@@ -414,16 +564,23 @@ export function normalizeBulkWorks(raw: RawBulkWorksResponse): BulkWorkResult[] 
       const putCode = entry.error['put-code'] ?? extractInvalidPutCode(msg);
       return { type: 'error', ...(putCode !== undefined && { putCode }), message: msg };
     }
-    return { type: 'work', detail: normalizeWorkDetail(entry.work) };
+    return { type: 'work', detail: normalizeWorkDetail(entry.work, orcidId) };
   });
 }
 
-export function normalizeResearchResources(raw: RawResearchResourcesResponse): ResearchResource[] {
+export function normalizeResearchResources(
+  raw: RawResearchResourcesResponse,
+  orcidId: string,
+): ResearchResource[] {
   return (raw.group ?? []).flatMap((g: RawResearchResourceGroup) =>
     (g['research-resource-summary'] ?? []).flatMap((s): ResearchResource[] => {
       const putCode = s['put-code'];
       if (!putCode) return [];
-      const resource: ResearchResource = { putCode, externalIds: [] };
+      const resource: ResearchResource = {
+        putCode,
+        externalIds: [],
+        sources: normalizeSources([s], orcidId),
+      };
       const titleVal = toPlainText(s.proposal?.title?.title?.value);
       if (titleVal) resource.title = titleVal;
       const firstOrg = s.proposal?.hosts?.organization?.[0];

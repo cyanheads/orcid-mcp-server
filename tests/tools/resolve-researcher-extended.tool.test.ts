@@ -5,7 +5,7 @@
  */
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidResolveResearcher } from '@/mcp-server/tools/definitions/resolve-researcher.tool.js';
 import type { ExpandedSearchResult } from '@/services/orcid/types.js';
@@ -58,6 +58,7 @@ describe('orcidResolveResearcher — pmid anchor', () => {
   it('falls back to pmid-only query when name+pmid returns nothing', async () => {
     mockExpandedSearch
       .mockResolvedValueOnce({ numFound: 0, results: [] }) // name + pmid returns nothing
+      .mockResolvedValueOnce({ numFound: 0, results: [] }) // other names + pmid returns nothing
       .mockResolvedValueOnce({ numFound: 1, results: [baseCandidate] }); // pmid-only fallback
 
     const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
@@ -288,7 +289,10 @@ describe('orcidResolveResearcher — Solr value escaping (#18)', () => {
   });
 
   it('escapes embedded quotes in the name phrase clause', async () => {
-    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+    // The phrase finds nothing, so the other-names stage follows — two responses.
+    mockExpandedSearch
+      .mockResolvedValueOnce({ numFound: 0, results: [] })
+      .mockResolvedValueOnce({ numFound: 0, results: [] });
 
     const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({ name: 'Jean "Bob" Smith' });
@@ -301,8 +305,10 @@ describe('orcidResolveResearcher — Solr value escaping (#18)', () => {
   });
 
   it('escapes reserved characters in the affiliation phrase clause', async () => {
-    // Primary (with affiliation) returns nothing, so a relaxed pass fires — two responses.
+    // Primary (with affiliation) returns nothing, so the drop-affiliation and other-names
+    // stages fire — three responses.
     mockExpandedSearch
+      .mockResolvedValueOnce({ numFound: 0, results: [] })
       .mockResolvedValueOnce({ numFound: 0, results: [] })
       .mockResolvedValueOnce({ numFound: 0, results: [] });
 
@@ -556,18 +562,17 @@ describe('orcidResolveResearcher — query_failed contract (#31)', () => {
       ),
     );
 
-    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
-    const input = orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna' });
-    const err = (await Promise.resolve(orcidResolveResearcher.handler(input, ctx)).catch(
-      (e: unknown) => e,
-    )) as McpError;
+    const result = await runToolContract(orcidResolveResearcher, { name: 'Jennifer Doudna' });
 
-    expect(err).toBeInstanceOf(McpError);
-    expect(err.code).toBe(JsonRpcErrorCode.InvalidParams);
-    const data = err.data as Record<string, unknown>;
+    expect(result.isError).toBe(true);
+    const { error } = result.structuredContent as {
+      error: { code: number; data: { reason: string; recovery: { hint: string } } };
+    };
+    expect(error.code).toBe(JsonRpcErrorCode.InvalidParams);
+    const { data } = error;
     expect(data.reason).toBe('query_failed');
     // This tool has no raw query field — the hint points at the inputs it does have.
-    const hint = (data.recovery as { hint: string }).hint;
+    const { hint } = data.recovery;
     expect(hint).toContain('name');
     expect(hint).toContain('doi');
     expect(hint).toContain('pmid');
@@ -579,6 +584,7 @@ describe('orcidResolveResearcher — query_failed contract (#31)', () => {
     mockExpandedSearch
       .mockResolvedValueOnce({ numFound: 0, results: [] }) // primary: name + doi + affiliation
       .mockResolvedValueOnce({ numFound: 0, results: [] }) // relaxed: affiliation dropped
+      .mockResolvedValueOnce({ numFound: 0, results: [] }) // other names + doi
       .mockRejectedValueOnce(
         new McpError(JsonRpcErrorCode.InvalidParams, 'ORCID returned HTTP 400 Bad Request.'),
       ); // anchor-only
@@ -593,9 +599,11 @@ describe('orcidResolveResearcher — query_failed contract (#31)', () => {
       (e: unknown) => e,
     )) as McpError;
 
-    expect(mockExpandedSearch).toHaveBeenCalledTimes(3);
+    expect(mockExpandedSearch).toHaveBeenCalledTimes(4);
     expect(err.data?.reason).toBe('query_failed');
-    expect(err.message).toContain('doi-self:');
+    expect(err.message).toBe(
+      'ORCID could not complete the search for query: doi-self:"10.1126\\/science.1225829"',
+    );
   });
 
   it('rethrows a transient upstream failure unchanged so the retryable signal survives', async () => {
@@ -613,6 +621,32 @@ describe('orcidResolveResearcher — query_failed contract (#31)', () => {
     );
 
     expect(err).toBe(upstream);
+  });
+
+  it.each([
+    [
+      'the request deadline',
+      new McpError(JsonRpcErrorCode.Timeout, 'ORCID request exceeded its 25000ms retry deadline.', {
+        reason: 'retry_deadline_exceeded',
+      }),
+    ],
+    [
+      'a rate limit',
+      new McpError(JsonRpcErrorCode.RateLimited, 'ORCID returned HTTP 429.', { retryAfter: '5' }),
+    ],
+  ])('rethrows %s from a fallback stage unchanged, never as query_failed', async (_, upstream) => {
+    mockExpandedSearch
+      .mockResolvedValueOnce({ numFound: 0, results: [] })
+      .mockRejectedValueOnce(upstream);
+
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
+    const input = orcidResolveResearcher.input.parse({ name: 'J. Doudna' });
+    const err = await Promise.resolve(orcidResolveResearcher.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    );
+
+    expect(err).toBe(upstream);
+    expect(mockExpandedSearch).toHaveBeenCalledTimes(2);
   });
 });
 

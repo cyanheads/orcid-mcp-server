@@ -6,6 +6,8 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { SourceSchema, sourcesText } from '@/mcp-server/tools/record-sources.js';
+import { singleLine } from '@/mcp-server/tools/third-party-text.js';
 import { orcidIdSchema } from '@/services/orcid/orcid-id.js';
 import {
   type AffiliationType,
@@ -28,7 +30,7 @@ const AFFILIATION_TYPES = [
 export const orcidGetAffiliations = tool('orcid_get_affiliations', {
   title: 'Get ORCID Researcher Affiliations',
   description:
-    'Fetch affiliation records for an ORCID researcher. The `types` parameter controls which affiliation sections to return: employment, education, invited-positions, distinctions, memberships, qualifications, services, or all. Default is employment and education. Returns organization names, disambiguated organization identifiers (ROR/GRID/Ringgold), departments, roles, and date ranges. Affiliation data is self-reported; absence does not mean no affiliation.',
+    'Fetch affiliation records for an ORCID researcher. The `types` parameter controls which affiliation sections to return: employment, education, invited-positions, distinctions, memberships, qualifications, services, or all. Default is employment and education. Returns organization names, disambiguated organization identifiers (ROR/GRID/Ringgold), departments, roles, date ranges, and sources. Affiliations come from the researcher or from member organizations such as a university research information system; sources names who added each, and selfAsserted tells the two apart. Absence does not mean no affiliation.',
   annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
@@ -92,6 +94,11 @@ export const orcidGetAffiliations = tool('orcid_get_affiliations', {
               .optional()
               .describe('End date (YYYY, YYYY-MM, or YYYY-MM-DD). Absent if current.'),
             url: z.string().optional().describe('URL for the affiliation record, if provided.'),
+            sources: z
+              .array(SourceSchema)
+              .describe(
+                'The party that added this affiliation to the ORCID record — the researcher, or a member organization such as a university research information system. Empty when ORCID records no source.',
+              ),
           })
           .describe('Affiliation record.'),
       )
@@ -108,7 +115,7 @@ export const orcidGetAffiliations = tool('orcid_get_affiliations', {
       .string()
       .optional()
       .describe(
-        'Note when no affiliations were found — may indicate private visibility or no self-reported affiliations.',
+        'Note when no affiliations were found — they may be private, or neither the researcher nor a member organization added any.',
       ),
   },
 
@@ -138,7 +145,6 @@ export const orcidGetAffiliations = tool('orcid_get_affiliations', {
         throw ctx.fail(
           'profile_not_found',
           `ORCID iD ${normalizeOrcidId(input.orcid_id)} not found`,
-          { ...ctx.recoveryFor('profile_not_found') },
         );
       }
       throw err;
@@ -152,7 +158,7 @@ export const orcidGetAffiliations = tool('orcid_get_affiliations', {
 
     if (affiliations.length === 0) {
       ctx.enrich.notice(
-        `No affiliations found for the requested types (${input.types.join(', ')}). These may be set to private or not self-reported.`,
+        `No affiliations found for the requested types (${input.types.join(', ')}). They may be set to private, or neither the researcher nor a member organization added any; absence does not mean no affiliation.`,
       );
     }
 
@@ -189,21 +195,23 @@ export const orcidGetAffiliations = tool('orcid_get_affiliations', {
       lines.push('', `### ${type.charAt(0).toUpperCase() + type.slice(1).replace(/-/g, ' ')}`);
       for (const a of affs) {
         const orgName = a.organization?.name ?? 'Unknown organization';
-        lines.push(`**${orgName}**`);
-        if (a.department) lines.push(`  Department: ${a.department}`);
-        if (a.role) lines.push(`  Role: ${a.role}`);
+        lines.push(`**${singleLine(orgName)}**`);
+        if (a.department) lines.push(`  Department: ${singleLine(a.department)}`);
+        if (a.role) lines.push(`  Role: ${singleLine(a.role)}`);
         // `present` is an open end, not a standalone claim — it renders only when a
         // start date anchors it. With neither date, ORCID stated nothing; render nothing.
         const dateRange = a.startDate ? `${a.startDate} – ${a.endDate ?? 'present'}` : a.endDate;
         if (dateRange) lines.push(`  Dates: ${dateRange}`);
-        if (a.organization?.city) lines.push(`  City: ${a.organization.city}`);
+        if (a.organization?.city) lines.push(`  City: ${singleLine(a.organization.city)}`);
         if (a.organization?.country) lines.push(`  Country: ${a.organization.country}`);
         if (a.organization?.disambiguatedId) {
           lines.push(
-            `  Org ID: ${a.organization.disambiguatedId} (${a.organization.disambiguationSource ?? 'unknown source'})`,
+            `  Org ID: ${singleLine(a.organization.disambiguatedId)} (${singleLine(a.organization.disambiguationSource ?? 'unknown source')})`,
           );
         }
-        if (a.url) lines.push(`  URL: ${a.url}`);
+        if (a.url) lines.push(`  URL: ${singleLine(a.url)}`);
+        const sources = sourcesText(a.sources);
+        if (sources) lines.push(`  Sources: ${sources}`);
         lines.push('');
       }
     }

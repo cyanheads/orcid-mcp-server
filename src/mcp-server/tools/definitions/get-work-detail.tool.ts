@@ -7,15 +7,30 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { SourceSchema, sourcesText } from '@/mcp-server/tools/record-sources.js';
 import {
   countWithinBudget,
   jsonBytes,
   RESPONSE_BYTE_BUDGET,
   recordCost,
 } from '@/mcp-server/tools/response-budget.js';
+import { blockquote, fence, singleLine } from '@/mcp-server/tools/third-party-text.js';
 import { orcidIdSchema } from '@/services/orcid/orcid-id.js';
 import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
 import type { BulkWorkResult, WorkDetail } from '@/services/orcid/types.js';
+
+/**
+ * Contributors a record keeps whole. A longer list keeps this many, in upstream order, plus
+ * every later entry carrying the requested iD, so one large-collaboration record (thousands of
+ * authors) fits the response budget beside others.
+ */
+const CONTRIBUTOR_CAP = 100;
+
+/**
+ * Largest deposited citation kept, in UTF-8 bytes. Some sources deposit BibTeX naming every
+ * author; a cut citation would be invalid, so a longer one is left out whole.
+ */
+const CITATION_MAX_BYTES = 8_192;
 
 const ExternalIdSchema = z
   .object({
@@ -64,41 +79,87 @@ const WorkDetailSchema = z
         value: z.string().describe('Citation string in the specified format.'),
       })
       .optional()
-      .describe('Citation metadata, when provided by the depositing system.'),
+      .describe(
+        'Citation metadata, when provided by the depositing system and no longer than 8,192 bytes.',
+      ),
+    citationOmitted: z
+      .boolean()
+      .optional()
+      .describe(
+        'True when the deposited citation exceeded 8,192 bytes and was left out; the DOI in externalIds still resolves the work. Omitted otherwise.',
+      ),
     url: z.string().optional().describe('URL for the work, when available.'),
     externalIds: z
       .array(ExternalIdSchema)
-      .describe('All external identifiers (DOIs, PMIDs, arXiv IDs, ISBNs, etc.).'),
+      .describe(
+        "External identifiers on this put-code's own record (DOIs, PMIDs, arXiv IDs, ISBNs, etc.). One source's version of the work, so it can hold fewer identifiers than orcid_get_works lists for the whole work group.",
+      ),
     contributors: z
       .array(ContributorSchema)
-      .describe('Work contributors with optional roles. May be empty if not deposited.'),
+      .describe(
+        "Work contributors with optional roles, in upstream order. May be empty if not deposited. When contributorsTruncated is true, holds the first 100 followed by every later entry carrying the requested researcher's iD.",
+      ),
+    contributorCount: z
+      .number()
+      .optional()
+      .describe(
+        'Total contributors on the ORCID record. Present only when contributorsTruncated is true.',
+      ),
+    contributorsTruncated: z
+      .boolean()
+      .optional()
+      .describe(
+        'True when the record lists more than 100 contributors and the list was cut. Omitted when the list is complete.',
+      ),
     languageCode: z.string().optional().describe('Language code of the work, when provided.'),
+    sources: z
+      .array(SourceSchema)
+      .describe(
+        'The party that added this put-code to the ORCID record. Empty when ORCID records no source; orcid_get_works lists every source of the work group.',
+      ),
   })
   .describe('Full detail record for one work.');
 
+type WorkDetailRecord = z.infer<typeof WorkDetailSchema>;
+
+/** Heading for the contributor list, naming the cut when the record was capped. */
+function contributorsHeading(work: WorkDetailRecord): string {
+  if (!work.contributorsTruncated) return '**Contributors:**';
+  const total = work.contributorCount?.toLocaleString('en-US');
+  const owner = work.contributors.length > CONTRIBUTOR_CAP ? ', plus the record owner' : '';
+  return `**Contributors (first ${CONTRIBUTOR_CAP} of ${total}${owner}):**`;
+}
+
 /** The Markdown `format()` renders for one work, opening with its `---` separator. */
-function renderWorkDetail(work: z.infer<typeof WorkDetailSchema>): string {
-  const lines = ['', '---', `## ${work.title ?? '(untitled)'}`, `**Put-code:** ${work.putCode}`];
-  if (work.subtitle) lines.push(`**Subtitle:** ${work.subtitle}`);
+function renderWorkDetail(work: WorkDetailRecord): string {
+  const lines = [
+    '',
+    '---',
+    `## ${singleLine(work.title ?? '(untitled)')}`,
+    `**Put-code:** ${work.putCode}`,
+  ];
+  if (work.subtitle) lines.push(`**Subtitle:** ${singleLine(work.subtitle)}`);
   if (work.workType) lines.push(`**Type:** ${work.workType}`);
   if (work.publicationDate) lines.push(`**Date:** ${work.publicationDate}`);
-  if (work.journalTitle) lines.push(`**Journal:** ${work.journalTitle}`);
-  if (work.url) lines.push(`**URL:** ${work.url}`);
+  if (work.journalTitle) lines.push(`**Journal:** ${singleLine(work.journalTitle)}`);
+  if (work.url) lines.push(`**URL:** ${singleLine(work.url)}`);
   if (work.externalIds.length) {
     const idParts = work.externalIds.map((id) => {
       const rel = id.relationship ? ` [${id.relationship}]` : '';
-      const urlPart = id.url ? ` (${id.url})` : '';
-      return `${id.type}:${id.value}${urlPart}${rel}`;
+      const urlPart = id.url ? ` (${singleLine(id.url)})` : '';
+      return `${id.type}:${singleLine(id.value)}${urlPart}${rel}`;
     });
     lines.push(`**IDs:** ${idParts.join(', ')}`);
   }
+  const sources = sourcesText(work.sources);
+  if (sources) lines.push(`**Sources:** ${sources}`);
   if (work.abstract) {
-    lines.push('', `**Abstract:** ${work.abstract}`);
+    lines.push('', '**Abstract:**', blockquote(work.abstract));
   }
   if (work.contributors.length) {
-    lines.push('', '**Contributors:**');
+    lines.push('', contributorsHeading(work));
     for (const c of work.contributors) {
-      const name = c.name ?? '(unnamed)';
+      const name = singleLine(c.name ?? '(unnamed)');
       const role = c.role ? ` — ${c.role}` : '';
       const seq = c.sequence ? ` (${c.sequence})` : '';
       const orcid = c.orcidId ? ` [${c.orcidId}]` : '';
@@ -106,19 +167,60 @@ function renderWorkDetail(work: z.infer<typeof WorkDetailSchema>): string {
     }
   }
   if (work.citation) {
-    lines.push('', `**Citation (${work.citation.type}):**`, '```', work.citation.value, '```');
+    lines.push('', `**Citation (${work.citation.type}):**`, fence(work.citation.value));
+  }
+  if (work.citationOmitted) {
+    lines.push(
+      '',
+      `**Citation:** omitted — the deposited citation exceeds ${CITATION_MAX_BYTES.toLocaleString('en-US')} bytes`,
+    );
   }
   if (work.languageCode) lines.push(`**Language:** ${work.languageCode}`);
   return lines.join('\n');
 }
 
+/**
+ * The tool's record for one work: the service detail with its two unbounded fields capped.
+ * A contributor list over {@link CONTRIBUTOR_CAP} keeps its head plus every later entry whose
+ * iD is `ownerId` (by iD only — names collide), and a citation over
+ * {@link CITATION_MAX_BYTES} is dropped. Each cut is flagged; an uncut record is unchanged.
+ */
+function toWorkRecord(d: WorkDetail, ownerId: string): WorkDetailRecord {
+  const cut = d.contributors.length > CONTRIBUTOR_CAP;
+  const contributors = cut
+    ? [
+        ...d.contributors.slice(0, CONTRIBUTOR_CAP),
+        ...d.contributors.slice(CONTRIBUTOR_CAP).filter((c) => c.orcidId === ownerId),
+      ]
+    : d.contributors;
+  const citationOmitted =
+    d.citation !== undefined && Buffer.byteLength(d.citation.value) > CITATION_MAX_BYTES;
+  return {
+    putCode: d.putCode,
+    ...(d.title !== undefined && { title: d.title }),
+    ...(d.subtitle !== undefined && { subtitle: d.subtitle }),
+    ...(d.workType !== undefined && { workType: d.workType }),
+    ...(d.publicationDate !== undefined && { publicationDate: d.publicationDate }),
+    ...(d.journalTitle !== undefined && { journalTitle: d.journalTitle }),
+    ...(d.abstract !== undefined && { abstract: d.abstract }),
+    ...(d.citation !== undefined && !citationOmitted && { citation: d.citation }),
+    ...(citationOmitted && { citationOmitted: true }),
+    ...(d.url !== undefined && { url: d.url }),
+    externalIds: d.externalIds,
+    contributors,
+    ...(cut && { contributorCount: d.contributors.length, contributorsTruncated: true }),
+    ...(d.languageCode !== undefined && { languageCode: d.languageCode }),
+    sources: d.sources,
+  };
+}
+
 type WorkError = { putCode?: number; message: string };
 
 /** One bulk entry in response order, before it is sorted into `works` or `errors`. */
-type WorkEntry = { kind: 'work'; record: WorkDetail } | { kind: 'error'; record: WorkError };
+type WorkEntry = { kind: 'work'; record: WorkDetailRecord } | { kind: 'error'; record: WorkError };
 
 function deferredNotice(count: number): string {
-  return `The response reached its ${RESPONSE_BYTE_BUDGET.toLocaleString('en-US')}-byte budget, so ${count} put-code${count === 1 ? ' was' : 's were'} deferred. Call orcid_get_work_detail again with deferredPutCodes as put_codes to fetch ${count === 1 ? 'it' : 'them'}.`;
+  return `Adding the next record would exceed the ${RESPONSE_BYTE_BUDGET.toLocaleString('en-US')}-byte response budget, so ${count} put-code${count === 1 ? ' was' : 's were'} deferred. Call orcid_get_work_detail again with deferredPutCodes as put_codes to fetch ${count === 1 ? 'it' : 'them'}.`;
 }
 
 /** Transient upstream codes the handler keeps, mapped to the outcome its message names. */
@@ -141,7 +243,7 @@ const WorkErrorSchema = z
 export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
   title: 'Get ORCID Work Details (Bulk)',
   description:
-    'Fetch full detail records for 1–100 works by their put-codes in a single request. Put-codes are returned by orcid_get_works in the putCode field of each work entry. Returns the abstract (short-description), all contributors with CRediT roles, the complete external ID list (DOI, PMID, arXiv, ISBN, etc.), citation metadata (BibTeX or other formats when provided), journal title, and URL for each work. Per-record errors (not-found or inaccessible put-codes) are surfaced as error entries rather than failing the whole call. Records are added until the response reaches its 64,000-byte budget; put-codes left out are returned in deferredPutCodes to pass back in a follow-up call. A repeated put-code is fetched once.',
+    "Fetch full detail records for 1–100 works by their put-codes in a single request. Put-codes are returned by orcid_get_works in the putCode field of each work entry. Returns the abstract (short-description), contributors with CRediT roles, the external IDs on that record (DOI, PMID, arXiv, ISBN, etc.), citation metadata (BibTeX or other formats when provided), journal title, URL, and the source that added it for each work. A record listing more than 100 contributors keeps the first 100 plus the requested researcher's own entries, with contributorCount giving the total and contributorsTruncated set; a citation over 8,192 bytes is left out and flagged by citationOmitted. Per-record errors (not-found or inaccessible put-codes) are surfaced as error entries rather than failing the whole call. Records are added while the response stays within its 64,000-byte budget; put-codes left out are returned in deferredPutCodes to pass back in a follow-up call. A repeated put-code is fetched once.",
   annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
@@ -168,7 +270,7 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
       .array(z.number().describe('Deferred work put-code.'))
       .optional()
       .describe(
-        'Requested put-codes left out because the response reached its 64,000-byte budget. Pass them as put_codes in another call to fetch them. Omitted when every put-code was fetched.',
+        'Requested put-codes left out because adding them would exceed the 64,000-byte response budget. Pass them as put_codes in another call to fetch them. Omitted when every put-code was fetched.',
       ),
   }),
 
@@ -219,66 +321,48 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
       // spreading the caught error's data), which is what redacts upstream transport
       // details (url/status/statusText/body) from the client payload.
       if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
-        throw ctx.fail('profile_not_found', `ORCID iD ${bareId} not found`, {
-          ...ctx.recoveryFor('profile_not_found'),
-        });
+        throw ctx.fail('profile_not_found', `ORCID iD ${bareId} not found`);
       }
       const transientOutcome =
         err instanceof McpError ? TRANSIENT_OUTCOMES.get(err.code) : undefined;
       if (err instanceof McpError && transientOutcome) {
-        const { retryable, retryAfter } = err.data ?? {};
+        // `reason` is a framework constant (a deadline expiry's `retry_deadline_exceeded`),
+        // never transport detail, so it rides along with the retry signals.
+        const { retryable, retryAfter, reason } = err.data ?? {};
         throw new McpError(
           err.code,
           `ORCID bulk works endpoint ${transientOutcome} for ${bareId}.`,
           {
             ...(retryable !== undefined && { retryable }),
             ...(retryAfter !== undefined && { retryAfter }),
+            ...(reason !== undefined && { reason }),
           },
           { cause: err },
         );
       }
-      throw ctx.fail(
-        'fetch_failed',
-        `ORCID bulk works endpoint failed for ${bareId}`,
-        { ...ctx.recoveryFor('fetch_failed') },
-        { cause: err },
-      );
+      throw ctx.fail('fetch_failed', `ORCID bulk works endpoint failed for ${bareId}`, undefined, {
+        cause: err,
+      });
     }
 
-    const entries = results.map((result): WorkEntry => {
-      if (result.type === 'error') {
-        return {
-          kind: 'error',
-          record: {
-            ...(result.putCode !== undefined && { putCode: result.putCode }),
-            message: result.message,
-          },
-        };
-      }
-      const d = result.detail;
-      return {
-        kind: 'work',
-        record: {
-          putCode: d.putCode,
-          ...(d.title !== undefined && { title: d.title }),
-          ...(d.subtitle !== undefined && { subtitle: d.subtitle }),
-          ...(d.workType !== undefined && { workType: d.workType }),
-          ...(d.publicationDate !== undefined && { publicationDate: d.publicationDate }),
-          ...(d.journalTitle !== undefined && { journalTitle: d.journalTitle }),
-          ...(d.abstract !== undefined && { abstract: d.abstract }),
-          ...(d.citation !== undefined && { citation: d.citation }),
-          ...(d.url !== undefined && { url: d.url }),
-          externalIds: d.externalIds,
-          contributors: d.contributors,
-          ...(d.languageCode !== undefined && { languageCode: d.languageCode }),
-        },
-      };
-    });
+    const entries = results.map(
+      (result): WorkEntry =>
+        result.type === 'error'
+          ? {
+              kind: 'error',
+              record: {
+                ...(result.putCode !== undefined && { putCode: result.putCode }),
+                message: result.message,
+              },
+            }
+          : { kind: 'work', record: toWorkRecord(result.detail, bareId) },
+    );
 
     // Entries are budgeted in upstream order: the bulk endpoint returns works first, in an
-    // order of its own rather than the request's, then error entries. An error entry's text
-    // line is shorter than its JSON, so its JSON is its cost. A cut response also carries the
-    // deferred list and its notice, sized here for the worst case of every put-code deferred.
+    // order of its own rather than the request's, then error entries. A work is charged after
+    // its caps, so a capped record fits beside others. An error entry's text line is shorter
+    // than its JSON, so its JSON is its cost. A cut response also carries the deferred list and
+    // its notice, sized here for the worst case of every put-code deferred.
     const orcidUri = `https://orcid.org/${bareId}`;
     const kept = entries.slice(
       0,
@@ -295,7 +379,7 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
       ),
     );
 
-    const works: WorkDetail[] = [];
+    const works: WorkDetailRecord[] = [];
     const errors: WorkError[] = [];
     for (const entry of kept) {
       if (entry.kind === 'work') works.push(entry.record);

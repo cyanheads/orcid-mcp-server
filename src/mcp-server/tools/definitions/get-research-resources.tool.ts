@@ -6,6 +6,8 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { SourceSchema, sourcesText } from '@/mcp-server/tools/record-sources.js';
+import { singleLine } from '@/mcp-server/tools/third-party-text.js';
 import { orcidIdSchema } from '@/services/orcid/orcid-id.js';
 import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
 import type { ResearchResource } from '@/services/orcid/types.js';
@@ -38,7 +40,7 @@ const OrgSchema = z
 export const orcidGetResearchResources = tool('orcid_get_research_resources', {
   title: 'Get ORCID Research Resources',
   description:
-    'List research resources associated with an ORCID researcher — compute allocations, equipment access, lab facilities, data resources, and clinical study registrations. This is a newer ORCID section; most researchers have no entries. Returns the resource title, hosting organization, external identifiers (often a URI to the allocation portal), and access period. Most entries are deposited by resource-allocation systems (e.g. ACCESS, XSEDE) rather than researchers themselves.',
+    'List research resources associated with an ORCID researcher — compute allocations, equipment access, lab facilities, data resources, and clinical study registrations. This is a newer ORCID section; most researchers have no entries. Returns the resource title, hosting organization, external identifiers (often a URI to the allocation portal), access period, and the source that added each entry. Most entries are deposited by resource-allocation systems (e.g. ACCESS, XSEDE) rather than researchers themselves.',
   annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
@@ -70,6 +72,11 @@ export const orcidGetResearchResources = tool('orcid_get_research_resources', {
               .optional()
               .describe('Access or allocation end date (YYYY, YYYY-MM, or YYYY-MM-DD).'),
             url: z.string().optional().describe('URL for the resource or allocation record.'),
+            sources: z
+              .array(SourceSchema)
+              .describe(
+                'The party that added this resource to the ORCID record — usually the allocation system that granted it. Empty when ORCID records no source.',
+              ),
           })
           .describe('Research resource record.'),
       )
@@ -115,7 +122,6 @@ export const orcidGetResearchResources = tool('orcid_get_research_resources', {
         throw ctx.fail(
           'profile_not_found',
           `ORCID iD ${normalizeOrcidId(input.orcid_id)} not found`,
-          { ...ctx.recoveryFor('profile_not_found') },
         );
       }
       throw err;
@@ -154,18 +160,18 @@ export const orcidGetResearchResources = tool('orcid_get_research_resources', {
 
     lines.push('');
     for (const r of result.resources) {
-      lines.push(`### ${r.title ?? '(untitled)'}`);
+      lines.push(`### ${singleLine(r.title ?? '(untitled)')}`);
       lines.push(`**Put-code:** ${r.putCode}`);
       if (r.hostOrganization) {
         const org = r.hostOrganization;
         const parts: string[] = [];
-        if (org.name) parts.push(org.name);
-        if (org.city) parts.push(org.city);
+        if (org.name) parts.push(singleLine(org.name));
+        if (org.city) parts.push(singleLine(org.city));
         if (org.country) parts.push(org.country);
         if (parts.length) lines.push(`**Host:** ${parts.join(', ')}`);
         if (org.disambiguatedId) {
           lines.push(
-            `**Host ID:** ${org.disambiguatedId} (${org.disambiguationSource ?? 'unknown source'})`,
+            `**Host ID:** ${singleLine(org.disambiguatedId)} (${singleLine(org.disambiguationSource ?? 'unknown source')})`,
           );
         }
       }
@@ -173,15 +179,17 @@ export const orcidGetResearchResources = tool('orcid_get_research_resources', {
         const period = [r.startDate, r.endDate].filter(Boolean).join(' – ');
         lines.push(`**Period:** ${period}`);
       }
-      if (r.url) lines.push(`**URL:** ${r.url}`);
+      if (r.url) lines.push(`**URL:** ${singleLine(r.url)}`);
       if (r.externalIds.length) {
         const idParts = r.externalIds.map((id) => {
           const rel = id.relationship ? ` [${id.relationship}]` : '';
-          const urlPart = id.url ? ` (${id.url})` : '';
-          return `${id.type}:${id.value}${urlPart}${rel}`;
+          const urlPart = id.url ? ` (${singleLine(id.url)})` : '';
+          return `${id.type}:${singleLine(id.value)}${urlPart}${rel}`;
         });
         lines.push(`**IDs:** ${idParts.join(', ')}`);
       }
+      const sources = sourcesText(r.sources);
+      if (sources) lines.push(`**Sources:** ${sources}`);
       lines.push('');
     }
 
