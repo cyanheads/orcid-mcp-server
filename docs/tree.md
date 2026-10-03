@@ -1,6 +1,6 @@
 # orcid-mcp-server - Directory Structure
 
-Generated on: 2026-09-24 01:50:15
+Generated on: 2026-10-03 15:49:32
 
 ```text
 orcid-mcp-server/
@@ -129,6 +129,7 @@ orcid-mcp-server/
 │   ├── clean-mcpb.ts
 │   ├── clean.ts
 │   ├── devcheck.ts
+│   ├── install-otel.ts
 │   ├── lint-mcp.ts
 │   ├── lint-packaging.ts
 │   ├── list-skills.ts
@@ -156,7 +157,9 @@ orcid-mcp-server/
 │   │       │   ├── index.ts
 │   │       │   ├── resolve-researcher.tool.ts
 │   │       │   └── search-researchers.tool.ts
-│   │       └── response-budget.ts
+│   │       ├── record-sources.ts
+│   │       ├── response-budget.ts
+│   │       └── third-party-text.ts
 │   ├── services/
 │   │   └── orcid/
 │   │       ├── markup-text.ts
@@ -175,6 +178,7 @@ orcid-mcp-server/
 │   │   ├── activity-contracts.int.test.ts
 │   │   ├── markup-text.int.test.ts
 │   │   ├── orcid-api-fixtures.ts
+│   │   ├── orcid-id-forms.int.test.ts
 │   │   ├── record-contracts.int.test.ts
 │   │   └── search-contracts.int.test.ts
 │   ├── resources/
@@ -185,6 +189,7 @@ orcid-mcp-server/
 │   │   └── orcid/
 │   │       ├── markup-text.test.ts
 │   │       ├── normalizers-extended.test.ts
+│   │       ├── normalizers-sources.test.ts
 │   │       ├── normalizers-text.test.ts
 │   │       ├── normalizers.test.ts
 │   │       ├── orcid-id.test.ts
@@ -203,11 +208,13 @@ orcid-mcp-server/
 │       ├── get-work-detail.tool.test.ts
 │       ├── get-works.tool.test.ts
 │       ├── resolve-researcher-extended.tool.test.ts
+│       ├── resolve-researcher-name-forms.tool.test.ts
 │       ├── resolve-researcher.tool.test.ts
 │       ├── response-budget.test.ts
 │       ├── search-researchers-extended.tool.test.ts
 │       ├── search-researchers.tool.test.ts
-│       └── security.tool.test.ts
+│       ├── security.tool.test.ts
+│       └── third-party-text.test.ts
 ├── .dockerignore
 ├── .env.example
 ├── .gitattributes
