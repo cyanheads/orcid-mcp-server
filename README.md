@@ -85,7 +85,7 @@ All resource data is also reachable via tools. Use resources when injecting stab
 - Returns the first 50 works by default (`limit` max 1000); page with `offset` and the returned `nextOffset` — `workCount` reports the total available
 - A page also stops before its structured output or its text would pass 64,000 bytes, so `returnedCount` can come in below `limit`; `truncated` and `nextOffset` carry the continuation either way
 - Set `include_external_ids` to `false` to drop DOI/PMID/arXiv/ISBN identifier lists for a lighter payload
-- One record per ORCID work group; its identifiers are the group's — the preferred version's own, then any another source holds, such as a PMID beside a Crossref DOI
+- One record per ORCID work group; its identifiers are the group's — the preferred version's own, then any that another source holds, such as a PMID beside a Crossref DOI
 - External identifiers are pre-formatted for chaining to Crossref, PubMed, or arXiv
 - Summaries only — pass a work's `putCode` to `orcid_get_work_detail` for abstracts and contributor lists
 - Each work lists its `sources` — the researcher, or member organizations such as Crossref or a university system — with `selfAsserted` marking what the researcher asserted; an empty list does not mean no publications
