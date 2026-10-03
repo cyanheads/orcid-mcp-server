@@ -60,6 +60,19 @@ describe('toPlainText', () => {
     );
   });
 
+  it('leaves references named after Object.prototype properties literal (#62)', () => {
+    expect(toPlainText('Title &constructor; x')).toBe('Title &constructor; x');
+    expect(toPlainText('&toString; &valueOf; &hasOwnProperty;')).toBe(
+      '&toString; &valueOf; &hasOwnProperty;',
+    );
+    expect(toPlainText('&__proto__; &amp;')).toBe('&__proto__; &');
+    const names = Object.getOwnPropertyNames(Object.prototype).filter((name) =>
+      /^[A-Za-z]+$/.test(name),
+    );
+    expect(names).toContain('constructor');
+    for (const name of names) expect(toPlainText(`&${name};`)).toBe(`&${name};`);
+  });
+
   it('keeps an encoded tag as literal text rather than stripping it', () => {
     expect(toPlainText('&lt;i&gt;literal&lt;/i&gt;')).toBe('<i>literal</i>');
   });

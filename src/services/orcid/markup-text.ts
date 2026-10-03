@@ -51,15 +51,18 @@ const isInlineTag = (name: string) =>
 /** A character reference: named, decimal, or hexadecimal. */
 const ENTITY = /&(?:#(\d{1,7})|#[xX]([0-9A-Fa-f]{1,6})|([A-Za-z]+));/g;
 
-/** The XML predefined entities plus `&nbsp;`; any other named reference stays literal. */
-const NAMED_ENTITIES: Record<string, string> = {
-  amp: '&',
-  lt: '<',
-  gt: '>',
-  quot: '"',
-  apos: "'",
-  nbsp: ' ',
-};
+/**
+ * The XML predefined entities plus `&nbsp;`; any other named reference stays literal. A `Map`,
+ * so a reference named after an `Object.prototype` property (`&constructor;`) finds nothing.
+ */
+const NAMED_ENTITIES = new Map([
+  ['amp', '&'],
+  ['lt', '<'],
+  ['gt', '>'],
+  ['quot', '"'],
+  ['apos', "'"],
+  ['nbsp', ' '],
+]);
 
 function decodeCodePoint(reference: string, codePoint: number): string {
   const valid =
@@ -75,7 +78,7 @@ function decodeEntities(value: string): string {
   return value.replace(ENTITY, (reference, dec?: string, hex?: string, name?: string) => {
     if (dec !== undefined) return decodeCodePoint(reference, Number.parseInt(dec, 10));
     if (hex !== undefined) return decodeCodePoint(reference, Number.parseInt(hex, 16));
-    return NAMED_ENTITIES[name as string] ?? reference;
+    return NAMED_ENTITIES.get(name as string) ?? reference;
   });
 }
 
