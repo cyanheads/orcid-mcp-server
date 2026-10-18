@@ -1,6 +1,6 @@
 # orcid-mcp-server - Directory Structure
 
-Generated on: 2026-10-03 15:49:32
+Generated on: 2026-10-18 23:18:07
 
 ```text
 orcid-mcp-server/
@@ -133,6 +133,7 @@ orcid-mcp-server/
 │   ├── lint-mcp.ts
 │   ├── lint-packaging.ts
 │   ├── list-skills.ts
+│   ├── prune-musl-packages.ts
 │   ├── release-github.ts
 │   └── tree.ts
 ├── src/
@@ -175,11 +176,14 @@ orcid-mcp-server/
 │   │   ├── resources.fuzz.test.ts
 │   │   └── tools.fuzz.test.ts
 │   ├── integration/
+│   │   ├── fixtures/
+│   │   │   └── research-resource-detail.json
 │   │   ├── activity-contracts.int.test.ts
 │   │   ├── markup-text.int.test.ts
 │   │   ├── orcid-api-fixtures.ts
 │   │   ├── orcid-id-forms.int.test.ts
 │   │   ├── record-contracts.int.test.ts
+│   │   ├── research-resource-detail.int.test.ts
 │   │   └── search-contracts.int.test.ts
 │   ├── resources/
 │   │   ├── researcher-profile.resource.test.ts
@@ -187,6 +191,8 @@ orcid-mcp-server/
 │   │   └── resources-extended.test.ts
 │   ├── services/
 │   │   └── orcid/
+│   │       ├── affiliation-selectors.test.ts
+│   │       ├── identifier-cost.test.ts
 │   │       ├── markup-text.test.ts
 │   │       ├── normalizers-extended.test.ts
 │   │       ├── normalizers-sources.test.ts
@@ -207,6 +213,8 @@ orcid-mcp-server/
 │       ├── get-research-resources.tool.test.ts
 │       ├── get-work-detail.tool.test.ts
 │       ├── get-works.tool.test.ts
+│       ├── identifier-validation.tool.test.ts
+│       ├── pagination-caps.tool.test.ts
 │       ├── resolve-researcher-extended.tool.test.ts
 │       ├── resolve-researcher-name-forms.tool.test.ts
 │       ├── resolve-researcher.tool.test.ts

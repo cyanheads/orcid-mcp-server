@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.3.3](changelog/0.3.x/0.3.3.md) — 2026-10-18
+
+Retrieve allocation items and continue bounded activity pages without losing requested work.
+
 ## [0.3.2](changelog/0.3.x/0.3.2.md) — 2026-10-03
 
 Activity records report who asserted them, more name and identifier forms resolve, and responses stay within byte and time budgets.
