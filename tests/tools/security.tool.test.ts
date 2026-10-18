@@ -191,58 +191,58 @@ describe('security: injection attempts are forwarded as query strings, not execu
     expect(callParams.q).toBe('grant-numbers:"R01\\" OR \\*\\:\\* \\(x\\)"');
   });
 
-  it('search_researchers: a DOI with inner whitespace stays one phrase clause, no live OR (#47)', async () => {
+  it('search_researchers: valid hostile DOI punctuation stays one escaped phrase clause (#47)', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
     const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
     const input = orcidSearchResearchers.input.parse({
-      doi: 'https://doi.org/10.1000/x OR *:*',
+      doi: 'https://doi.org/10.1000/x"OR*:*',
     });
     await orcidSearchResearchers.handler(input, ctx);
 
     const [callParams] = mockExpandedSearch.mock.calls[0]!;
-    expect(callParams.q).toBe('doi-self:"10.1000\\/x OR \\*\\:\\*"');
+    expect(callParams.q).toBe('doi-self:"10.1000\\/x\\"OR\\*\\:\\*"');
   });
 
-  it('search_researchers: a PMID with inner whitespace stays one phrase clause, no live OR (#47)', async () => {
+  it('search_researchers: a numeric PMID stays one phrase clause (#47)', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
     const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
-    const input = orcidSearchResearchers.input.parse({ pmid: '123 OR smith' });
+    const input = orcidSearchResearchers.input.parse({ pmid: '123' });
     await orcidSearchResearchers.handler(input, ctx);
 
     const [callParams] = mockExpandedSearch.mock.calls[0]!;
-    expect(callParams.q).toBe('pmid-self:"123 OR smith"');
+    expect(callParams.q).toBe('pmid-self:"123"');
   });
 
-  it('resolve_researcher: a PMID URL has only its prefix stripped; the body stays escaped', async () => {
+  it('resolve_researcher: a valid PMID URL keeps its body in one phrase clause', async () => {
     mockExpandedSearch.mockResolvedValue({ numFound: 0, results: [] });
 
     const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Jane Roe',
-      pmid: 'https://pubmed.ncbi.nlm.nih.gov/123:*/',
+      pmid: 'https://pubmed.ncbi.nlm.nih.gov/123/',
     });
     await orcidResolveResearcher.handler(input, ctx);
 
     const [callParams] = mockExpandedSearch.mock.calls[0]!;
-    expect(callParams.q).toBe('given-and-family-names:"Jane Roe" AND pmid-self:"123\\:\\*"');
+    expect(callParams.q).toBe('given-and-family-names:"Jane Roe" AND pmid-self:"123"');
   });
 
-  it('resolve_researcher: a DOI anchor with inner whitespace stays one phrase clause (#47)', async () => {
+  it('resolve_researcher: valid hostile DOI punctuation stays escaped at every fallback (#47)', async () => {
     mockExpandedSearch.mockResolvedValue({ numFound: 0, results: [] });
 
     const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({
       name: 'Jane Roe',
-      doi: '10.1000/x OR smith',
+      doi: '10.1000/x"OR*:*',
     });
     await orcidResolveResearcher.handler(input, ctx);
 
     expect(mockExpandedSearch.mock.calls.map(([params]) => params.q)).toEqual([
-      'given-and-family-names:"Jane Roe" AND doi-self:"10.1000\\/x OR smith"',
-      'other-names:"Jane Roe" AND doi-self:"10.1000\\/x OR smith"',
-      'doi-self:"10.1000\\/x OR smith"',
+      'given-and-family-names:"Jane Roe" AND doi-self:"10.1000\\/x\\"OR\\*\\:\\*"',
+      'other-names:"Jane Roe" AND doi-self:"10.1000\\/x\\"OR\\*\\:\\*"',
+      'doi-self:"10.1000\\/x\\"OR\\*\\:\\*"',
     ]);
   });
 });
@@ -264,9 +264,9 @@ describe('security: oversized inputs are rejected by input validation', () => {
   });
 
   // Each case carries one search field so only the bound under test decides the outcome.
-  it('search_researchers: rows above 1000 is rejected', () => {
+  it('search_researchers: rows above the hard ceiling 10000 is rejected', () => {
     expect(() =>
-      orcidSearchResearchers.input.parse({ family_name: 'Smith', rows: 1001 }),
+      orcidSearchResearchers.input.parse({ family_name: 'Smith', rows: 10001 }),
     ).toThrow();
   });
 
@@ -396,6 +396,9 @@ describe('security: no secrets or env values appear in tool output or error mess
       orcidId: '0000-0002-1825-0097',
       orcidUri: 'https://orcid.org/0000-0002-1825-0097',
       reviewCount: 0,
+      totalCount: 0,
+      offset: 0,
+      truncated: false,
       peerReviews: [],
     });
     const blocks = orcidGetPeerReviews.format!(output);
@@ -849,7 +852,10 @@ describe('security: third-party text cannot forge structure in content[] (#63)',
     expect(text).toContain('**Host:** Supercomputing Center ## Forged, Pittsburgh ## Forged, US\n');
     expect(text).toContain('**Host ID:** https://ror.org/05gq02987 ## Forged (ROR ## Forged)\n');
     expect(text).toContain('**URL:** https://example.org/allocation ## Forged\n');
-    expect(verbatimCount(result.structuredContent)).toBe(10);
+    // The proposalHosts array preserves all four raw organization fields alongside the
+    // compatible first-host alias; the formatter renders this shared host only once.
+    expect(text).toContain('**Proposal hosts:**');
+    expect(verbatimCount(result.structuredContent)).toBe(14);
   });
 
   /** One expanded-search record with every name field and institution forged. */

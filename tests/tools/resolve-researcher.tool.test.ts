@@ -449,17 +449,17 @@ describe('orcidResolveResearcher — DOI/PMID URL anchors (#44)', () => {
     );
   });
 
-  it('keeps a PMID anchor with inner whitespace inside its own phrase clause (#47)', async () => {
-    expect(await primaryQuery({ name: 'Jennifer Doudna', pmid: '22745249 OR smith' })).toBe(
-      'given-and-family-names:"Jennifer Doudna" AND pmid-self:"22745249 OR smith"',
+  it('keeps a valid PMID anchor inside its own phrase clause (#47)', async () => {
+    expect(await primaryQuery({ name: 'Jennifer Doudna', pmid: '22745249' })).toBe(
+      'given-and-family-names:"Jennifer Doudna" AND pmid-self:"22745249"',
     );
   });
 
-  it('treats a prefix-only DOI as no anchor rather than an empty clause', async () => {
+  it('treats a genuinely blank DOI as no anchor rather than an empty clause', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 1, results: [doudnaResult] });
     const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const result = await orcidResolveResearcher.handler(
-      orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna', doi: 'https://doi.org/' }),
+      orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna', doi: ' \t ' }),
       ctx,
     );
 

@@ -395,19 +395,17 @@ describe('orcidSearchResearchers — DOI/PMID URL forms (#44)', () => {
     expect(await compiledQuery({ pmid })).toBe('pmid-self:"22745249"');
   });
 
-  it('drops a prefix-only DOI supplied alongside another field rather than emitting an empty clause', async () => {
-    expect(await compiledQuery({ doi: 'https://doi.org/', family_name: 'Carberry' })).toBe(
+  it('drops a genuinely blank DOI supplied alongside another field rather than emitting an empty clause', async () => {
+    expect(await compiledQuery({ doi: ' \t ', family_name: 'Carberry' })).toBe(
       'family-name:"Carberry"',
     );
   });
 
-  it('keeps a DOI or PMID with inner whitespace inside its own phrase clause (#47)', async () => {
-    expect(await compiledQuery({ doi: '10.1000/x OR smith', family_name: 'Carberry' })).toBe(
-      'family-name:"Carberry" AND doi-self:"10.1000\\/x OR smith"',
+  it('keeps valid DOI and PMID identifiers inside their own escaped phrase clauses (#47)', async () => {
+    expect(await compiledQuery({ doi: '10.1000/x"OR*:*', family_name: 'Carberry' })).toBe(
+      'family-name:"Carberry" AND doi-self:"10.1000\\/x\\"OR\\*\\:\\*"',
     );
-    expect(await compiledQuery({ pmid: '22745249 AND smith' })).toBe(
-      'pmid-self:"22745249 AND smith"',
-    );
+    expect(await compiledQuery({ pmid: '22745249' })).toBe('pmid-self:"22745249"');
   });
 });
 

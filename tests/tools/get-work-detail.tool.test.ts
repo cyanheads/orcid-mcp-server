@@ -115,8 +115,8 @@ describe('orcidGetWorkDetail', () => {
     ).toThrow();
   });
 
-  it('rejects put_codes array exceeding 100 entries', () => {
-    const codes = Array.from({ length: 101 }, (_, i) => i + 1);
+  it('rejects put_codes array exceeding 1000 raw entries', () => {
+    const codes = Array.from({ length: 1001 }, (_, i) => i + 1);
     expect(() =>
       orcidGetWorkDetail.input.parse({ orcid_id: '0000-0001-9161-999X', put_codes: codes }),
     ).toThrow();

@@ -10,11 +10,13 @@ import { countWithinBudget, recordCost } from '@/mcp-server/tools/response-budge
 import { singleLine } from '@/mcp-server/tools/third-party-text.js';
 import { getOrcidService } from '@/services/orcid/orcid-service.js';
 import {
+  DOI_INPUT_PATTERN,
   escapeSolrValue,
   isExclusionOnlyQuery,
   isInitial,
   isValidRorId,
   normalizeRorId,
+  PMID_INPUT_PATTERN,
   ROR_ID_INPUT_PATTERN,
   splitNameWords,
   stripIdentifierPrefix,
@@ -182,15 +184,23 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
         ),
       doi: z
         .string()
+        .regex(
+          DOI_INPUT_PATTERN,
+          'Provide doi as a complete DOI (10.1126/science.1225829), optionally prefixed by doi: or a doi.org URL; omit it or leave it blank when unknown.',
+        )
         .optional()
         .describe(
-          'DOI to anchor the search, bare (10.1126/science.1225829) or as a https://doi.org/, https://dx.doi.org/, or doi: form. Returns researchers who have linked this DOI to their ORCID record.',
+          'Complete DOI to anchor the search, bare (10.1126/science.1225829) or as a https://doi.org/, https://dx.doi.org/, or doi: form. Requires 10., digits, a slash, and a non-whitespace suffix; blank means unset. Returns researchers who have linked this DOI to their ORCID record.',
         ),
       pmid: z
         .string()
+        .regex(
+          PMID_INPUT_PATTERN,
+          'Provide pmid as digits (22745249), optionally prefixed by PMID: or a PubMed URL; omit it or leave it blank when unknown.',
+        )
         .optional()
         .describe(
-          'PubMed ID to anchor the search, bare (22745249), as PMID:22745249, or as a pubmed.ncbi.nlm.nih.gov or ncbi.nlm.nih.gov/pubmed URL. Returns researchers who have linked this PMID to their ORCID record.',
+          'Numeric PubMed ID to anchor the search, bare (22745249), as PMID:22745249, or as a pubmed.ncbi.nlm.nih.gov or ncbi.nlm.nih.gov/pubmed URL. Blank means unset; a label or URL without digits is invalid. Returns researchers who have linked this PMID to their ORCID record.',
         ),
       grant_number: z
         .string()
@@ -208,10 +218,10 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
         .number()
         .int()
         .min(1)
-        .max(1000)
+        .max(10000)
         .default(20)
         .describe(
-          'Maximum results to return (1–1000). A page also stops before its structured output or its text would pass 64,000 bytes, so fewer can come back; continue from nextStart.',
+          'Requested results (1–10,000, effective maximum 1,000, default 20). Each surface also stops at 64,000 bytes; continue from nextStart.',
         ),
       start: z
         .number()
@@ -224,7 +234,6 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
         ),
     })
     // A search with nothing to search on would run as a match-all over the whole registry.
-    // A doi or pmid that is only a URL prefix normalizes to empty and counts as blank.
     .superRefine((input, ctx) => {
       if (!buildSolrQuery(input)) {
         ctx.addIssue({
@@ -278,7 +287,7 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
       .string()
       .optional()
       .describe(
-        'Recovery hint when results are empty, pagination overshoots the total, or matches exceed the 10,000-offset ceiling. Absent on fully retrievable pages.',
+        'Requested/effective rows disclosure and recovery guidance for empty results, past-end pagination, or the 10,000-offset retrieval ceiling.',
       ),
   },
 
@@ -291,6 +300,7 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
   async handler(input, ctx) {
     const service = getOrcidService();
     const effectiveQuery = buildSolrQuery(input);
+    const rows = Math.min(input.rows, 1000);
 
     ctx.log.info('orcid_search_researchers', {
       effectiveQuery,
@@ -300,10 +310,7 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
 
     let response: ExpandedSearchResponse;
     try {
-      response = await service.expandedSearch(
-        { q: effectiveQuery, rows: input.rows, start: input.start },
-        ctx,
-      );
+      response = await service.expandedSearch({ q: effectiveQuery, rows, start: input.start }, ctx);
     } catch (err) {
       // Transient upstream conditions keep their original code so the client retains the
       // retryable signal — the service layer has already exhausted its retry budget.
@@ -330,7 +337,7 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
     // be paged to with the current query — a corpus-level truncation, distinct from a
     // per-page row cap.
     const truncated = numFound > MAX_START;
-    const notice =
+    const resultNotice =
       numFound === 0
         ? 'No results found. Try fewer constraints, verify spelling, or use the query field with Solr syntax.'
         : response.results.length === 0 && input.start > 0 && input.start >= numFound
@@ -339,7 +346,12 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
             ? `ORCID reports ${numFound.toLocaleString('en-US')} matches, but the public API cannot page beyond offset 10,000. Narrow or partition the query with additional structured fields or raw Solr constraints to retrieve the remaining records.`
             : undefined;
 
-    const candidates: SearchResult[] = response.results.map((r) => ({
+    const capNotice =
+      input.rows > rows
+        ? `Requested rows ${input.rows}; effective cap ${rows} results before the response byte budget.`
+        : undefined;
+    const notice = [capNotice, resultNotice].filter(Boolean).join(' ') || undefined;
+    const candidates: SearchResult[] = response.results.slice(0, rows).map((r) => ({
       orcidId: r.orcidId,
       orcidUri: `https://orcid.org/${r.orcidId}`,
       ...(r.givenNames && { givenNames: r.givenNames }),

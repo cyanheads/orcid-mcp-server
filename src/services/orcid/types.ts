@@ -351,6 +351,19 @@ export type RawResearchResourceSummary = {
   } | null;
 };
 
+/** Full allocation record; item keys follow the ORCID research-resource v3 schema. */
+export type RawResearchResourceDetail = RawResearchResourceSummary & {
+  'resource-item'?:
+    | {
+        'resource-name'?: string | null;
+        'resource-type'?: string | null;
+        hosts?: { organization?: RawOrganization[] } | null;
+        'external-ids'?: { 'external-id'?: RawWorkExternalId[] } | null;
+        url?: { value?: string } | null;
+      }[]
+    | null;
+};
+
 /**
  * Bulk works endpoint — each entry is either a successful `work` or an `error`.
  * GET /v3.0/{orcid}/works/{putCode1},{putCode2},...
@@ -531,9 +544,22 @@ export type ResearchResource = {
   putCode: number;
   title?: string;
   hostOrganization?: Organization;
+  proposalHosts?: Organization[];
   externalIds: ExternalIdentifier[];
   startDate?: NormalizedDate;
   endDate?: NormalizedDate;
   url?: string;
   sources: Source[];
 };
+
+/** One allocated resource, with its operators kept separate from the proposal hosts. */
+export type ResearchResourceItem = {
+  name?: string;
+  type?: string;
+  hosts: Organization[];
+  externalIds: ExternalIdentifier[];
+  url?: string;
+};
+
+/** Full research-resource proposal and its deposited allocation items. */
+export type ResearchResourceDetail = ResearchResource & { items: ResearchResourceItem[] };

@@ -7,6 +7,7 @@ import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { assert, beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetAffiliations } from '@/mcp-server/tools/definitions/get-affiliations.tool.js';
+import { normalizeActivities } from '@/services/orcid/normalizers.js';
 
 const mockGetAffiliations = vi.fn();
 vi.mock('@/services/orcid/orcid-service.js', () => ({
@@ -86,6 +87,66 @@ describe('orcidGetAffiliations sources', () => {
 });
 
 describe('orcidGetAffiliations', () => {
+  it('retains all in a unique first-occurrence echo and empty-result notice on both surfaces', async () => {
+    mockGetAffiliations.mockResolvedValueOnce([]);
+    const result = await runToolContract(orcidGetAffiliations, {
+      orcid_id: '0000-0002-1825-0097',
+      types: ['education', 'all', 'employment', 'all', 'education'],
+    });
+    expect(result.structuredContent).toMatchObject({
+      requestedTypes: ['education', 'all', 'employment'],
+      affiliationCount: 0,
+      affiliations: [],
+    });
+    const text = result.content.map((block) => (block.type === 'text' ? block.text : '')).join('');
+    expect(text).toContain('**Types Requested:** education, all, employment');
+    expect(text).toContain('**Total Affiliations:** 0');
+    expect(text).toContain('No affiliations found');
+    expect(mockGetAffiliations.mock.calls[0]?.[1]).toEqual(['education', 'all', 'employment']);
+  });
+  it('normalizes repeated selectors and echoes unique selectors on both surfaces', async () => {
+    mockGetAffiliations.mockImplementationOnce(async (_id, types) =>
+      normalizeActivities(
+        {
+          employments: {
+            'affiliation-group': [
+              {
+                summaries: [
+                  {
+                    'employment-summary': {
+                      organization: { name: 'Same University' },
+                      'role-title': 'First',
+                    },
+                  },
+                  {
+                    'employment-summary': {
+                      organization: { name: 'Same University' },
+                      'role-title': 'Second',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+        types,
+        '0000-0002-1825-0097',
+      ),
+    );
+    const result = await runToolContract(orcidGetAffiliations, {
+      orcid_id: '0000-0002-1825-0097',
+      types: ['employment', 'employment'],
+    });
+    expect(result.structuredContent).toMatchObject({
+      requestedTypes: ['employment'],
+      affiliationCount: 2,
+      affiliations: [{ role: 'First' }, { role: 'Second' }],
+    });
+    const text = result.content.map((block) => (block.type === 'text' ? block.text : '')).join('');
+    expect(text).toContain('**Types Requested:** employment\n');
+    expect(text).toContain('**Total Affiliations:** 2');
+    expect(text.match(/\*\*Same University\*\*/g)).toHaveLength(2);
+  });
   beforeEach(() => {
     vi.clearAllMocks();
   });

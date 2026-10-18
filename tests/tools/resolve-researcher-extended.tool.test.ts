@@ -797,7 +797,7 @@ describe('orcidResolveResearcher — accent-insensitive institution overlap (#35
 
 describe('orcidResolveResearcher — folding cost stays linear in name length (#35)', () => {
   /**
-   * Best-of-three wall-clock for classifying one candidate whose every name field is `size`
+   * Best-of-three thread CPU microseconds for classifying one candidate whose every name field is `size`
    * characters of distinct accented, punctuated tokens — the shape that would expose both a
    * backtracking fold and a quadratic token-overlap scan.
    */
@@ -826,22 +826,30 @@ describe('orcidResolveResearcher — folding cost stays linear in name length (#
       });
       const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
       const input = orcidResolveResearcher.input.parse({ name: long, affiliation: long });
-      const start = performance.now();
+      const start = process.threadCpuUsage();
       await orcidResolveResearcher.handler(input, ctx);
-      best = Math.min(best, performance.now() - start);
+      const used = process.threadCpuUsage(start);
+      best = Math.min(best, used.user + used.system);
     }
     return best;
   }
 
-  it('classifies 5k and 80k character names in linear time', async () => {
-    const [t5, t80] = [await timeFor(5_000), await timeFor(80_000)];
+  it('classifies 5k to 320k character names in linear CPU time', async () => {
+    const times = new Map<number, number>();
+    for (const size of [5_000, 10_000, 20_000, 40_000, 80_000, 160_000, 320_000]) {
+      const time = await timeFor(size);
+      expect(time).toBeLessThan(1_000_000);
+      times.set(size, time);
+    }
 
-    // 16x the input may cost ~16x the time; quadratic growth would be ~256x, so a 64x bound
-    // leaves room for load noise while still failing a quadratic scan. The 2 ms floor keeps
-    // timer noise on the small case from inflating the ratio.
-    expect(t80 / Math.max(t5, 2)).toBeLessThan(64);
-    expect(t80).toBeLessThan(1_000);
-  });
+    /**
+     * Preserve the 16x-span bound and add a 64x span that rejects quadratic growth.
+     * The original 2 ms floor is 2,000 CPU microseconds; scheduling delays are excluded.
+     */
+    const t5 = Math.max(times.get(5_000)!, 2_000);
+    expect(times.get(80_000)! / t5).toBeLessThan(64);
+    expect(times.get(320_000)! / t5).toBeLessThan(256);
+  }, 30_000);
 });
 
 describe('orcidResolveResearcher — generic institution words in other languages (#46)', () => {

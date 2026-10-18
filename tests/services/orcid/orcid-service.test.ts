@@ -25,6 +25,46 @@ import { initOrcidService, OrcidService } from '@/services/orcid/orcid-service.j
 const appConfig = { mcpServerVersion: '9.9.9' } as unknown as AppConfig;
 const storage = {} as unknown as StorageService;
 
+describe('OrcidService — endpoint labels in client-visible warnings', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it.each(['http', 'html', 'json', 'transport'] as const)(
+    'labels %s failures without a request URL or transport message',
+    async (failure) => {
+      vi.useFakeTimers();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: string) => {
+          if (failure === 'transport') throw new TypeError(`Request failed at ${url}`);
+          return new Response(failure === 'html' ? '<html>maintenance</html>' : 'not JSON', {
+            status: failure === 'http' ? 400 : 200,
+          });
+        }),
+      );
+      const ctx = createMockContext();
+      const call = new OrcidService(appConfig, storage)
+        .expandedSearch({ q: 'family-name:"Carberry"', rows: 1 }, ctx)
+        .catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(25_000);
+      expect(await call).toBeInstanceOf(McpError);
+      const warnings = (ctx.log as MockContextLogger).calls.filter(
+        (record) => record.level === 'warning',
+      );
+      expect(warnings.length).toBeGreaterThan(0);
+      for (const warning of warnings) {
+        expect(warning.data).toMatchObject({ endpoint: 'expanded-search' });
+        expect(warning.data).not.toHaveProperty('url');
+        expect(warning.data).not.toHaveProperty('error');
+      }
+      expect(JSON.stringify(warnings)).not.toContain('https://');
+      expect(JSON.stringify(warnings)).not.toContain('Request failed at');
+    },
+  );
+});
+
 describe('OrcidService — User-Agent version (#65)', () => {
   const realFetch = globalThis.fetch;
 
@@ -141,7 +181,7 @@ describe('OrcidService — upstream URL redaction on non-2xx (#31)', () => {
     expect(err.message).toBe('ORCID returned HTTP 400 Bad Request.');
   });
 
-  it('still logs the URL server-side for operators', async () => {
+  it('logs the endpoint label without the upstream URL', async () => {
     stubBadRequest(url);
 
     const service = new OrcidService(appConfig, storage);
@@ -153,7 +193,8 @@ describe('OrcidService — upstream URL redaction on non-2xx (#31)', () => {
     expect(
       log.calls.some(
         (c) =>
-          c.level === 'warning' && (c.data as Record<string, unknown> | undefined)?.url === url,
+          c.level === 'warning' &&
+          (c.data as Record<string, unknown> | undefined)?.endpoint === 'person',
       ),
     ).toBe(true);
   });
@@ -163,7 +204,7 @@ describe('OrcidService — assertNotHtml message redaction (#28)', () => {
   // assertNotHtml is private; access it through a narrow structural cast rather than `any`.
   // Exercised directly (not via fetchJson) — the code it throws is transient, so routing
   // through the public surface would mean waiting out withRetry's real backoff delays.
-  type AssertNotHtmlHost = { assertNotHtml(text: string, url: string, ctx: Context): void };
+  type AssertNotHtmlHost = { assertNotHtml(text: string, endpoint: string, ctx: Context): void };
 
   const url = 'https://pub.orcid.org/v3.0/0000-0001-9161-999X/person';
   const html = '<!DOCTYPE html><html><body>Rate limited</body></html>';
@@ -177,7 +218,7 @@ describe('OrcidService — assertNotHtml message redaction (#28)', () => {
 
     let thrown: unknown;
     try {
-      (newService() as unknown as AssertNotHtmlHost).assertNotHtml(html, url, ctx);
+      (newService() as unknown as AssertNotHtmlHost).assertNotHtml(html, 'person', ctx);
     } catch (e) {
       thrown = e;
     }
@@ -193,18 +234,19 @@ describe('OrcidService — assertNotHtml message redaction (#28)', () => {
     expect(err.data).toBeUndefined();
   });
 
-  it('still logs the URL server-side for operators', () => {
+  it('logs the endpoint label without the upstream URL', () => {
     const ctx = createMockContext();
     const log = ctx.log as MockContextLogger;
 
     expect(() =>
-      (newService() as unknown as AssertNotHtmlHost).assertNotHtml(html, url, ctx),
+      (newService() as unknown as AssertNotHtmlHost).assertNotHtml(html, 'person', ctx),
     ).toThrow(McpError);
 
     expect(
       log.calls.some(
         (c) =>
-          c.level === 'warning' && (c.data as Record<string, unknown> | undefined)?.url === url,
+          c.level === 'warning' &&
+          (c.data as Record<string, unknown> | undefined)?.endpoint === 'person',
       ),
     ).toBe(true);
   });
@@ -529,14 +571,12 @@ describe('OrcidService — one deadline across the retry ladder, and transport f
       expect(fetchMock).toHaveBeenCalledTimes(4);
       expectNoUpstreamUrl(err);
       if (body) expect(JSON.stringify({ m: err.message, d: err.data })).not.toContain(body);
-      // The URL reaches the operator log only.
+      // A fixed endpoint label identifies the operation without its query or URL.
       expect(
         (ctx.log as MockContextLogger).calls.some(
           (c) =>
             c.level === 'warning' &&
-            String((c.data as Record<string, unknown> | undefined)?.url).includes(
-              '/expanded-search/',
-            ),
+            (c.data as Record<string, unknown> | undefined)?.endpoint === 'expanded-search',
         ),
       ).toBe(true);
     });

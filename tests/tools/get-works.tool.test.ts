@@ -561,9 +561,9 @@ describe('orcidGetWorks', () => {
       expect(structured.nextOffset).toBe(structured.returnedCount);
     });
 
-    it('rejects a limit above the unchanged schema maximum', () => {
+    it('rejects a limit above the hard input maximum', () => {
       expect(() =>
-        orcidGetWorks.input.parse({ orcid_id: '0000-0001-9161-999X', limit: 1001 }),
+        orcidGetWorks.input.parse({ orcid_id: '0000-0001-9161-999X', limit: 10001 }),
       ).toThrow();
       expect(() =>
         orcidGetWorks.input.parse({ orcid_id: '0000-0001-9161-999X', limit: 1000 }),

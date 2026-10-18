@@ -85,7 +85,7 @@ describe('orcidGetPeerReviews', () => {
   });
 
   it('handles sparse review with no optional fields', async () => {
-    mockGetPeerReviews.mockResolvedValueOnce([{}]);
+    mockGetPeerReviews.mockResolvedValueOnce([{ sources: [] }]);
 
     const ctx = createMockContext({ errors: orcidGetPeerReviews.errors });
     const input = orcidGetPeerReviews.input.parse({ orcid_id: '0000-0002-1825-0097' });
@@ -140,6 +140,9 @@ describe('orcidGetPeerReviews', () => {
       orcidId: '0000-0002-1825-0097',
       orcidUri: 'https://orcid.org/0000-0002-1825-0097',
       reviewCount: 1,
+      totalCount: 1,
+      offset: 0,
+      truncated: false,
       peerReviews: sampleReviews,
     });
 
@@ -163,6 +166,9 @@ describe('orcidGetPeerReviews', () => {
       orcidId: '0000-0002-1825-0097',
       orcidUri: 'https://orcid.org/0000-0002-1825-0097',
       reviewCount: 0,
+      totalCount: 0,
+      offset: 0,
+      truncated: false,
       peerReviews: [],
     });
 
@@ -282,6 +288,9 @@ describe('orcidGetPeerReviews', () => {
       orcidId: '0000-0002-1825-0097',
       orcidUri: 'https://orcid.org/0000-0002-1825-0097',
       reviewCount: 1,
+      totalCount: 1,
+      offset: 0,
+      truncated: false,
       peerReviews: [{ reviewerRole: 'reviewer', sources: [] }],
     });
 

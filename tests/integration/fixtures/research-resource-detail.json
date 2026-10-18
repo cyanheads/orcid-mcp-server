@@ -1,0 +1,514 @@
+{
+  "created-date": { "value": 1684771627049 },
+  "last-modified-date": { "value": 1719926887324 },
+  "source": {
+    "source-orcid": null,
+    "source-client-id": {
+      "uri": "https://orcid.org/client/APP-SCLO97XBXVTEEDKC",
+      "path": "APP-SCLO97XBXVTEEDKC",
+      "host": "orcid.org"
+    },
+    "source-name": { "value": "ACCESS" },
+    "assertion-origin-orcid": null,
+    "assertion-origin-client-id": null,
+    "assertion-origin-name": null
+  },
+  "proposal": {
+    "title": {
+      "title": { "value": "Campus Champion for Arizona State University" },
+      "translated-title": null
+    },
+    "hosts": {
+      "organization": [
+        {
+          "name": "Advanced Cyberinfrastructure Coordination Ecosystem: Services & Support",
+          "address": { "city": "Alexandria", "region": "Virginia", "country": "US" },
+          "disambiguated-organization": {
+            "disambiguated-organization-identifier": "https://ror.org/01v6d0b34",
+            "disambiguation-source": "ROR"
+          }
+        }
+      ]
+    },
+    "external-ids": {
+      "external-id": [
+        {
+          "external-id-type": "uri",
+          "external-id-value": "https://www.xras.org/public/requests/32198-ACCESS-TRA190027",
+          "external-id-normalized": {
+            "value": "https://www.xras.org/public/requests/32198-ACCESS-TRA190027",
+            "transient": true
+          },
+          "external-id-normalized-error": null,
+          "external-id-url": null,
+          "external-id-relationship": "self"
+        }
+      ]
+    },
+    "start-date": {
+      "year": { "value": "2019" },
+      "month": { "value": "07" },
+      "day": { "value": "18" }
+    },
+    "end-date": {
+      "year": { "value": "2025" },
+      "month": { "value": "07" },
+      "day": { "value": "26" }
+    },
+    "url": { "value": "https://www.xras.org/public/requests/32198-ACCESS-TRA190027" }
+  },
+  "resource-item": [
+    {
+      "resource-name": "SDSC Expanse GPU",
+      "resource-type": "infrastructures",
+      "hosts": {
+        "organization": [
+          {
+            "name": "San Diego Supercomputer Center",
+            "address": { "city": "San Diego", "region": "California", "country": "US" },
+            "disambiguated-organization": {
+              "disambiguated-organization-identifier": "grid.266100.3",
+              "disambiguation-source": "GRID"
+            }
+          }
+        ]
+      },
+      "external-ids": {
+        "external-id": [
+          {
+            "external-id-type": "uri",
+            "external-id-value": "https://www.sdsc.edu/support/user_guides/expanse.html",
+            "external-id-normalized": {
+              "value": "https://www.sdsc.edu/support/user_guides/expanse.html",
+              "transient": true
+            },
+            "external-id-normalized-error": null,
+            "external-id-url": null,
+            "external-id-relationship": "self"
+          }
+        ]
+      },
+      "url": null
+    },
+    {
+      "resource-name": "Indiana Jetstream2 CPU",
+      "resource-type": "infrastructures",
+      "hosts": {
+        "organization": [
+          {
+            "name": "Indiana University",
+            "address": { "city": "Bloomington", "region": "IN", "country": "US" },
+            "disambiguated-organization": {
+              "disambiguated-organization-identifier": "grid.257410.5",
+              "disambiguation-source": "GRID"
+            }
+          }
+        ]
+      },
+      "external-ids": {
+        "external-id": [
+          {
+            "external-id-type": "uri",
+            "external-id-value": "https://cider.access-ci.org/public/resources/RDR_000902",
+            "external-id-normalized": {
+              "value": "https://cider.access-ci.org/public/resources/RDR_000902",
+              "transient": true
+            },
+            "external-id-normalized-error": null,
+            "external-id-url": null,
+            "external-id-relationship": "self"
+          }
+        ]
+      },
+      "url": null
+    },
+    {
+      "resource-name": "IU/TACC (Jetstream)",
+      "resource-type": "infrastructures",
+      "hosts": {
+        "organization": [
+          {
+            "name": "Indiana University",
+            "address": { "city": "Bloomington", "region": "IN", "country": "US" },
+            "disambiguated-organization": {
+              "disambiguated-organization-identifier": "grid.257410.5",
+              "disambiguation-source": "GRID"
+            }
+          }
+        ]
+      },
+      "external-ids": {
+        "external-id": [
+          {
+            "external-id-type": "uri",
+            "external-id-value": "https://cider.access-ci.org/public/resources/RDR_000068",
+            "external-id-normalized": {
+              "value": "https://cider.access-ci.org/public/resources/RDR_000068",
+              "transient": true
+            },
+            "external-id-normalized-error": null,
+            "external-id-url": null,
+            "external-id-relationship": "self"
+          }
+        ]
+      },
+      "url": null
+    },
+    {
+      "resource-name": "TACC Dell/Intel Knights Landing, Skylake System (Stampede2)",
+      "resource-type": "infrastructures",
+      "hosts": {
+        "organization": [
+          {
+            "name": "Texas Advanced Computing Center",
+            "address": { "city": "Austin", "region": "Texas", "country": "US" },
+            "disambiguated-organization": {
+              "disambiguated-organization-identifier": "grid.89336.37",
+              "disambiguation-source": "GRID"
+            }
+          }
+        ]
+      },
+      "external-ids": {
+        "external-id": [
+          {
+            "external-id-type": "uri",
+            "external-id-value": "https://cider.access-ci.org/public/resources/RDR_000126",
+            "external-id-normalized": {
+              "value": "https://cider.access-ci.org/public/resources/RDR_000126",
+              "transient": true
+            },
+            "external-id-normalized-error": null,
+            "external-id-url": null,
+            "external-id-relationship": "self"
+          }
+        ]
+      },
+      "url": null
+    },
+    {
+      "resource-name": "Indiana Jetstream2 Storage",
+      "resource-type": "infrastructures",
+      "hosts": {
+        "organization": [
+          {
+            "name": "Indiana University",
+            "address": { "city": "Bloomington", "region": "IN", "country": "US" },
+            "disambiguated-organization": {
+              "disambiguated-organization-identifier": "grid.257410.5",
+              "disambiguation-source": "GRID"
+            }
+          }
+        ]
+      },
+      "external-ids": {
+        "external-id": [
+          {
+            "external-id-type": "uri",
+            "external-id-value": "https://cider.access-ci.org/public/resources/RDR_000903",
+            "external-id-normalized": {
+              "value": "https://cider.access-ci.org/public/resources/RDR_000903",
+              "transient": true
+            },
+            "external-id-normalized-error": null,
+            "external-id-url": null,
+            "external-id-relationship": "self"
+          }
+        ]
+      },
+      "url": null
+    },
+    {
+      "resource-name": "SDSC Expanse CPU",
+      "resource-type": "infrastructures",
+      "hosts": {
+        "organization": [
+          {
+            "name": "San Diego Supercomputer Center",
+            "address": { "city": "San Diego", "region": "California", "country": "US" },
+            "disambiguated-organization": {
+              "disambiguated-organization-identifier": "grid.266100.3",
+              "disambiguation-source": "GRID"
+            }
+          }
+        ]
+      },
+      "external-ids": {
+        "external-id": [
+          {
+            "external-id-type": "uri",
+            "external-id-value": "https://www.sdsc.edu/support/user_guides/expanse.html",
+            "external-id-normalized": {
+              "value": "https://www.sdsc.edu/support/user_guides/expanse.html",
+              "transient": true
+            },
+            "external-id-normalized-error": null,
+            "external-id-url": null,
+            "external-id-relationship": "self"
+          }
+        ]
+      },
+      "url": null
+    },
+    {
+      "resource-name": "PSC Bridges-2 Extreme Memory (Bridges-2 EM)",
+      "resource-type": "infrastructures",
+      "hosts": {
+        "organization": [
+          {
+            "name": "Pittsburgh Supercomputing Center",
+            "address": { "city": "Pittsburgh", "region": "Pennsylvania", "country": "US" },
+            "disambiguated-organization": {
+              "disambiguated-organization-identifier": "grid.484565.e",
+              "disambiguation-source": "GRID"
+            }
+          }
+        ]
+      },
+      "external-ids": {
+        "external-id": [
+          {
+            "external-id-type": "uri",
+            "external-id-value": "https://cider.access-ci.org/public/resources/RDR_000645",
+            "external-id-normalized": {
+              "value": "https://cider.access-ci.org/public/resources/RDR_000645",
+              "transient": true
+            },
+            "external-id-normalized-error": null,
+            "external-id-url": null,
+            "external-id-relationship": "self"
+          }
+        ]
+      },
+      "url": null
+    },
+    {
+      "resource-name": "PSC Bridges-2 GPU (Bridges-2 GPU)",
+      "resource-type": "infrastructures",
+      "hosts": {
+        "organization": [
+          {
+            "name": "Pittsburgh Supercomputing Center",
+            "address": { "city": "Pittsburgh", "region": "Pennsylvania", "country": "US" },
+            "disambiguated-organization": {
+              "disambiguated-organization-identifier": "grid.484565.e",
+              "disambiguation-source": "GRID"
+            }
+          }
+        ]
+      },
+      "external-ids": {
+        "external-id": [
+          {
+            "external-id-type": "uri",
+            "external-id-value": "https://cider.access-ci.org/public/resources/RDR_000646",
+            "external-id-normalized": {
+              "value": "https://cider.access-ci.org/public/resources/RDR_000646",
+              "transient": true
+            },
+            "external-id-normalized-error": null,
+            "external-id-url": null,
+            "external-id-relationship": "self"
+          }
+        ]
+      },
+      "url": null
+    },
+    {
+      "resource-name": "Indiana Jetstream2 Large Memory",
+      "resource-type": "infrastructures",
+      "hosts": {
+        "organization": [
+          {
+            "name": "Indiana University",
+            "address": { "city": "Bloomington", "region": "IN", "country": "US" },
+            "disambiguated-organization": {
+              "disambiguated-organization-identifier": "grid.257410.5",
+              "disambiguation-source": "GRID"
+            }
+          }
+        ]
+      },
+      "external-ids": {
+        "external-id": [
+          {
+            "external-id-type": "uri",
+            "external-id-value": "https://cider.access-ci.org/public/resources/RDR_000905",
+            "external-id-normalized": {
+              "value": "https://cider.access-ci.org/public/resources/RDR_000905",
+              "transient": true
+            },
+            "external-id-normalized-error": null,
+            "external-id-url": null,
+            "external-id-relationship": "self"
+          }
+        ]
+      },
+      "url": null
+    },
+    {
+      "resource-name": "Indiana Jetstream2 GPU",
+      "resource-type": "infrastructures",
+      "hosts": {
+        "organization": [
+          {
+            "name": "Indiana University",
+            "address": { "city": "Bloomington", "region": "IN", "country": "US" },
+            "disambiguated-organization": {
+              "disambiguated-organization-identifier": "grid.257410.5",
+              "disambiguation-source": "GRID"
+            }
+          }
+        ]
+      },
+      "external-ids": {
+        "external-id": [
+          {
+            "external-id-type": "uri",
+            "external-id-value": "https://cider.access-ci.org/public/resources/RDR_000904",
+            "external-id-normalized": {
+              "value": "https://cider.access-ci.org/public/resources/RDR_000904",
+              "transient": true
+            },
+            "external-id-normalized-error": null,
+            "external-id-url": null,
+            "external-id-relationship": "self"
+          }
+        ]
+      },
+      "url": null
+    },
+    {
+      "resource-name": "PSC Bridges-2 Regular Memory (Bridges-2 RM)",
+      "resource-type": "infrastructures",
+      "hosts": {
+        "organization": [
+          {
+            "name": "Pittsburgh Supercomputing Center",
+            "address": { "city": "Pittsburgh", "region": "Pennsylvania", "country": "US" },
+            "disambiguated-organization": {
+              "disambiguated-organization-identifier": "grid.484565.e",
+              "disambiguation-source": "GRID"
+            }
+          }
+        ]
+      },
+      "external-ids": {
+        "external-id": [
+          {
+            "external-id-type": "uri",
+            "external-id-value": "https://cider.access-ci.org/public/resources/RDR_000643",
+            "external-id-normalized": {
+              "value": "https://cider.access-ci.org/public/resources/RDR_000643",
+              "transient": true
+            },
+            "external-id-normalized-error": null,
+            "external-id-url": null,
+            "external-id-relationship": "self"
+          }
+        ]
+      },
+      "url": null
+    },
+    {
+      "resource-name": "TACC Dell/Intel Sapphire Rapids, Ice Lake, Skylake (Stampede3)",
+      "resource-type": "infrastructures",
+      "hosts": {
+        "organization": [
+          {
+            "name": "Texas Advanced Computing Center",
+            "address": { "city": "Austin", "region": "Texas", "country": "US" },
+            "disambiguated-organization": {
+              "disambiguated-organization-identifier": "grid.89336.37",
+              "disambiguation-source": "GRID"
+            }
+          }
+        ]
+      },
+      "external-ids": {
+        "external-id": [
+          {
+            "external-id-type": "uri",
+            "external-id-value": "https://docs.tacc.utexas.edu/",
+            "external-id-normalized": {
+              "value": "https://docs.tacc.utexas.edu/",
+              "transient": true
+            },
+            "external-id-normalized-error": null,
+            "external-id-url": null,
+            "external-id-relationship": "self"
+          }
+        ]
+      },
+      "url": null
+    },
+    {
+      "resource-name": "SDSC Expanse Projects Storage",
+      "resource-type": "infrastructures",
+      "hosts": {
+        "organization": [
+          {
+            "name": "San Diego Supercomputer Center",
+            "address": { "city": "San Diego", "region": "California", "country": "US" },
+            "disambiguated-organization": {
+              "disambiguated-organization-identifier": "grid.266100.3",
+              "disambiguation-source": "GRID"
+            }
+          }
+        ]
+      },
+      "external-ids": {
+        "external-id": [
+          {
+            "external-id-type": "uri",
+            "external-id-value": "https://www.sdsc.edu/support/user_guides/expanse.html",
+            "external-id-normalized": {
+              "value": "https://www.sdsc.edu/support/user_guides/expanse.html",
+              "transient": true
+            },
+            "external-id-normalized-error": null,
+            "external-id-url": null,
+            "external-id-relationship": "self"
+          }
+        ]
+      },
+      "url": null
+    },
+    {
+      "resource-name": "PSC Bridges-2 Storage (Bridges-2 Ocean)",
+      "resource-type": "infrastructures",
+      "hosts": {
+        "organization": [
+          {
+            "name": "Pittsburgh Supercomputing Center",
+            "address": { "city": "Pittsburgh", "region": "Pennsylvania", "country": "US" },
+            "disambiguated-organization": {
+              "disambiguated-organization-identifier": "grid.484565.e",
+              "disambiguation-source": "GRID"
+            }
+          }
+        ]
+      },
+      "external-ids": {
+        "external-id": [
+          {
+            "external-id-type": "uri",
+            "external-id-value": "https://cider.access-ci.org/public/resources/RDR_000644",
+            "external-id-normalized": {
+              "value": "https://cider.access-ci.org/public/resources/RDR_000644",
+              "transient": true
+            },
+            "external-id-normalized-error": null,
+            "external-id-url": null,
+            "external-id-relationship": "self"
+          }
+        ]
+      },
+      "url": null
+    }
+  ],
+  "display-index": "0",
+  "visibility": "public",
+  "put-code": 5724,
+  "path": "/0000-0001-6866-9833/research-resource/5724"
+}

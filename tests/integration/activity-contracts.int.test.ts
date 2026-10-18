@@ -130,6 +130,21 @@ toolContractSuite(orcidGetFunding, {
 toolContractSuite(orcidGetPeerReviews, {
   success: [
     {
+      name: 'returns a past-end page with its total and clamp notice on both surfaces',
+      input: { orcid_id: RESEARCHER_ID, offset: 100, limit: 10000 },
+      expected: { reviewCount: 0, totalCount: 1, offset: 100, truncated: false, peerReviews: [] },
+      assert: (result) => {
+        expect(result.structuredContent).not.toHaveProperty('nextOffset');
+        expect(result.structuredContent).toHaveProperty(
+          'notice',
+          'Requested limit 10000; effective cap 1000 reviews before the response byte budget.',
+        );
+        const text = result.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
+        expect(text).toContain('Requested limit 10000; effective cap 1000');
+        expect(text).toContain('**Total Reviews:** 1');
+      },
+    },
+    {
       name: 'returns reviews with the ISSN of their journal group',
       input: { orcid_id: RESEARCHER_ID },
       expected: { reviewCount: 1 },

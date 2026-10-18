@@ -10,8 +10,10 @@ import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { singleLine } from '@/mcp-server/tools/third-party-text.js';
 import { getOrcidService } from '@/services/orcid/orcid-service.js';
 import {
+  DOI_INPUT_PATTERN,
   escapeSolrValue,
   isInitial,
+  PMID_INPUT_PATTERN,
   splitNameWords,
   stripIdentifierPrefix,
 } from '@/services/orcid/solr-query.js';
@@ -293,15 +295,23 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
       ),
     doi: z
       .string()
+      .regex(
+        DOI_INPUT_PATTERN,
+        'Provide doi as a complete DOI (10.1126/science.1225829), optionally prefixed by doi: or a doi.org URL; omit it or leave it blank when unknown.',
+      )
       .optional()
       .describe(
-        'DOI of a work authored by this researcher, bare (10.1126/science.1225829) or as a https://doi.org/, https://dx.doi.org/, or doi: form. Acts as a near-deterministic anchor — filters to researchers who linked this DOI to their ORCID record.',
+        'Complete DOI of a work authored by this researcher, bare (10.1126/science.1225829) or as a https://doi.org/, https://dx.doi.org/, or doi: form. Requires 10., digits, a slash, and a non-whitespace suffix; blank means unset. Acts as a near-deterministic anchor — filters to researchers who linked this DOI to their ORCID record.',
       ),
     pmid: z
       .string()
+      .regex(
+        PMID_INPUT_PATTERN,
+        'Provide pmid as digits (22745249), optionally prefixed by PMID: or a PubMed URL; omit it or leave it blank when unknown.',
+      )
       .optional()
       .describe(
-        'PubMed ID of a work authored by this researcher, bare (22745249), as PMID:22745249, or as a pubmed.ncbi.nlm.nih.gov or ncbi.nlm.nih.gov/pubmed URL. Acts as a near-deterministic anchor — filters to researchers who linked this PMID to their ORCID record.',
+        'Numeric PubMed ID of a work authored by this researcher, bare (22745249), as PMID:22745249, or as a pubmed.ncbi.nlm.nih.gov or ncbi.nlm.nih.gov/pubmed URL. Blank means unset; a label or URL without digits is invalid. Acts as a near-deterministic anchor — filters to researchers who linked this PMID to their ORCID record.',
       ),
     rows: z
       .number()
@@ -436,11 +446,11 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
     };
 
     // Model every supplied anchor as its own escaped, phrase-quoted clause, highest
-    // precedence first (DOI before PMID). The quotes keep a value with inner whitespace one
-    // clause rather than extra query terms (#47). The anchor-only fallback retries each
+    // precedence first (DOI before PMID). The quotes and escaping keep DOI punctuation
+    // literal inside one clause (#47). The anchor-only fallback retries each
     // independently so a valid anchor is never discarded when a wrong one zeroes out the
     // combined query. A URL-form identifier is reduced to the bare one ORCID indexes; one
-    // that is only a prefix comes back empty and anchors nothing.
+    // that is genuinely blank anchors nothing; malformed nonblank inputs fail validation.
     const anchorClauses: { type: 'doi' | 'pmid'; clause: string }[] = [];
     const doi = input.doi && stripIdentifierPrefix('doi', input.doi);
     if (doi) {

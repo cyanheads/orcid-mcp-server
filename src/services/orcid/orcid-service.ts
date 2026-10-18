@@ -22,6 +22,7 @@ import {
   normalizeFundings,
   normalizePeerReviews,
   normalizePerson,
+  normalizeResearchResourceDetail,
   normalizeResearchResources,
   normalizeWorks,
 } from './normalizers.js';
@@ -38,9 +39,11 @@ import type {
   RawFundingsResponse,
   RawPeerReviewsResponse,
   RawPerson,
+  RawResearchResourceDetail,
   RawResearchResourcesResponse,
   RawWorksResponse,
   ResearchResource,
+  ResearchResourceDetail,
   Work,
 } from './types.js';
 
@@ -108,15 +111,14 @@ export class OrcidService {
 
   /**
    * Detect HTML error pages masquerading as JSON responses (rate-limit or maintenance pages).
-   * The endpoint URL is logged server-side for operators but never enters the thrown message
-   * or `data` — the client-facing error must not leak the upstream API URL (see #28).
+   * Neither the warning nor the client-facing error carries the upstream URL or body.
    */
-  private assertNotHtml(text: string, url: string, ctx: Context): void {
+  private assertNotHtml(text: string, endpoint: string, ctx: Context): void {
     if (/^\s*<(!DOCTYPE\s+html|html[\s>])/i.test(text)) {
       ctx.log.warning(
         'ORCID returned HTML instead of JSON — likely rate-limited or under maintenance.',
         {
-          url,
+          endpoint,
         },
       );
       throw serviceUnavailable(
@@ -130,7 +132,7 @@ export class OrcidService {
    *
    * `httpErrorFromResponse` keeps the upstream request URL off `error.data` unless
    * `includeUrl` is passed, and `service: 'ORCID'` keeps the host out of the message, so
-   * the endpoint never reaches the client (#31). It is logged here for operators instead.
+   * the endpoint URL never reaches the client (#31). Logs use a fixed endpoint label.
    * The error carries what the framework and `withRetry` classify on: the status →
    * JSON-RPC code mapping, `status`/`statusText`/`statusCode`, and any
    * `retryAfter`/`retryable` signal.
@@ -139,7 +141,11 @@ export class OrcidService {
    * whose body names a Solr query rejection is reclassified `InvalidParams`: the same query
    * fails on every attempt, so retrying it only delays the caller's recovery hint.
    */
-  private async upstreamError(response: Response, url: string, ctx: Context): Promise<McpError> {
+  private async upstreamError(
+    response: Response,
+    endpoint: string,
+    ctx: Context,
+  ): Promise<McpError> {
     const queryRejected =
       response.status === 500 &&
       (await response.text().catch(() => '')).includes(SOLR_QUERY_REJECTION);
@@ -150,7 +156,7 @@ export class OrcidService {
       captureBody: false,
       ...(queryRejected && { codeOverride: () => JsonRpcErrorCode.InvalidParams }),
     });
-    ctx.log.warning('ORCID request failed.', { url, status: response.status });
+    ctx.log.warning('ORCID request failed.', { endpoint, status: response.status });
     return error;
   }
 
@@ -177,10 +183,10 @@ export class OrcidService {
    * A transport rejection while that signal is live (refused, reset, DNS) and a 2xx body that
    * is not JSON (empty, cut off, a proxy page) each become a transient `ServiceUnavailable` that
    * names ORCID only, retried like an outage. The runtime's message can carry the request URL
-   * and the parser's quotes the body, so both stay on `cause` and the URL in the server log
-   * (#28, #31).
+   * and the parser's quotes the body, so both stay on `cause`; logs use a fixed endpoint
+   * label (#28, #31).
    */
-  private fetchJson<T>(url: string, ctx: Context): Promise<T> {
+  private fetchJson<T>(url: string, endpoint: string, ctx: Context): Promise<T> {
     // Create a RequestContext from the handler Context for withRetry's structured logging.
     const reqCtx = requestContextService.createRequestContext({
       operation: 'OrcidService.fetchJson',
@@ -190,22 +196,22 @@ export class OrcidService {
       async ({ signal }) => {
         const unreachable = (error: unknown): never => {
           if (signal.aborted) throw error;
-          ctx.log.warning('ORCID request failed in transport.', { url, error: String(error) });
+          ctx.log.warning('ORCID request failed in transport.', { endpoint });
           throw serviceUnavailable('The ORCID API could not be reached.', undefined, {
             cause: error,
           });
         };
         const response = await fetch(url, { headers: this.headers(), signal }).catch(unreachable);
         if (!response.ok) {
-          throw await this.upstreamError(response, url, ctx);
+          throw await this.upstreamError(response, endpoint, ctx);
         }
         const text = await response.text().catch(unreachable);
-        this.assertNotHtml(text, url, ctx);
+        this.assertNotHtml(text, endpoint, ctx);
         try {
           return JSON.parse(text) as T;
         } catch (error) {
           ctx.log.warning('ORCID returned a 2xx body that is not JSON.', {
-            url,
+            endpoint,
             status: response.status,
             bodyBytes: text.length,
           });
@@ -237,7 +243,7 @@ export class OrcidService {
     if (params.start != null) qs.set('start', String(params.start));
     const url = `${this.baseUrl}/expanded-search/?${qs}`;
     ctx.log.debug('ORCID expanded-search', { q: params.q, rows: params.rows, start: params.start });
-    const raw = await this.fetchJson<RawExpandedSearchResponse>(url, ctx);
+    const raw = await this.fetchJson<RawExpandedSearchResponse>(url, 'expanded-search', ctx);
     return normalizeExpandedSearch(raw);
   }
 
@@ -249,7 +255,7 @@ export class OrcidService {
     const id = normalizeOrcidId(orcidId);
     const url = `${this.baseUrl}/${id}/person`;
     ctx.log.debug('ORCID getPerson', { orcidId: id });
-    const raw = await this.fetchJson<RawPerson>(url, ctx);
+    const raw = await this.fetchJson<RawPerson>(url, 'person', ctx);
     return normalizePerson(raw);
   }
 
@@ -261,7 +267,7 @@ export class OrcidService {
     const id = normalizeOrcidId(orcidId);
     const url = `${this.baseUrl}/${id}/works`;
     ctx.log.debug('ORCID getWorks', { orcidId: id });
-    const raw = await this.fetchJson<RawWorksResponse>(url, ctx);
+    const raw = await this.fetchJson<RawWorksResponse>(url, 'works', ctx);
     return normalizeWorks(raw, id);
   }
 
@@ -277,7 +283,7 @@ export class OrcidService {
     const id = normalizeOrcidId(orcidId);
     const url = `${this.baseUrl}/${id}/activities`;
     ctx.log.debug('ORCID getAffiliations', { orcidId: id, types });
-    const raw = await this.fetchJson<RawActivities>(url, ctx);
+    const raw = await this.fetchJson<RawActivities>(url, 'activities', ctx);
     return normalizeActivities(raw, types, id);
   }
 
@@ -288,7 +294,7 @@ export class OrcidService {
     const id = normalizeOrcidId(orcidId);
     const url = `${this.baseUrl}/${id}/fundings`;
     ctx.log.debug('ORCID getFundings', { orcidId: id });
-    const raw = await this.fetchJson<RawFundingsResponse>(url, ctx);
+    const raw = await this.fetchJson<RawFundingsResponse>(url, 'fundings', ctx);
     return normalizeFundings(raw, id);
   }
 
@@ -299,7 +305,7 @@ export class OrcidService {
     const id = normalizeOrcidId(orcidId);
     const url = `${this.baseUrl}/${id}/peer-reviews`;
     ctx.log.debug('ORCID getPeerReviews', { orcidId: id });
-    const raw = await this.fetchJson<RawPeerReviewsResponse>(url, ctx);
+    const raw = await this.fetchJson<RawPeerReviewsResponse>(url, 'peer-reviews', ctx);
     return normalizePeerReviews(raw, id);
   }
 
@@ -318,7 +324,7 @@ export class OrcidService {
     const codesStr = putCodes.join(',');
     const url = `${this.baseUrl}/${id}/works/${codesStr}`;
     ctx.log.debug('ORCID getWorkDetails (bulk)', { orcidId: id, count: putCodes.length });
-    const raw = await this.fetchJson<RawBulkWorksResponse>(url, ctx);
+    const raw = await this.fetchJson<RawBulkWorksResponse>(url, 'work-detail', ctx);
     return normalizeBulkWorks(raw, id);
   }
 
@@ -330,8 +336,23 @@ export class OrcidService {
     const id = normalizeOrcidId(orcidId);
     const url = `${this.baseUrl}/${id}/research-resources`;
     ctx.log.debug('ORCID getResearchResources', { orcidId: id });
-    const raw = await this.fetchJson<RawResearchResourcesResponse>(url, ctx);
+    const raw = await this.fetchJson<RawResearchResourcesResponse>(url, 'research-resources', ctx);
     return normalizeResearchResources(raw, id);
+  }
+
+  /** Fetch one allocation's full proposal and items; the existing call deadline applies. */
+  async getResearchResourceDetail(
+    orcidId: string,
+    putCode: number,
+    ctx: Context,
+  ): Promise<ResearchResourceDetail> {
+    const id = normalizeOrcidId(orcidId);
+    const raw = await this.fetchJson<RawResearchResourceDetail>(
+      `${this.baseUrl}/${id}/research-resource/${putCode}`,
+      'research-resource-detail',
+      ctx,
+    );
+    return normalizeResearchResourceDetail(raw, id);
   }
 }
 

@@ -151,6 +151,19 @@ beforeAll(() => {
       match: (request) => request.url.endsWith('/works'),
       respond: () => Response.json(generatedWorks()),
     },
+    {
+      match: (request) => request.url.includes('/research-resource/'),
+      respond: (request) =>
+        Response.json({
+          'put-code': Number(request.url.split('/').at(-1)),
+          'resource-item': [
+            {
+              'resource-name': 'Allocation item',
+              hosts: { organization: [{}, { name: 'Operator' }] },
+            },
+          ],
+        }),
+    },
     { match: () => true, respond: () => Response.json({}) },
   ]);
   http.install();
@@ -194,12 +207,13 @@ describe('ORCID tool fuzz', () => {
 
 /**
  * The search input contract (#34, #42, #44): a call is accepted exactly when at least one
- * field is non-blank after trimming and DOI/PMID URL-prefix stripping, and an accepted call
+ * field is non-blank after trimming and DOI/PMID URL-prefix stripping, no supplied anchor
+ * is malformed or prefix-only, and an accepted call
  * sends a query with one clause per non-blank field — never `*:*`, never an empty clause.
  * Each generated value records whether it is blank, independently of the code under test.
  */
 describe('orcid_search_researchers input contract', () => {
-  type Gen = { value?: string; blank: boolean };
+  type Gen = { value?: string; blank: boolean; invalid?: boolean };
 
   const blankText = fc.constantFrom('', ' ', '   ', '\t', ' \n ');
   const maybe = (arb: fc.Arbitrary<Gen>) =>
@@ -215,9 +229,11 @@ describe('orcid_search_researchers input contract', () => {
     );
   const prefixed = (prefixes: string[], body: fc.Arbitrary<string>) =>
     maybe(
-      fc
-        .tuple(fc.constantFrom(...prefixes), fc.oneof(blankText, body))
-        .map(([prefix, rest]) => ({ value: `${prefix}${rest}`, blank: rest.trim() === '' })),
+      fc.tuple(fc.constantFrom(...prefixes), fc.oneof(blankText, body)).map(([prefix, rest]) => ({
+        value: `${prefix}${rest}`,
+        blank: rest.trim() === '',
+        invalid: prefix !== '' && rest.trim() === '',
+      })),
     );
 
   const word = fc.stringMatching(/^[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ '"()&/-]{0,15}$/);
@@ -311,7 +327,9 @@ describe('orcid_search_researchers input contract', () => {
         );
 
         const parsed = orcidSearchResearchers.input.safeParse(raw);
-        expect(parsed.success).toBe(nonBlank.length > 0);
+        expect(parsed.success).toBe(
+          nonBlank.length > 0 && !Object.values(generated).some((value) => value.invalid),
+        );
         if (!parsed.success) {
           outcomes.rejected++;
           return;
@@ -370,7 +388,7 @@ describe('search response byte budget', () => {
 
     await fc.assert(
       fc.asyncProperty(
-        fc.integer({ min: 1, max: 1000 }),
+        fc.integer({ min: 1, max: 10000 }),
         fc.integer({ min: 0, max: GENERATED_RESEARCHER_COUNT + 20 }),
         async (rows, start) => {
           const result = await runToolContract(orcidSearchResearchers, {
@@ -427,7 +445,7 @@ describe('works response byte budget', () => {
   it('orcid_get_works: every page fits the budget and continues exactly where it stopped', async () => {
     await fc.assert(
       fc.asyncProperty(
-        fc.integer({ min: 1, max: 1000 }),
+        fc.integer({ min: 1, max: 10000 }),
         fc.integer({ min: 0, max: GENERATED_WORK_COUNT + 20 }),
         fc.boolean(),
         async (limit, offset, includeIds) => {
@@ -467,7 +485,7 @@ describe('works response byte budget', () => {
     await fc.assert(
       fc.asyncProperty(
         // Codes drawn from a narrow range, so most batches repeat some put-codes.
-        fc.array(fc.integer({ min: 1, max: 400 }), { minLength: 1, maxLength: 100 }),
+        fc.array(fc.integer({ min: 1, max: 400 }), { minLength: 1, maxLength: 1000 }),
         async (putCodes) => {
           const result = await runToolContract(orcidGetWorkDetail, {
             orcid_id: ORCID,

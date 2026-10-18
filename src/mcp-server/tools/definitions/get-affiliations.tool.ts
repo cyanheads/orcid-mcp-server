@@ -9,11 +9,7 @@ import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { SourceSchema, sourcesText } from '@/mcp-server/tools/record-sources.js';
 import { singleLine } from '@/mcp-server/tools/third-party-text.js';
 import { orcidIdSchema } from '@/services/orcid/orcid-id.js';
-import {
-  type AffiliationType,
-  getOrcidService,
-  normalizeOrcidId,
-} from '@/services/orcid/orcid-service.js';
+import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
 import type { Affiliation } from '@/services/orcid/types.js';
 
 const AFFILIATION_TYPES = [
@@ -105,7 +101,9 @@ export const orcidGetAffiliations = tool('orcid_get_affiliations', {
       .describe('Affiliation records for the requested types.'),
     requestedTypes: z
       .array(z.string().describe('Affiliation type.'))
-      .describe('Affiliation types that were requested.'),
+      .describe(
+        'Unique caller affiliation selectors in first-occurrence order, retaining all when requested.',
+      ),
   }),
 
   // Agent-facing context: empty-result notice surfaces in structuredContent and content[]
@@ -131,15 +129,12 @@ export const orcidGetAffiliations = tool('orcid_get_affiliations', {
 
   async handler(input, ctx) {
     const service = getOrcidService();
+    const requestedTypes = [...new Set(input.types)];
     ctx.log.info('orcid_get_affiliations', { orcidId: input.orcid_id, types: input.types });
 
     let affiliations: Affiliation[];
     try {
-      affiliations = await service.getAffiliations(
-        input.orcid_id,
-        input.types as AffiliationType[],
-        ctx,
-      );
+      affiliations = await service.getAffiliations(input.orcid_id, requestedTypes, ctx);
     } catch (err) {
       if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
         throw ctx.fail(
@@ -158,7 +153,7 @@ export const orcidGetAffiliations = tool('orcid_get_affiliations', {
 
     if (affiliations.length === 0) {
       ctx.enrich.notice(
-        `No affiliations found for the requested types (${input.types.join(', ')}). They may be set to private, or neither the researcher nor a member organization added any; absence does not mean no affiliation.`,
+        `No affiliations found for the requested types (${requestedTypes.join(', ')}). They may be set to private, or neither the researcher nor a member organization added any; absence does not mean no affiliation.`,
       );
     }
 
@@ -167,7 +162,7 @@ export const orcidGetAffiliations = tool('orcid_get_affiliations', {
       orcidUri: `https://orcid.org/${bareId}`,
       affiliationCount: affiliations.length,
       affiliations,
-      requestedTypes: input.types,
+      requestedTypes,
     };
   },
 

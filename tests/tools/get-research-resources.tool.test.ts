@@ -54,6 +54,20 @@ const sampleResources = [
 ];
 
 describe('orcidGetResearchResources sources', () => {
+  it('characterizes the unchanged summary record and first-host contract', async () => {
+    mockGetResearchResources.mockResolvedValueOnce(sampleResources);
+    const result = await runToolContract(orcidGetResearchResources, {
+      orcid_id: '0000-0002-4788-2309',
+    });
+    expect(result.isError).toBeFalsy();
+    expect((result.structuredContent as { resources: unknown[] }).resources[0]).toEqual(
+      sampleResources[0],
+    );
+    expect(result.content.map((b) => (b.type === 'text' ? b.text : '')).join('')).toContain(
+      '**Host:** Advanced Cyberinfrastructure',
+    );
+  });
+
   it('carries the depositing system on both result surfaces', async () => {
     mockGetResearchResources.mockResolvedValueOnce([
       { putCode: 8093, externalIds: [], sources: [{ name: 'ACCESS', selfAsserted: false }] },
@@ -222,6 +236,7 @@ describe('orcidGetResearchResources', () => {
 
   it('formats resources with all fields rendered', () => {
     const output = orcidGetResearchResources.output.parse({
+      view: 'summary',
       orcidId: '0000-0002-4788-2309',
       orcidUri: 'https://orcid.org/0000-0002-4788-2309',
       resourceCount: 1,
@@ -270,6 +285,7 @@ describe('orcidGetResearchResources', () => {
 
   it('formats empty resource list', () => {
     const output = orcidGetResearchResources.output.parse({
+      view: 'summary',
       orcidId: '0000-0002-1825-0097',
       orcidUri: 'https://orcid.org/0000-0002-1825-0097',
       resourceCount: 0,
@@ -284,6 +300,7 @@ describe('orcidGetResearchResources', () => {
 
   it('formats untitled resource without crashing', () => {
     const output = orcidGetResearchResources.output.parse({
+      view: 'summary',
       orcidId: '0000-0002-4788-2309',
       orcidUri: 'https://orcid.org/0000-0002-4788-2309',
       resourceCount: 1,

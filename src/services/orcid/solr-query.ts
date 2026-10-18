@@ -48,12 +48,29 @@ const IDENTIFIER_PREFIXES = {
   pmid: /^(?:(?:https?:\/\/)?(?:(?:www\.)?ncbi\.nlm\.nih\.gov\/pubmed\/|pubmed\.ncbi\.nlm\.nih\.gov\/)|pmid:)/i,
 } as const;
 
+/** Case-insensitive fixed prefixes expressed without flags for JSON Schema consumers. */
+function advertisedPrefix(pattern: RegExp): string {
+  return pattern.source
+    .slice(1)
+    .replace(/[a-z]/g, (letter) => `[${letter}${letter.toUpperCase()}]`);
+}
+
+/** Optional DOI input: blank or a complete bare/prefixed DOI, preserving body case. */
+export const DOI_INPUT_PATTERN = new RegExp(
+  `^(?:\\s*|\\s*(?:${advertisedPrefix(IDENTIFIER_PREFIXES.doi)}\\s*)?10\\.[0-9]+/\\S+\\s*)$`,
+);
+
+/** Optional PMID input, including the existing PubMed URL tail normalization. */
+export const PMID_INPUT_PATTERN = new RegExp(
+  `^(?:\\s*|\\s*(?:${advertisedPrefix(IDENTIFIER_PREFIXES.pmid)}\\s*)?[0-9]+\\s*(?:/(?:[?#][\\s\\S]*|\\s*)|[?#][\\s\\S]*|$))$`,
+);
+
 /**
  * Reduce a DOI or PMID to the bare identifier ORCID indexes: trim, strip one leading URL,
  * `doi:`, or `PMID:` prefix (matched case-insensitively), and for a PMID drop a URL query
  * string or fragment and one trailing slash. The identifier body keeps its case —
- * `doi-self` matching can be case-sensitive. A value that is only a prefix comes back empty,
- * which callers treat as a blank field.
+ * `doi-self` matching can be case-sensitive. Validate nonblank caller inputs against the
+ * corresponding input pattern before stripping, so a prefix-only value is rejected.
  *
  * @param kind - Which identifier's prefixes to strip.
  * @param value - The raw `doi` or `pmid` input.

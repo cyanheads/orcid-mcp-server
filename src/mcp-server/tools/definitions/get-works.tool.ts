@@ -10,7 +10,7 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { SourceSchema, sourcesText } from '@/mcp-server/tools/record-sources.js';
-import { countWithinBudget, jsonBytes, recordCost } from '@/mcp-server/tools/response-budget.js';
+import { countWithinBudget, recordCost } from '@/mcp-server/tools/response-budget.js';
 import { singleLine } from '@/mcp-server/tools/third-party-text.js';
 import { orcidIdSchema } from '@/services/orcid/orcid-id.js';
 import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
@@ -92,10 +92,10 @@ export const orcidGetWorks = tool('orcid_get_works', {
       .number()
       .int()
       .min(1)
-      .max(1000)
+      .max(10000)
       .default(50)
       .describe(
-        'Maximum works to return in this response (default 50, max 1000). The full list is sliced locally — page prolific records with offset and the returned nextOffset. A page stops early at the 64,000-byte response budget, so a large limit may return fewer works.',
+        'Requested works (default 50, accepted maximum 10,000, effective maximum 1,000). Page locally with offset and nextOffset; the 64,000-byte response budget may return fewer.',
       ),
     offset: z
       .number()
@@ -152,7 +152,7 @@ export const orcidGetWorks = tool('orcid_get_works', {
       .string()
       .optional()
       .describe(
-        'Note when the works list is empty — neither the researcher nor a member organization may have added works, or they may be private.',
+        'Requested/effective limit disclosure or empty-list guidance: works may be private or not yet added.',
       ),
   },
 
@@ -189,22 +189,37 @@ export const orcidGetWorks = tool('orcid_get_works', {
     const bareId = normalizeOrcidId(input.orcid_id);
     const orcidUri = `https://orcid.org/${bareId}`;
     const workCount = allWorks.length;
+    const limit = Math.min(input.limit, 1000);
+    const notices: string[] = [];
+    if (input.limit > limit)
+      notices.push(
+        `Requested limit ${input.limit}; effective cap ${limit} works before the response byte budget.`,
+      );
+    if (workCount === 0)
+      notices.push(
+        'No works found. They may be set to private, or neither the researcher nor a member organization added any; absence does not mean no publications.',
+      );
+    const notice = notices.join(' ');
 
-    const page = allWorks.slice(input.offset, input.offset + input.limit).map((w) => {
+    const page = allWorks.slice(input.offset, input.offset + limit).map((w) => {
       const { externalIds, ...rest } = w;
       return input.include_external_ids ? { ...rest, externalIds } : rest;
     });
     // Envelope sized for its widest counters, so the page never overshoots the budget.
-    const envelopeBytes = jsonBytes({
-      orcidId: bareId,
-      orcidUri,
-      workCount,
-      returnedCount: page.length,
-      offset: input.offset,
-      nextOffset: workCount,
-      truncated: false,
-      works: [],
-    });
+    const envelopeBytes = recordCost(
+      {
+        orcidId: bareId,
+        orcidUri,
+        workCount,
+        returnedCount: page.length,
+        offset: input.offset,
+        nextOffset: workCount,
+        truncated: false,
+        works: [],
+        ...(notice && { notice }),
+      },
+      `## Works for ORCID ${bareId}\n**URI:** ${orcidUri}\n**Total Works:** ${workCount}\n**Returned:** ${page.length} (offset ${input.offset})\n**Truncated:** No\n**Next Offset:** ${workCount}\n\n${notice ? `\n\n> ${notice}` : ''}`,
+    );
     const works = page.slice(
       0,
       countWithinBudget(
@@ -223,11 +238,7 @@ export const orcidGetWorks = tool('orcid_get_works', {
       truncated,
     });
 
-    if (workCount === 0) {
-      ctx.enrich.notice(
-        'No works found. They may be set to private, or neither the researcher nor a member organization added any; absence does not mean no publications.',
-      );
-    }
+    if (notice) ctx.enrich.notice(notice);
 
     return {
       orcidId: bareId,

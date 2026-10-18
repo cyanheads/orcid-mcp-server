@@ -37,6 +37,7 @@ import type {
   RawPeerReviewGroup,
   RawPeerReviewsResponse,
   RawPerson,
+  RawResearchResourceDetail,
   RawResearchResourceGroup,
   RawResearchResourcesResponse,
   RawSource,
@@ -47,6 +48,7 @@ import type {
   RawWorksGroup,
   RawWorksResponse,
   ResearchResource,
+  ResearchResourceDetail,
   Source,
   Work,
   WorkContributor,
@@ -375,7 +377,7 @@ export function normalizeActivities(
 ): Affiliation[] {
   const resolvedTypes = types.includes('all')
     ? ALL_AFFILIATION_TYPES
-    : (types as NonAllAffiliationType[]);
+    : [...new Set(types as NonAllAffiliationType[])];
 
   return resolvedTypes.flatMap((type) => {
     const key = AFFILIATION_TYPE_KEYS[type];
@@ -579,6 +581,9 @@ export function normalizeResearchResources(
       const resource: ResearchResource = {
         putCode,
         externalIds: [],
+        proposalHosts: (s.proposal?.hosts?.organization ?? []).map(
+          (org) => normalizeOrg(org) ?? {},
+        ),
         sources: normalizeSources([s], orcidId),
       };
       const titleVal = toPlainText(s.proposal?.title?.title?.value);
@@ -597,4 +602,29 @@ export function normalizeResearchResources(
       return [resource];
     }),
   );
+}
+
+/** Normalize one detail record using the same proposal and provenance boundary as summaries. */
+export function normalizeResearchResourceDetail(
+  raw: RawResearchResourceDetail,
+  orcidId: string,
+): ResearchResourceDetail {
+  const resource = normalizeResearchResources(
+    { group: [{ 'research-resource-summary': [raw] }] },
+    orcidId,
+  )[0];
+  if (!resource) throw new Error('ORCID research-resource detail has no put-code.');
+  return {
+    ...resource,
+    items: (raw['resource-item'] ?? []).map((item) => {
+      const name = toPlainText(item['resource-name']);
+      return {
+        ...(name && { name }),
+        ...(item['resource-type'] && { type: item['resource-type'] }),
+        hosts: (item.hosts?.organization ?? []).map((org) => normalizeOrg(org) ?? {}),
+        externalIds: normalizeExternalIds(item['external-ids']?.['external-id']),
+        ...(item.url?.value && { url: item.url.value }),
+      };
+    }),
+  };
 }

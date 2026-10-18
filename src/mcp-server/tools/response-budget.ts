@@ -1,6 +1,6 @@
 /**
  * @fileoverview Byte budget for the record lists `orcid_search_researchers`, `orcid_get_works`,
- * and `orcid_get_work_detail` return. Records are admitted in order while both result
+ * `orcid_get_peer_reviews`, and `orcid_get_work_detail` return. Records are admitted in order while both result
  * surfaces stay within the budget — the serialized `structuredContent` and the `content[]`
  * text — so a single call cannot exceed a safe share of a model's context window however
  * large the requested page is.

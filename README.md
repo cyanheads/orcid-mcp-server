@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.3.2-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/orcid-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.1.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/orcid-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/orcid-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.2%2B-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.3.2-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/orcid-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.3.1-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/orcid-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/orcid-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.3%2B-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -29,7 +29,7 @@
 
 ## Overview
 
-Researcher identity data from the ORCID registry. Search and disambiguate authors, build a researcher dossier from profile, works, affiliations, funding, and peer review records, and chain external identifiers to Crossref, PubMed, or arXiv from any MCP client. Runs as a stdio process, a local Streamable HTTP server, or the public hosted endpoint above.
+Researcher identity data from the ORCID registry. Search and disambiguate authors, build a researcher dossier from profile, works, affiliations, funding, and peer review records, and chain external identifiers to Crossref, PubMed, or arXiv.
 
 ### Tools
 
@@ -38,7 +38,7 @@ Researcher identity data from the ORCID registry. Search and disambiguate author
 | `orcid_search_researchers` | Search the ORCID registry using structured field params (name, affiliation, keyword, ROR ID, DOI, PMID, grant number) |
 | `orcid_get_profile` | Fetch a researcher's public profile — name, other names, biography, keywords, researcher URLs, external identifiers |
 | `orcid_get_works` | Retrieve works (publications, datasets, software, preprints) for a researcher, paginated |
-| `orcid_get_work_detail` | Fetch full detail records — abstracts, contributors, citations — for 1–100 works by put-code |
+| `orcid_get_work_detail` | Accept up to 1,000 put-codes, fetch the first 100 distinct works, and return deferred codes for continuation |
 | `orcid_get_affiliations` | Fetch affiliation records: employment, education, memberships, and more |
 | `orcid_get_funding` | Fetch funding records: grants, contracts, awards, and salary awards |
 | `orcid_get_peer_reviews` | Fetch peer review activity: convening organizations, reviewer role, review type |
@@ -61,10 +61,10 @@ All resource data is also reachable via tools. Use resources when injecting stab
 - Structured params — `given_name`, `family_name`, `affiliation`, `keyword`, `ror_id`, `doi`, `pmid`, `grant_number` — AND together automatically; `query` adds raw Solr syntax — sent as written when it is the only field, otherwise ANDed as one parenthesized group so a top-level `OR` keeps its alternatives (an exclusion-only query such as `-keyword:x` is ANDed ungrouped, since ORCID matches nothing for a group of only exclusions)
 - At least one param must be non-blank — an empty or whitespace-only search is rejected rather than run against the whole registry
 - `given_name` phrase-matches, except that a value of only initials (`J.`, `J. A.`) matches given names starting with each letter
-- `doi` and `pmid` map to `doi-self` / `pmid-self` field queries — finds researchers who linked that specific work to their ORCID record. URL and label forms (`https://doi.org/…`, `doi:…`, `https://pubmed.ncbi.nlm.nih.gov/…/`, `PMID:…`) are accepted and reduced to the bare identifier
+- `doi` and `pmid` map to `doi-self` / `pmid-self` field queries — finds researchers who linked that specific work to their ORCID record. URL and label forms (`https://doi.org/…`, `doi:…`, `https://pubmed.ncbi.nlm.nih.gov/…/`, `PMID:…`) are accepted and reduced to the bare identifier, preserving its case. Nonblank values must contain a complete DOI (`10.` followed by digits, `/`, and a non-whitespace suffix) or numeric PMID; malformed and prefix-only values fail before a request. Omitted or genuinely blank fields remain unset
 - `ror_id` takes a ROR ID bare (`00f54p054`) or as a `ror.org` URL (`https://ror.org/…`, `ror.org/…`, a `www.` host, a trailing slash), in either letter case, and is reduced to the `https://ror.org/<lowercase id>` form ORCID indexes; a value that is not a ROR ID, or whose check digits do not match, is rejected before any search runs
 - `grant_number` phrase-matches the grant numbers on researchers' funding items, case-insensitively, over the parts between separators such as hyphens and slashes — `5F31MH010500` also matches `5F31MH010500-03`, but a number cut mid-part matches nothing — pair with `orcid_get_funding` to inspect each match
-- `rows`: 1–1000 (default 20); `start`: 0–10,000 offset pagination (the ORCID Public API's ceiling for unauthenticated requests)
+- `rows`: 1–10,000 accepted (default 20), capped at 1,000 before fetching; a notice names the requested size and effective cap on both surfaces. `start`: 0–10,000 offset pagination (the ORCID Public API's ceiling for unauthenticated requests)
 - A page also stops before its structured output or its text would pass 64,000 bytes, so the returned `rows` can come in below the requested count; `nextStart` continues from the first result left out
 - Returns expanded-search results with inline name and institution data — no follow-up profile fetch needed for basic discovery
 - Use for precise field-anchored lookups; use `orcid_resolve_researcher` for ambiguous names needing ranked disambiguation
@@ -82,7 +82,7 @@ All resource data is also reachable via tools. Use resources when injecting stab
 
 ### `orcid_get_works` <sub>tool</sub>
 
-- Returns the first 50 works by default (`limit` max 1000); page with `offset` and the returned `nextOffset` — `workCount` reports the total available
+- Returns the first 50 works by default (`limit` accepts 1–10,000, effective maximum 1,000 with a notice on both surfaces); page with `offset` and the returned `nextOffset` — `workCount` reports the total available
 - A page also stops before its structured output or its text would pass 64,000 bytes, so `returnedCount` can come in below `limit`; `truncated` and `nextOffset` carry the continuation either way
 - Set `include_external_ids` to `false` to drop DOI/PMID/arXiv/ISBN identifier lists for a lighter payload
 - One record per ORCID work group; its identifiers are the group's — the preferred version's own, then any that another source holds, such as a PMID beside a Crossref DOI
@@ -94,12 +94,12 @@ All resource data is also reachable via tools. Use resources when injecting stab
 
 ### `orcid_get_work_detail` <sub>tool</sub>
 
-- `put_codes`: 1–100 per call (from `orcid_get_works`), resolved in a single round-trip; a repeated put-code is fetched once
+- `put_codes`: 1–1,000 raw codes per call (from `orcid_get_works`), deduplicated in first-occurrence order before fetching the first 100 distinct codes in one request; a notice names the input cap when applied
 - Returns abstract, contributors with CRediT roles, the record's external IDs, citation metadata (BibTeX or other deposited formats), journal title, and URL
 - A record listing more than 100 contributors keeps the first 100 plus the researcher's own entries, matched by ORCID iD, with `contributorCount` and `contributorsTruncated` marking the cut; a citation over 8,192 bytes is left out and flagged `citationOmitted`, so a large-collaboration paper fits beside other records
 - Each put-code is one source's version of the work, so its identifiers can be fewer than `orcid_get_works` lists for the work group; `sources` names that source
 - Per-put-code failures (not found or inaccessible) arrive as `errors` entries — the rest of the batch still resolves
-- Records are added until the structured output or the text would pass 64,000 bytes; put-codes left out come back in `deferredPutCodes` with a notice, ready to pass as `put_codes` in the next call
+- Records are added until the structured output or the text would pass 64,000 bytes, reserving space for all continuation metadata and notices. `deferredPutCodes` contains every requested distinct code unsettled by an admitted work or identified error, in request order, including codes beyond the input cap or absent from the upstream response; pass it as `put_codes` in another call. Notices distinguish each cause
 - An upstream rate limit surfaces as a `RateLimited` error carrying ORCID's `retryAfter` when it sent one
 
 ---
@@ -124,7 +124,9 @@ All resource data is also reachable via tools. Use resources when injecting stab
 
 ### `orcid_get_peer_reviews` <sub>tool</sub>
 
-- No filtering params — returns the complete peer review history for the ORCID iD in one call
+- Pages the history in upstream order with `offset` (default 0) and `limit` (default 50, accepted maximum 10,000, effective maximum 1,000); a notice discloses a reduced limit on both surfaces
+- `reviewCount` counts returned reviews; `totalCount` reports the full history. Continue with `nextOffset` when `truncated` is true. Empty and past-end pages retain the total with no continuation
+- Both complete output surfaces, including notices and continuation, fit 64,000 bytes. One indivisible oversized review is returned alone with an explicit exception notice; continuation advances past it
 - Returns reviewer role (`reviewer`, `editor`, `chair`, etc.), review type, completion date, an ISSN-keyed group identifier, and the convening organization ORCID records per record
 - The convening organization is often the service that imported the review (Publons, Clarivate) rather than the journal; ORCID returns no journal name, so the ISSN is the journal key and heads each review that has one
 - Reviews come from the researcher or from member organizations that import them, and each record's `sources` names which; coverage varies widely by researcher
@@ -137,6 +139,10 @@ All resource data is also reachable via tools. Use resources when injecting stab
 - A newer, sparsely populated ORCID section — most researchers have zero entries, and absence does not imply none exist
 - Entries are typically deposited by resource-allocation systems (e.g. ACCESS, XSEDE) rather than added by the researcher
 - Returns resource title, hosting organization (with disambiguated ID), external identifiers (often a portal URI), access period, and the `sources` that deposited it
+- Default `view: summary` lists proposals; `proposalHosts` includes every proposal host, while `hostOrganization` keeps the first host for compatibility
+- Supply a proposal's `putCode` as `put_code` for `view: detail`: each item carries its name, type, all operators in `hosts`, external identifiers, and URL; proposal provenance stays on the resource record
+- Detail pages use `item_offset` (default 0) and `item_limit` (default 50, effective maximum 100, accepted maximum 10,000); both require `put_code`. `itemCount`, `returnedItemCount`, `itemOffset`, `itemsTruncated`, and `nextItemOffset` describe the page; top-level `truncated` mirrors `itemsTruncated`, and `itemLimitNotice` discloses a reduced limit on both surfaces
+- Both detail surfaces stay within 64,000 bytes, including proposal metadata and continuation; resume at `nextItemOffset`. An indivisible oversized item is returned alone with `budgetOverflow`; indivisible proposal metadata also receives an explicit exception. Empty and past-end pages have no continuation
 
 ---
 
