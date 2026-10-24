@@ -29,6 +29,7 @@ import type {
   RawBulkWorksResponse,
   RawExpandedSearchResponse,
   RawExpandedSearchResult,
+  RawFundingDetail,
   RawFundingGroup,
   RawFundingSummary,
   RawFundingsResponse,
@@ -137,7 +138,7 @@ function sourceKey(raw: RawSource): string {
  * summary with no `source` block contributes none.
  */
 function normalizeSources(
-  summaries: ReadonlyArray<{ source?: RawSource | null }>,
+  summaries: ReadonlyArray<{ source?: RawSource | null | undefined }>,
   orcidId: string,
 ): Source[] {
   const seen = new Set<string>();
@@ -394,6 +395,7 @@ function normalizeFundingSummary(raw: RawFundingSummary, sources: Source[]): Fun
     .filter((id) => id.type === 'grant_number')
     .map((id) => id.value);
   const record: FundingRecord = { grantNumbers, sources };
+  if (raw['put-code'] !== undefined) record.putCode = raw['put-code'];
   const title = toPlainText(raw.title?.title?.value);
   if (title) record.title = title;
   if (raw.type) record.type = raw.type;
@@ -403,6 +405,19 @@ function normalizeFundingSummary(raw: RawFundingSummary, sources: Source[]): Fun
   const endDate = normalizeDate(raw['end-date']);
   if (endDate) record.endDate = endDate;
   if (raw.url?.value) record.url = raw.url.value;
+  return record;
+}
+
+/** Normalize one deposit without inheriting other deposits' sources or periods. */
+export function normalizeFundingDetail(raw: RawFundingDetail, orcidId: string): FundingRecord {
+  const record = normalizeFundingSummary(raw, normalizeSources([raw], orcidId));
+  if (raw['short-description'] != null) record.description = raw['short-description'];
+  if (raw.amount) {
+    const amount: NonNullable<FundingRecord['amount']> = {};
+    if (raw.amount.value !== undefined) amount.value = raw.amount.value;
+    if (raw.amount['currency-code'] !== undefined) amount.currency = raw.amount['currency-code'];
+    if (Object.keys(amount).length) record.amount = amount;
+  }
   return record;
 }
 

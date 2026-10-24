@@ -164,7 +164,19 @@ beforeAll(() => {
           ],
         }),
     },
-    { match: () => true, respond: () => Response.json({}) },
+    {
+      match: (request) => request.url.includes('/funding/'),
+      respond: (request) => Response.json({ 'put-code': Number(request.url.split('/').at(-1)) }),
+    },
+    {
+      match: (request) => request.url.endsWith('/person'),
+      respond: () => Response.json({ name: null }),
+    },
+    {
+      match: (request) => request.url.endsWith('/activities'),
+      respond: () => Response.json({ employments: null }),
+    },
+    { match: () => true, respond: () => Response.json({ group: [] }) },
   ]);
   http.install();
   initOrcidServiceForTests();
@@ -187,6 +199,33 @@ const tools = [
 ];
 
 describe('ORCID tool fuzz', () => {
+  it('caps every accepted resolver read size and rejects values past the hard ceiling before I/O', async () => {
+    await fc.assert(
+      fc.asyncProperty(fc.integer({ min: 1, max: 10_001 }), async (rows) => {
+        const before = http.calls.length;
+        const result = await runToolContract(orcidResolveResearcher, { name: 'Given Smith', rows });
+        if (rows > 10_000) {
+          expect(result.isError).toBe(true);
+          expect(http.calls.length).toBe(before);
+        } else {
+          expect(result.isError).toBeFalsy();
+          const calls = http.calls.slice(before);
+          expect(calls.length).toBeGreaterThan(0);
+          for (const call of calls)
+            expect(new URL(call.request.url).searchParams.get('rows')).toBe(
+              String(Math.min(rows, 20)),
+            );
+          if (rows > 20) {
+            expect(result.structuredContent).toMatchObject({
+              notice: expect.stringContaining(String(rows)),
+            });
+            expect(JSON.stringify(result.content)).toContain(String(rows));
+          }
+        }
+      }),
+      { seed: SEED, numRuns: 50, examples: [[1], [20], [21], [10_000], [10_001]] },
+    );
+  });
   for (const definition of tools) {
     it(`keeps ${definition.name} safe across generated and adversarial inputs`, async () => {
       const before = http.calls.length;

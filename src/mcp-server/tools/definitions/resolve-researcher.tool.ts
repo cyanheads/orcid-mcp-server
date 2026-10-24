@@ -276,7 +276,7 @@ function computeInstitutionOverlap(
 export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
   title: 'Resolve ORCID Researcher',
   description:
-    'Disambiguate an author name to a verified ORCID iD. Returns ranked candidates (5 by default, up to 20 via the rows parameter) with transparent disambiguation signals: name match type (exact/partial/other-name/none), institution overlap flag, and whether a DOI or PMID anchor was used in the query. The name is searched as an exact phrase first; when that finds nothing, byline initials (J. Doudna, Jennifer A. Doudna) and then the other names listed on ORCID records are tried. A DOI or PMID anchor is near-deterministic — it filters to researchers who have linked that specific work to their ORCID record. Use this tool (not orcid_search_researchers) when the input is an ambiguous name that needs ranked disambiguation. No synthetic scores are used — raw signals only.',
+    'Disambiguate an author name to a verified ORCID iD. Returns ranked candidates (5 by default; rows accepts 1–10000 and is capped at 20 per search stage with a notice when clamped) with transparent disambiguation signals: name match type (exact/partial/other-name/none), institution overlap flag, and whether a DOI or PMID anchor was used in the query. The name is searched as an exact phrase first; when that finds nothing, byline initials (J. Doudna, Jennifer A. Doudna) and then the other names listed on ORCID records are tried. A DOI or PMID anchor is near-deterministic — it filters to researchers who have linked that specific work to their ORCID record. Use this tool (not orcid_search_researchers) when the input is an ambiguous name that needs ranked disambiguation. No synthetic scores are used — raw signals only.',
   annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
@@ -317,9 +317,11 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
       .number()
       .int()
       .min(1)
-      .max(20)
+      .max(10000)
       .default(5)
-      .describe('Maximum candidate count to return (1–20). Defaults to 5.'),
+      .describe(
+        'Requested candidate count (1–10000), capped at 20 per search stage with a notice when clamped. Defaults to 5.',
+      ),
   }),
 
   output: z.object({
@@ -399,7 +401,7 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
       .string()
       .optional()
       .describe(
-        'Recovery hint when no candidates are found or when the anchor query failed to match.',
+        'Requested/effective candidate cap notice, composed with recovery guidance when no candidates are found or the anchor query failed to match.',
       ),
   },
 
@@ -413,6 +415,7 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
 
   async handler(input, ctx) {
     const service = getOrcidService();
+    const effectiveRows = Math.min(input.rows, 20);
     ctx.log.info('orcid_resolve_researcher', {
       name: input.name,
       hasAffiliation: !!input.affiliation,
@@ -426,7 +429,7 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
     // signal — the service layer has already exhausted its retry budget.
     const search = async (q: string) => {
       try {
-        return await service.expandedSearch({ q, rows: input.rows }, ctx);
+        return await service.expandedSearch({ q, rows: effectiveRows }, ctx);
       } catch (err) {
         if (
           err instanceof McpError &&
@@ -569,17 +572,24 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
     });
     if (relaxedQuery) ctx.enrich({ relaxedQuery });
 
+    const notices: string[] = [];
+    if (input.rows > effectiveRows) {
+      notices.push(
+        `Requested rows ${input.rows}; using the maximum of ${effectiveRows} candidates per search stage.`,
+      );
+    }
     if (candidates.length === 0) {
       if (anchorType !== 'none') {
-        ctx.enrich.notice(
+        notices.push(
           `No ORCID records found matching "${input.name}" with the provided ${anchorType.toUpperCase()} anchor. Verify the ${anchorType.toUpperCase()} is correct or try without the anchor using orcid_search_researchers.`,
         );
       } else {
-        ctx.enrich.notice(
+        notices.push(
           `No ORCID records found matching "${input.name}". Try a different spelling or use orcid_search_researchers with a broader query.`,
         );
       }
     }
+    if (notices.length > 0) ctx.enrich.notice(notices.join(' '));
 
     return { candidates };
   },

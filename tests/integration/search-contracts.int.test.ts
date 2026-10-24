@@ -7,7 +7,7 @@
  */
 
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
-import type { FetchMockHarness } from '@cyanheads/mcp-ts-core/testing';
+import type { FetchMockHarness, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { toolContractSuite } from '@cyanheads/mcp-ts-core/testing/vitest';
 import { afterAll, beforeAll, expect } from 'vitest';
 import { orcidResolveResearcher } from '@/mcp-server/tools/definitions/resolve-researcher.tool.js';
@@ -63,6 +63,22 @@ toolContractSuite(orcidSearchResearchers, {
 
 toolContractSuite(orcidResolveResearcher, {
   success: [
+    ...[21, 10_000].map((rows) => ({
+      name: `caps resolver rows ${rows} through the production contract`,
+      input: { name: 'Jennifer Doudna', rows },
+      assert: (result: Awaited<ReturnType<typeof runToolContract>>) => {
+        expect(result.structuredContent).toMatchObject({
+          totalFound: 2,
+          notice: expect.stringContaining(String(rows)),
+          candidates: [{ orcidId: RESEARCHER_ID }, expect.anything()],
+        });
+        const text = result.content.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
+        expect(text).toContain(String(rows));
+        expect(text).toContain('20');
+        const request = http.calls.at(-1)!;
+        expect(new URL(request.request.url).searchParams.get('rows')).toBe('20');
+      },
+    })),
     {
       name: 'ranks candidates with transparent disambiguation signals',
       input: { name: 'Jennifer Doudna', affiliation: 'University of California, Berkeley' },

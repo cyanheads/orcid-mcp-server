@@ -1,0 +1,83 @@
+{
+  "created-date": {
+    "value": 1767799789643
+  },
+  "last-modified-date": {
+    "value": 1767799789643
+  },
+  "source": {
+    "source-orcid": null,
+    "source-client-id": {
+      "uri": "https://orcid.org/client/APP-JXS7IUUPUZRGH5HZ",
+      "path": "APP-JXS7IUUPUZRGH5HZ",
+      "host": "orcid.org"
+    },
+    "source-name": {
+      "value": "ProposalCentral"
+    },
+    "assertion-origin-orcid": null,
+    "assertion-origin-client-id": null,
+    "assertion-origin-name": null
+  },
+  "put-code": 2329252,
+  "path": "/0000-0001-9161-999X/funding/2329252",
+  "type": "grant",
+  "organization-defined-type": null,
+  "title": {
+    "title": {
+      "value": "Using Cas12a2 for targeted tumor elimination"
+    },
+    "translated-title": null
+  },
+  "short-description": "Cancer is a major health challenge, often driven by genetic changes that are hard to treat because they affect proteins that drugs can’t easily target. One such protein, p53, is mutated in about half of all cancers, making it a key focus for new treatments. Our research aims to develop a new way to fight cancer by targeting these mutations at the RNA level, using a bacterial defense system called Cas12a2. This system can destroy cancer cells by shredding their DNA when it detects specific RNA molecules unique to cancer.\r\n\r\nWe propose to use Cas12a2 to selectively kill cancer cells with mutations like those in p53 or linked to Epstein-Barr virus (EBV), which is associated with certain lung cancers, such as lung adenocarcinomas. Cas12a2 works by recognizing cancer-specific RNA, then cutting surrounding DNA, which triggers cell death. To deliver Cas12a2 into cancer cells, we will use virus-inspired particles called Enveloped Delivery Vehicles (EDVs). These particles can be designed to target lung cancer cells, sparing healthy cells and reducing side effects.\r\n\r\nOur research has three main goals. First, we will study how Cas12a2 destroys DNA in cancer cells and test its ability to kill cells with p53 mutations or EBV infections. We will design guides to help Cas12a2 find these cancer-specific RNAs and confirm that it kills only the targeted cells. Second, we will develop EDVs to carry Cas12a2 into lung cancer cells. By adding specific proteins to the EDVs, we can ensure they deliver Cas12a2 to the right cells. We will test these particles to make sure they work effectively and safely. Third, we will test the EDVs delivery to lung tumors in mice and whether Cas12a2 can stop tumor growth.\r\nThis approach is innovative because it targets cancer at the RNA level, offering a way to tackle mutations that current drugs can’t address. Our preliminary studies show that Cas12a2 can kill cells by damaging their DNA, and our team has successfully used EDVs to deliver similar tools to cells. If successful, this research could lead to a new, precise treatment for cancers with hard-to-treat mutations, improving outcomes for patients with lung carcinomas and potentially other cancers. By focusing on safety and specificity, we aim to create a therapy that minimizes harm to healthy cells, offering hope for better cancer treatments.\r\n",
+  "amount": {
+    "value": "330000.0",
+    "currency-code": "USD"
+  },
+  "url": null,
+  "start-date": {
+    "year": {
+      "value": "2026"
+    },
+    "month": {
+      "value": "02"
+    },
+    "day": {
+      "value": "01"
+    }
+  },
+  "end-date": {
+    "year": {
+      "value": "2028"
+    },
+    "month": {
+      "value": "01"
+    },
+    "day": {
+      "value": "31"
+    }
+  },
+  "external-ids": {
+    "external-id": [
+      {
+        "external-id-type": "grant_number",
+        "external-id-value": "YACS-25-1512683-01-YACS",
+        "external-id-normalized": null,
+        "external-id-normalized-error": null,
+        "external-id-url": null,
+        "external-id-relationship": "self"
+      }
+    ]
+  },
+  "contributors": null,
+  "organization": {
+    "name": "American Cancer Society",
+    "address": {
+      "city": "Atlanta",
+      "region": null,
+      "country": "US"
+    },
+    "disambiguated-organization": null
+  },
+  "visibility": "public"
+}

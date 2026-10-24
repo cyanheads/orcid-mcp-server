@@ -70,7 +70,8 @@ beforeAll(() => {
         ['activities', 'fundings', 'peer-reviews', 'research-resources'].some(
           (section) => request.url === `${BASE}/${CANONICAL_ID}/${section}`,
         ),
-      respond: () => Response.json({}),
+      respond: (request) =>
+        Response.json(request.url.endsWith('/activities') ? { employments: null } : { group: [] }),
     },
   ]);
   http.install();

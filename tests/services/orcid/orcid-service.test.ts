@@ -75,7 +75,7 @@ describe('OrcidService — User-Agent version (#65)', () => {
 
   /** Make one call through `service` and return the User-Agent it sent. */
   async function userAgentSentBy(service: OrcidService): Promise<string | undefined> {
-    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ name: null }));
     globalThis.fetch = fetchMock as typeof fetch;
     await service.getPerson('0000-0002-1825-0097', createMockContext());
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -658,7 +658,7 @@ describe('OrcidService — one deadline across the retry ladder, and transport f
 
     it('gives a later request of the same call only what is left of the 25 s budget', async () => {
       vi.useFakeTimers();
-      const fetchMock = stubSlow(20_000, '{}');
+      const fetchMock = stubSlow(20_000, '{"name":null}');
       const service = newService();
       const ctx = createMockContext();
       const state = track(

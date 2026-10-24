@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.3.3-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/orcid-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.3.1-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/orcid-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/orcid-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.3%2B-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.3.3-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/orcid-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.3.1-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/orcid-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/orcid-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.4%2B-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -40,7 +40,7 @@ Researcher identity data from the ORCID registry. Search and disambiguate author
 | `orcid_get_works` | Retrieve works (publications, datasets, software, preprints) for a researcher, paginated |
 | `orcid_get_work_detail` | Accept up to 1,000 put-codes, fetch the first 100 distinct works, and return deferred codes for continuation |
 | `orcid_get_affiliations` | Fetch affiliation records: employment, education, memberships, and more |
-| `orcid_get_funding` | Fetch funding records: grants, contracts, awards, and salary awards |
+| `orcid_get_funding` | List grouped funding summaries or select one award's deposited description, amount, and source |
 | `orcid_get_peer_reviews` | Fetch peer review activity: convening organizations, reviewer role, review type |
 | `orcid_get_research_resources` | List research resources — compute allocations, equipment access, lab facilities |
 | `orcid_resolve_researcher` | Disambiguate an ambiguous author name to a ranked list of verified ORCID iD candidates |
@@ -115,9 +115,13 @@ All resource data is also reachable via tools. Use resources when injecting stab
 
 ### `orcid_get_funding` <sub>tool</sub>
 
-- No filtering params — returns the complete funding list for the ORCID iD in one call
+- Without `put_code`, returns the complete grouped funding list in one request with `view: summary`; each preferred summary exposes its optional `putCode`
 - Returns funding type (grant, contract, award, salary-award), funder name and disambiguated ID (Crossref Funder ID/ROR), grant numbers, and funding period
 - One record per ORCID funding group, from its preferred version — a grant deposited twice counts once in `fundingCount`; when the group's versions record distinct award periods, such as renewals under one grant number, `periods` lists each
+- Supply a summary `putCode` as `put_code` for `view: detail`: fetches only that deposit, with its own source and optional description, URL, and `amount: { value?, currency? }`. Decimal text is preserved exactly; missing amounts and currencies stay absent
+- Page the deposited description with `description_offset` (default 0, requires `put_code`), measured in Unicode code points. Each funding record carries `descriptionOffset` and full `descriptionLength` when a description exists, plus `nextDescriptionOffset` only while text remains. Repeat the selector with that next offset; award metadata repeats on every page. The text surface represents the description as a JSON string so original CRLF line endings survive
+- Both complete detail surfaces fit 64,000 bytes, including metadata and continuation. `budgetOverflow` explicitly discloses metadata or single-code-point exceptions; an oversized page still advances. Missing, empty, and past-end descriptions have no continuation. Separate requests read the current deposit, so a deposit changed between pages is not a fixed snapshot
+- An unavailable selected deposit returns `funding_not_found`, denied public access returns `funding_inaccessible`, and paging without a selector returns `detail_required`; each error explains how to recover
 - Funding comes from the researcher or from member organizations (funders, institutions, search-and-link tools), and each record's `sources` names which; most researchers with real grants have no entries here, and absence does not imply no funding
 
 ---
@@ -148,7 +152,7 @@ All resource data is also reachable via tools. Use resources when injecting stab
 
 ### `orcid_resolve_researcher` <sub>tool</sub>
 
-- Returns ranked candidates (5 default, up to 20 via `rows`) with transparent disambiguation signals: name match type (`exact`/`partial`/`other-name`/`none`), institution overlap flag, and anchor type (`doi`/`pmid`/`none`)
+- Returns ranked candidates (`rows` default 5, accepted 1–10,000, effective maximum 20 at every search stage) with transparent disambiguation signals: name match type (`exact`/`partial`/`other-name`/`none`), institution overlap flag, and anchor type (`doi`/`pmid`/`none`). A notice reports requested and effective sizes when capped, alongside empty-result guidance
 - Name and institution comparisons are case- and accent-insensitive — `José Baselga` and `Jose Baselga` classify the same candidate identically
 - When `doi` or `pmid` is provided (bare or as a URL), uses `doi-self` or `pmid-self` as an anchor — researchers who have linked that work to their ORCID record are near-deterministic matches
 - Accepts a full name (`Jennifer Doudna`), a byline with initials (`J. Doudna`, `Jennifer A. Doudna`), or `Family, Given` (`Doudna, Jennifer`, read as `Jennifer Doudna`); an initial counts toward a `partial` match when the candidate's first given name starts with it
@@ -199,18 +203,40 @@ Agent-friendly output:
 
 ### Public Hosted Instance
 
-A public instance is available at `https://orcid.caseyjhand.com/mcp` — no installation required. Point any MCP client at it via Streamable HTTP:
+A public instance is available at `https://orcid.caseyjhand.com/mcp` — no installation required. It serves Streamable HTTP; each client takes its own config shape.
+
+For Claude Code:
+
+```sh
+claude mcp add --transport http orcid-mcp-server https://orcid.caseyjhand.com/mcp
+```
+
+For Cline (`cline_mcp_settings.json`):
 
 ```json
 {
   "mcpServers": {
     "orcid-mcp-server": {
-      "type": "streamable-http",
+      "type": "streamableHttp",
       "url": "https://orcid.caseyjhand.com/mcp"
     }
   }
 }
 ```
+
+For Cursor (`mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "orcid-mcp-server": {
+      "url": "https://orcid.caseyjhand.com/mcp"
+    }
+  }
+}
+```
+
+Claude Desktop adds remote servers under Settings → Connectors.
 
 ### Self-Hosted / Local
 

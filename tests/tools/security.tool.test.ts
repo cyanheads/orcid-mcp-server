@@ -35,8 +35,28 @@ const mockGetWorks = vi.fn();
 const mockGetWorkDetails = vi.fn();
 const mockGetAffiliations = vi.fn();
 const mockGetFundings = vi.fn();
+const mockGetFundingDetail = vi.fn();
 const mockGetPeerReviews = vi.fn();
 const mockGetResearchResources = vi.fn();
+
+it('selected funding renders description as a JSON scalar preserving untrusted line breaks', async () => {
+  const description = 'Award\r\n## Forged\n😀 "quoted" \\ end';
+  mockGetFundingDetail.mockResolvedValueOnce({
+    putCode: 1,
+    description,
+    grantNumbers: [],
+    sources: [],
+  });
+  const result = await runToolContract(orcidGetFunding, {
+    orcid_id: '0000-0002-1825-0097',
+    put_code: 1,
+  });
+  expect(result.isError).toBeFalsy();
+  expect(result.structuredContent).toMatchObject({ funding: [{ description }] });
+  const text = result.content.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
+  expect(text).toContain(JSON.stringify(description));
+  expect(text.split('\n')).not.toContain('## Forged');
+});
 
 vi.mock('@/services/orcid/orcid-service.js', () => ({
   getOrcidService: () => ({
@@ -46,6 +66,7 @@ vi.mock('@/services/orcid/orcid-service.js', () => ({
     getWorkDetails: mockGetWorkDetails,
     getAffiliations: mockGetAffiliations,
     getFundings: mockGetFundings,
+    getFundingDetail: mockGetFundingDetail,
     getPeerReviews: mockGetPeerReviews,
     getResearchResources: mockGetResearchResources,
   }),
@@ -61,6 +82,7 @@ beforeEach(() => {
     mockGetWorkDetails,
     mockGetAffiliations,
     mockGetFundings,
+    mockGetFundingDetail,
     mockGetPeerReviews,
     mockGetResearchResources,
   ]) {
@@ -278,8 +300,8 @@ describe('security: oversized inputs are rejected by input validation', () => {
     expect(() => orcidSearchResearchers.input.parse({ family_name: 'Smith', start: -1 })).toThrow();
   });
 
-  it('resolve_researcher: rows above 20 is rejected', () => {
-    expect(() => orcidResolveResearcher.input.parse({ name: 'Test', rows: 21 })).toThrow();
+  it('resolve_researcher: rows above the 10,000 hard ceiling is rejected', () => {
+    expect(() => orcidResolveResearcher.input.parse({ name: 'Test', rows: 10_001 })).toThrow();
   });
 
   it('resolve_researcher: rows below 1 is rejected', () => {

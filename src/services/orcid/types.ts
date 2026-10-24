@@ -10,7 +10,11 @@
 // ---------------------------------------------------------------------------
 
 /** An ORCID iD or member client reference inside a `source` block. */
-export type RawOrcidPathRef = { uri?: string; path?: string; host?: string };
+export type RawOrcidPathRef = {
+  uri?: undefined | string;
+  path?: undefined | string;
+  host?: undefined | string;
+};
 
 /**
  * Who added an activity item. Exactly one of `source-orcid` (a person, or a legacy client)
@@ -18,25 +22,25 @@ export type RawOrcidPathRef = { uri?: string; path?: string; host?: string };
  * the party the source asserted on behalf of; when absent the source is the assertion origin.
  */
 export type RawSource = {
-  'source-orcid'?: RawOrcidPathRef | null;
-  'source-client-id'?: RawOrcidPathRef | null;
-  'source-name'?: { value?: string } | null;
-  'assertion-origin-orcid'?: RawOrcidPathRef | null;
-  'assertion-origin-client-id'?: RawOrcidPathRef | null;
-  'assertion-origin-name'?: { value?: string } | null;
+  'source-orcid'?: undefined | RawOrcidPathRef | null;
+  'source-client-id'?: undefined | RawOrcidPathRef | null;
+  'source-name'?: undefined | { value?: undefined | string } | null;
+  'assertion-origin-orcid'?: undefined | RawOrcidPathRef | null;
+  'assertion-origin-client-id'?: undefined | RawOrcidPathRef | null;
+  'assertion-origin-name'?: undefined | { value?: undefined | string } | null;
 };
 
 /** A date value returned by ORCID (year, month, day all optional). */
 export type OrcidDate = {
-  year?: { value?: string } | null;
-  month?: { value?: string } | null;
-  day?: { value?: string } | null;
+  year?: undefined | { value?: undefined | string } | null;
+  month?: undefined | { value?: undefined | string } | null;
+  day?: undefined | { value?: undefined | string } | null;
 };
 
 /** Disambiguated organization (may carry GRID, ROR, or Ringgold ID). */
 export type RawDisambiguatedOrg = {
-  'disambiguated-organization-identifier'?: string;
-  'disambiguation-source'?: string;
+  'disambiguated-organization-identifier'?: undefined | string;
+  'disambiguation-source'?: undefined | string;
 };
 
 /**
@@ -44,25 +48,28 @@ export type RawDisambiguatedOrg = {
  * ORCID emits explicit `null` for unset fields rather than omitting them.
  */
 export type RawOrganization = {
-  name?: string;
-  address?: {
-    city?: string | null;
-    region?: string | null;
-    country?: string | null;
-  } | null;
-  'disambiguated-organization'?: RawDisambiguatedOrg | null;
+  name?: undefined | string;
+  address?:
+    | undefined
+    | {
+        city?: undefined | string | null;
+        region?: undefined | string | null;
+        country?: undefined | string | null;
+      }
+    | null;
+  'disambiguated-organization'?: undefined | RawDisambiguatedOrg | null;
 };
 
 /** Affiliation entry (employment, education, etc.). */
 export type RawAffiliationSummary = {
-  'put-code'?: number;
-  'department-name'?: string | null;
-  'role-title'?: string | null;
-  'start-date'?: OrcidDate | null;
-  'end-date'?: OrcidDate | null;
-  organization?: RawOrganization | null;
-  url?: { value?: string } | null;
-  source?: RawSource | null;
+  'put-code'?: undefined | number;
+  'department-name'?: undefined | string | null;
+  'role-title'?: undefined | string | null;
+  'start-date'?: undefined | OrcidDate | null;
+  'end-date'?: undefined | OrcidDate | null;
+  organization?: undefined | RawOrganization | null;
+  url?: undefined | { value?: undefined | string } | null;
+  source?: undefined | RawSource | null;
 };
 
 /**
@@ -81,55 +88,72 @@ export type AffiliationSummaryKey =
 
 /** One `summaries[]` entry — a single-key object wrapping the summary. */
 export type RawAffiliationSummaryEntry = Partial<
-  Record<AffiliationSummaryKey, RawAffiliationSummary>
+  Record<AffiliationSummaryKey, RawAffiliationSummary | undefined>
 >;
 
 /** Container for a group of affiliation summaries. */
 export type RawAffiliationGroup = {
-  summaries?: RawAffiliationSummaryEntry[];
+  summaries?: undefined | RawAffiliationSummaryEntry[];
 };
 
 /** Activities response sections. */
 export type RawActivities = {
-  'last-modified-date'?: { value?: number };
-  employments?: {
-    'affiliation-group'?: RawAffiliationGroup[];
-    'last-modified-date'?: { value?: number };
-  };
-  educations?: {
-    'affiliation-group'?: RawAffiliationGroup[];
-    'last-modified-date'?: { value?: number };
-  };
-  'invited-positions'?: {
-    'affiliation-group'?: RawAffiliationGroup[];
-    'last-modified-date'?: { value?: number };
-  };
-  distinctions?: {
-    'affiliation-group'?: RawAffiliationGroup[];
-    'last-modified-date'?: { value?: number };
-  };
-  memberships?: {
-    'affiliation-group'?: RawAffiliationGroup[];
-    'last-modified-date'?: { value?: number };
-  };
-  qualifications?: {
-    'affiliation-group'?: RawAffiliationGroup[];
-    'last-modified-date'?: { value?: number };
-  };
-  services?: {
-    'affiliation-group'?: RawAffiliationGroup[];
-    'last-modified-date'?: { value?: number };
-  };
+  'last-modified-date'?: undefined | { value?: undefined | number };
+  employments?:
+    | undefined
+    | {
+        'affiliation-group'?: undefined | RawAffiliationGroup[];
+        'last-modified-date'?: undefined | { value?: undefined | number };
+      };
+  educations?:
+    | undefined
+    | {
+        'affiliation-group'?: undefined | RawAffiliationGroup[];
+        'last-modified-date'?: undefined | { value?: undefined | number };
+      };
+  'invited-positions'?:
+    | undefined
+    | {
+        'affiliation-group'?: undefined | RawAffiliationGroup[];
+        'last-modified-date'?: undefined | { value?: undefined | number };
+      };
+  distinctions?:
+    | undefined
+    | {
+        'affiliation-group'?: undefined | RawAffiliationGroup[];
+        'last-modified-date'?: undefined | { value?: undefined | number };
+      };
+  memberships?:
+    | undefined
+    | {
+        'affiliation-group'?: undefined | RawAffiliationGroup[];
+        'last-modified-date'?: undefined | { value?: undefined | number };
+      };
+  qualifications?:
+    | undefined
+    | {
+        'affiliation-group'?: undefined | RawAffiliationGroup[];
+        'last-modified-date'?: undefined | { value?: undefined | number };
+      };
+  services?:
+    | undefined
+    | {
+        'affiliation-group'?: undefined | RawAffiliationGroup[];
+        'last-modified-date'?: undefined | { value?: undefined | number };
+      };
 };
 
 /** External identifier (used in both person and work records). */
 export type RawWorkExternalId = {
-  'external-id-type'?: string;
-  'external-id-value'?: string;
+  'external-id-type'?: undefined | string;
+  'external-id-value'?: undefined | string;
   /** ORCID's canonical form of the value (lower-cased DOI, `PMC` prefix stripped). */
-  'external-id-normalized'?: { value?: string; transient?: boolean } | null;
-  'external-id-url'?: { value?: string } | null;
-  'external-id-relationship'?: string;
+  'external-id-normalized'?:
+    | undefined
+    | { value?: undefined | string; transient?: undefined | boolean }
+    | null;
+  'external-id-url'?: undefined | { value?: undefined | string } | null;
+  'external-id-relationship'?: undefined | string;
 };
 
 /** Alias for RawWorkExternalId — same shape, used in person records. */
@@ -137,60 +161,86 @@ export type RawExternalId = RawWorkExternalId;
 
 /** Person section from ORCID. */
 export type RawPerson = {
-  name?: {
-    'given-names'?: { value?: string };
-    'family-name'?: { value?: string };
-    'credit-name'?: { value?: string };
-  };
+  name?:
+    | undefined
+    | {
+        'given-names'?: undefined | { value?: undefined | string };
+        'family-name'?: undefined | { value?: undefined | string };
+        'credit-name'?: undefined | { value?: undefined | string };
+      };
   /** Listed by descending `display-index`, the order the ORCID record shows them. */
-  'other-names'?: {
-    'other-name'?: Array<{ content?: string; 'display-index'?: number }>;
-  };
-  biography?: { content?: string };
-  keywords?: {
-    keyword?: Array<{ content?: string }>;
-  };
-  'researcher-urls'?: {
-    'researcher-url'?: Array<{
-      'url-name'?: string;
-      url?: { value?: string };
-    }>;
-  };
-  'external-identifiers'?: {
-    'external-identifier'?: RawExternalId[];
-  };
-  emails?: {
-    email?: Array<{
-      email?: string;
-      primary?: boolean;
-      verified?: boolean;
-    }>;
-  };
-  addresses?: {
-    address?: Array<{
-      country?: { value?: string };
-      primary?: boolean;
-    }>;
-  };
+  'other-names'?:
+    | undefined
+    | {
+        'other-name'?:
+          | undefined
+          | Array<{ content?: undefined | string; 'display-index'?: undefined | number }>;
+      };
+  biography?: undefined | { content?: undefined | string };
+  keywords?:
+    | undefined
+    | {
+        keyword?: undefined | Array<{ content?: undefined | string }>;
+      };
+  'researcher-urls'?:
+    | undefined
+    | {
+        'researcher-url'?:
+          | undefined
+          | Array<{
+              'url-name'?: undefined | string;
+              url?: undefined | { value?: undefined | string };
+            }>;
+      };
+  'external-identifiers'?:
+    | undefined
+    | {
+        'external-identifier'?: undefined | RawExternalId[];
+      };
+  emails?:
+    | undefined
+    | {
+        email?:
+          | undefined
+          | Array<{
+              email?: undefined | string;
+              primary?: undefined | boolean;
+              verified?: undefined | boolean;
+            }>;
+      };
+  addresses?:
+    | undefined
+    | {
+        address?:
+          | undefined
+          | Array<{
+              country?: undefined | { value?: undefined | string };
+              primary?: undefined | boolean;
+            }>;
+      };
 };
 
 /** Work summary as returned by /works. */
 export type RawWorkSummary = {
-  'put-code'?: number;
-  title?: {
-    title?: { value?: string } | null;
-    subtitle?: { value?: string } | null;
-    'translated-title'?: { value?: string } | null;
-  };
-  type?: string;
-  'publication-date'?: OrcidDate;
-  'journal-title'?: { value?: string } | null;
-  url?: { value?: string } | null;
-  'external-ids'?: {
-    'external-id'?: RawWorkExternalId[];
-  };
-  source?: RawSource | null;
-  visibility?: string;
+  'put-code'?: undefined | number;
+  title?:
+    | undefined
+    | {
+        title?: undefined | { value?: undefined | string } | null;
+        subtitle?: undefined | { value?: undefined | string } | null;
+        'translated-title'?: undefined | { value?: undefined | string } | null;
+      };
+  type?: undefined | string;
+  'publication-date'?: undefined | OrcidDate;
+  'journal-title'?: undefined | { value?: undefined | string } | null;
+  url?: undefined | { value?: undefined | string } | null;
+  'external-ids'?:
+    | undefined
+    | {
+        'external-id'?: undefined | RawWorkExternalId[];
+      };
+  source?: undefined | RawSource | null;
+  visibility?: undefined | string;
 };
 
 /**
@@ -198,73 +248,92 @@ export type RawWorkSummary = {
  * The group-level `external-ids` union the `self` identifiers of every summary.
  */
 export type RawWorksGroup = {
-  'external-ids'?: {
-    'external-id'?: RawWorkExternalId[];
-  } | null;
-  'work-summary'?: RawWorkSummary[];
+  'external-ids'?:
+    | undefined
+    | {
+        'external-id'?: undefined | RawWorkExternalId[];
+      }
+    | null;
+  'work-summary'?: undefined | RawWorkSummary[];
 };
 
 /** Top-level works response. */
 export type RawWorksResponse = {
-  group?: RawWorksGroup[];
-  'last-modified-date'?: { value?: number };
+  group?: undefined | RawWorksGroup[];
+  'last-modified-date'?: undefined | { value?: undefined | number };
 };
 
 /** Full work detail, as each `work` entry of the bulk `/works/{putCodes}` response carries it. */
 export type RawWorkDetail = {
-  'put-code'?: number;
-  path?: string;
-  title?: {
-    title?: { value?: string } | null;
-    subtitle?: { value?: string } | null;
-    'translated-title'?: { value?: string } | null;
-  };
-  'journal-title'?: { value?: string } | null;
+  'put-code'?: undefined | number;
+  path?: undefined | string;
+  title?:
+    | undefined
+    | {
+        title?: undefined | { value?: undefined | string } | null;
+        subtitle?: undefined | { value?: undefined | string } | null;
+        'translated-title'?: undefined | { value?: undefined | string } | null;
+      };
+  'journal-title'?: undefined | { value?: undefined | string } | null;
   /** Abstract or short description — stored in short-description by ORCID. */
-  'short-description'?: string | null;
-  citation?: {
-    'citation-type'?: string | null;
-    'citation-value'?: string | null;
-  } | null;
-  type?: string | null;
-  'publication-date'?: OrcidDate | null;
-  'external-ids'?: {
-    'external-id'?: RawWorkExternalId[];
-  } | null;
-  url?: { value?: string } | null;
-  contributors?: {
-    contributor?: RawWorkContributor[];
-  } | null;
-  'language-code'?: string | null;
-  country?: { value?: string } | null;
-  visibility?: string | null;
-  source?: RawSource | null;
+  'short-description'?: undefined | string | null;
+  citation?:
+    | undefined
+    | {
+        'citation-type'?: undefined | string | null;
+        'citation-value'?: undefined | string | null;
+      }
+    | null;
+  type?: undefined | string | null;
+  'publication-date'?: undefined | OrcidDate | null;
+  'external-ids'?:
+    | undefined
+    | {
+        'external-id'?: undefined | RawWorkExternalId[];
+      }
+    | null;
+  url?: undefined | { value?: undefined | string } | null;
+  contributors?:
+    | undefined
+    | {
+        contributor?: undefined | RawWorkContributor[];
+      }
+    | null;
+  'language-code'?: undefined | string | null;
+  country?: undefined | { value?: undefined | string } | null;
+  visibility?: undefined | string | null;
+  source?: undefined | RawSource | null;
 };
 
 /** Contributor entry from a full work detail record. */
 export type RawWorkContributor = {
-  'contributor-orcid'?: { path?: string } | null;
-  'credit-name'?: { value?: string } | null;
-  'contributor-email'?: string | null;
-  'contributor-attributes'?: {
-    'contributor-sequence'?: string | null;
-    'contributor-role'?: string | null;
-  } | null;
+  'contributor-orcid'?: undefined | { path?: undefined | string } | null;
+  'credit-name'?: undefined | { value?: undefined | string } | null;
+  'contributor-email'?: undefined | string | null;
+  'contributor-attributes'?:
+    | undefined
+    | {
+        'contributor-sequence'?: undefined | string | null;
+        'contributor-role'?: undefined | string | null;
+      }
+    | null;
 };
 
 /** Funding summary. */
 export type RawFundingSummary = {
-  'put-code'?: number;
-  title?: { title?: { value?: string } };
-  type?: string;
-  'start-date'?: OrcidDate | null;
-  'end-date'?: OrcidDate | null;
-  organization?: RawOrganization;
-  'external-ids'?: {
-    'external-id'?: RawWorkExternalId[];
-  };
-  url?: { value?: string };
-  source?: RawSource | null;
+  'put-code'?: undefined | number;
+  title?: undefined | { title?: undefined | { value?: undefined | string } };
+  type?: undefined | string;
+  'start-date'?: undefined | OrcidDate | null;
+  'end-date'?: undefined | OrcidDate | null;
+  organization?: undefined | RawOrganization;
+  'external-ids'?:
+    | undefined
+    | {
+        'external-id'?: undefined | RawWorkExternalId[];
+      };
+  url?: undefined | { value?: undefined | string };
+  source?: undefined | RawSource | null;
 };
 
 /**
@@ -272,23 +341,29 @@ export type RawFundingSummary = {
  * grant identifier, preferred version first.
  */
 export type RawFundingGroup = {
-  'funding-summary'?: RawFundingSummary[];
+  'funding-summary'?: undefined | RawFundingSummary[];
+};
+
+/** One deposited award returned by the selected funding endpoint. */
+export type RawFundingDetail = RawFundingSummary & {
+  'short-description'?: string | undefined | null;
+  amount?: { value?: string | undefined; 'currency-code'?: string | undefined } | undefined | null;
 };
 
 /** Top-level fundings response. */
 export type RawFundingsResponse = {
-  group?: RawFundingGroup[];
+  group?: undefined | RawFundingGroup[];
 };
 
 /** Peer review summary. */
 export type RawPeerReviewSummary = {
-  'put-code'?: number;
-  'reviewer-role'?: string;
-  'review-type'?: string;
-  'completion-date'?: OrcidDate;
-  'convening-organization'?: RawOrganization | null;
-  'review-url'?: { value?: string } | null;
-  source?: RawSource | null;
+  'put-code'?: undefined | number;
+  'reviewer-role'?: undefined | string;
+  'review-type'?: undefined | string;
+  'completion-date'?: undefined | OrcidDate;
+  'convening-organization'?: undefined | RawOrganization | null;
+  'review-url'?: undefined | { value?: undefined | string } | null;
+  source?: undefined | RawSource | null;
 };
 
 /**
@@ -296,70 +371,87 @@ export type RawPeerReviewSummary = {
  * carries the key, prefixed — `issn:1476-4687` for journals, `orcid-generated:…` otherwise.
  */
 export type RawPeerReviewGroup = {
-  'peer-review-group'?: Array<{
-    'peer-review-summary'?: RawPeerReviewSummary[];
-  }>;
-  'external-ids'?: {
-    'external-id'?: RawWorkExternalId[];
-  };
+  'peer-review-group'?:
+    | undefined
+    | Array<{
+        'peer-review-summary'?: undefined | RawPeerReviewSummary[];
+      }>;
+  'external-ids'?:
+    | undefined
+    | {
+        'external-id'?: undefined | RawWorkExternalId[];
+      };
 };
 
 /** Top-level peer-reviews response. */
 export type RawPeerReviewsResponse = {
-  group?: RawPeerReviewGroup[];
+  group?: undefined | RawPeerReviewGroup[];
 };
 
 /** Expanded search result entry. */
 export type RawExpandedSearchResult = {
-  'orcid-id'?: string;
-  'given-names'?: string;
-  'family-names'?: string;
-  'credit-name'?: string;
-  'other-name'?: string[];
-  email?: string[];
-  'institution-name'?: string[];
+  'orcid-id'?: undefined | string;
+  'given-names'?: undefined | string;
+  'family-names'?: undefined | string;
+  'credit-name'?: undefined | string;
+  'other-name'?: undefined | string[];
+  email?: undefined | string[];
+  'institution-name'?: undefined | string[];
 };
 
 /** Expanded search response. */
 export type RawExpandedSearchResponse = {
-  'expanded-result'?: RawExpandedSearchResult[];
-  'num-found'?: number;
+  'expanded-result'?: undefined | RawExpandedSearchResult[];
+  'num-found'?: undefined | number;
 };
 
 /** Research resource summary as returned by /research-resources. */
 export type RawResearchResourceSummary = {
-  'put-code'?: number;
-  path?: string;
-  visibility?: string | null;
-  'display-index'?: string | null;
-  'created-date'?: { value?: number } | null;
-  'last-modified-date'?: { value?: number } | null;
-  source?: RawSource | null;
-  proposal?: {
-    title?: {
-      title?: { value?: string } | null;
-    } | null;
-    hosts?: {
-      organization?: RawOrganization[];
-    } | null;
-    'external-ids'?: {
-      'external-id'?: RawWorkExternalId[];
-    } | null;
-    'start-date'?: OrcidDate | null;
-    'end-date'?: OrcidDate | null;
-    url?: { value?: string } | null;
-  } | null;
+  'put-code'?: undefined | number;
+  path?: undefined | string;
+  visibility?: undefined | string | null;
+  'display-index'?: undefined | string | null;
+  'created-date'?: undefined | { value?: undefined | number } | null;
+  'last-modified-date'?: undefined | { value?: undefined | number } | null;
+  source?: undefined | RawSource | null;
+  proposal?:
+    | undefined
+    | {
+        title?:
+          | undefined
+          | {
+              title?: undefined | { value?: undefined | string } | null;
+            }
+          | null;
+        hosts?:
+          | undefined
+          | {
+              organization?: undefined | RawOrganization[];
+            }
+          | null;
+        'external-ids'?:
+          | undefined
+          | {
+              'external-id'?: undefined | RawWorkExternalId[];
+            }
+          | null;
+        'start-date'?: undefined | OrcidDate | null;
+        'end-date'?: undefined | OrcidDate | null;
+        url?: undefined | { value?: undefined | string } | null;
+      }
+    | null;
 };
 
 /** Full allocation record; item keys follow the ORCID research-resource v3 schema. */
 export type RawResearchResourceDetail = RawResearchResourceSummary & {
   'resource-item'?:
+    | undefined
     | {
-        'resource-name'?: string | null;
-        'resource-type'?: string | null;
-        hosts?: { organization?: RawOrganization[] } | null;
-        'external-ids'?: { 'external-id'?: RawWorkExternalId[] } | null;
-        url?: { value?: string } | null;
+        'resource-name'?: undefined | string | null;
+        'resource-type'?: undefined | string | null;
+        hosts?: undefined | { organization?: undefined | RawOrganization[] } | null;
+        'external-ids'?: undefined | { 'external-id'?: undefined | RawWorkExternalId[] } | null;
+        url?: undefined | { value?: undefined | string } | null;
       }[]
     | null;
 };
@@ -372,38 +464,41 @@ export type RawBulkWorkEntry =
   | { work: RawWorkDetail; error?: undefined }
   | {
       error: {
-        'put-code'?: number;
-        'response-code'?: number;
-        'developer-message'?: string;
-        'error-code'?: number;
+        'put-code'?: undefined | number;
+        'response-code'?: undefined | number;
+        'developer-message'?: undefined | string;
+        'error-code'?: undefined | number;
       };
       work?: undefined;
     };
 
 /** Top-level bulk works response. */
 export type RawBulkWorksResponse = {
-  bulk?: RawBulkWorkEntry[];
+  bulk?: undefined | RawBulkWorkEntry[];
 };
 
 /** Normalized result from the bulk endpoint — either a full detail or an error. */
 export type BulkWorkResult =
   | { type: 'work'; detail: WorkDetail }
-  | { type: 'error'; putCode?: number; message: string };
+  | { type: 'error'; putCode?: undefined | number; message: string };
 
 /** Research resource group (grouped by external ID). */
 export type RawResearchResourceGroup = {
-  'last-modified-date'?: { value?: number } | null;
-  'external-ids'?: {
-    'external-id'?: RawWorkExternalId[];
-  } | null;
-  'research-resource-summary'?: RawResearchResourceSummary[];
+  'last-modified-date'?: undefined | { value?: undefined | number } | null;
+  'external-ids'?:
+    | undefined
+    | {
+        'external-id'?: undefined | RawWorkExternalId[];
+      }
+    | null;
+  'research-resource-summary'?: undefined | RawResearchResourceSummary[];
 };
 
 /** Top-level research-resources response. */
 export type RawResearchResourcesResponse = {
-  'last-modified-date'?: { value?: number } | null;
-  group?: RawResearchResourceGroup[];
-  path?: string;
+  'last-modified-date'?: undefined | { value?: undefined | number } | null;
+  group?: undefined | RawResearchResourceGroup[];
+  path?: undefined | string;
 };
 
 // ---------------------------------------------------------------------------
@@ -496,8 +591,11 @@ export type FundingPeriod = {
   endDate?: NormalizedDate;
 };
 
-/** Normalized funding record — one per ORCID funding group, from its preferred version. */
+/** Preferred funding group summary or one selected deposit's detail. */
 export type FundingRecord = {
+  putCode?: number;
+  description?: string;
+  amount?: { value?: string; currency?: string };
   title?: string;
   type?: string;
   funder?: Organization;
@@ -507,7 +605,7 @@ export type FundingRecord = {
   url?: string;
   /** Every distinct dated period across the group's versions, when there are two or more. */
   periods?: FundingPeriod[];
-  /** Every distinct source in the funding group, the representative summary's first. */
+  /** Group sources in summary mode; the selected deposit's own source in detail mode. */
   sources: Source[];
 };
 

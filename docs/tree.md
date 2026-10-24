@@ -1,6 +1,6 @@
 # orcid-mcp-server - Directory Structure
 
-Generated on: 2026-10-18 23:18:07
+Generated on: 2026-10-24 21:06:51
 
 ```text
 orcid-mcp-server/
@@ -169,7 +169,8 @@ orcid-mcp-server/
 │   │       ├── orcid-service.ts
 │   │       ├── solr-query.ts
 │   │       ├── text-folding.ts
-│   │       └── types.ts
+│   │       ├── types.ts
+│   │       └── upstream-schemas.ts
 │   └── index.ts
 ├── tests/
 │   ├── fuzz/
@@ -179,6 +180,8 @@ orcid-mcp-server/
 │   │   ├── fixtures/
 │   │   │   └── research-resource-detail.json
 │   │   ├── activity-contracts.int.test.ts
+│   │   ├── funding-award.fixture.json
+│   │   ├── funding-detail.int.test.ts
 │   │   ├── markup-text.int.test.ts
 │   │   ├── orcid-api-fixtures.ts
 │   │   ├── orcid-id-forms.int.test.ts
@@ -201,7 +204,8 @@ orcid-mcp-server/
 │   │       ├── orcid-id.test.ts
 │   │       ├── orcid-service.test.ts
 │   │       ├── solr-query.test.ts
-│   │       └── text-folding.test.ts
+│   │       ├── text-folding.test.ts
+│   │       └── upstream-validation.test.ts
 │   ├── smoke/
 │   │   └── definitions.smoke.test.ts
 │   └── tools/
@@ -215,6 +219,7 @@ orcid-mcp-server/
 │       ├── get-works.tool.test.ts
 │       ├── identifier-validation.tool.test.ts
 │       ├── pagination-caps.tool.test.ts
+│       ├── resolve-researcher-caps.tool.test.ts
 │       ├── resolve-researcher-extended.tool.test.ts
 │       ├── resolve-researcher-name-forms.tool.test.ts
 │       ├── resolve-researcher.tool.test.ts
