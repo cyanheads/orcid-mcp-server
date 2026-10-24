@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.3.4](changelog/0.3.x/0.3.4.md) — 2026-10-24
+
+Retrieve selected funding deposits and distinguish malformed ORCID responses from empty records.
+
 ## [0.3.3](changelog/0.3.x/0.3.3.md) — 2026-10-18
 
 Retrieve allocation items and continue bounded activity pages without losing requested work.
