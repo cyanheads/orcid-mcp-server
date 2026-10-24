@@ -145,7 +145,7 @@ describe('orcidResolveResearcher — byline initials (#53)', () => {
       primaryTotalFound: 0,
     });
     const text = contentText(result);
-    expect(text).toContain(`**Query Used:** ${byline}`);
+    expect(text).toContain('**Query Used:** given-and-family-names:("Doudna" AND J\\*)');
     expect(text).toContain('**Primary Query:** given-and-family-names:"J. Doudna"');
     expect(text).toContain('**Name Match:** partial');
     expect(text).not.toContain('**Name Match:** exact');
@@ -166,7 +166,9 @@ describe('orcidResolveResearcher — byline initials (#53)', () => {
       ['0000-0001-9161-999X', 'partial'],
     ]);
     expect(structured.queryUsed).toBe(byline);
-    expect(contentText(result)).toContain(`**Query Used:** ${byline}`);
+    expect(contentText(result)).toContain(
+      '**Query Used:** given-and-family-names:"Jennifer Doudna"\\~1',
+    );
   });
 
   it.each([
