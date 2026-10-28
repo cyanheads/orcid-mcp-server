@@ -27,22 +27,14 @@ import {
   normalizeResearchResources,
   normalizeWorks,
 } from './normalizers.js';
-import { normalizeOrcidId } from './orcid-id.js';
+import { isValidOrcidId, normalizeOrcidId } from './orcid-id.js';
 import type {
   Affiliation,
   BulkWorkResult,
   ExpandedSearchResponse,
   FundingRecord,
   PeerReview,
-  RawActivities,
-  RawBulkWorksResponse,
   RawExpandedSearchResponse,
-  RawFundingsResponse,
-  RawPeerReviewsResponse,
-  RawPerson,
-  RawResearchResourceDetail,
-  RawResearchResourcesResponse,
-  RawWorksResponse,
   ResearchResource,
   ResearchResourceDetail,
   Work,
@@ -86,6 +78,20 @@ export type SearchParams = {
   rows?: number;
   start?: number;
 };
+
+/**
+ * A record-section result and the iD ORCID served it under: the requested iD, or the primary
+ * iD ORCID merged a deprecated one into.
+ */
+export type RecordResult<T> = { orcidId: string; data: T };
+
+/** Thrown when an ORCID response cannot be what the request asked for. */
+function incompatibleResponse(): McpError {
+  return serviceUnavailable(
+    'ORCID returned an incompatible response. Try again later; if this persists, report the failing tool and ORCID iD.',
+    { reason: 'invalid_upstream_response', retryable: false },
+  );
+}
 
 export class OrcidService {
   private readonly baseUrl: string;
@@ -186,20 +192,20 @@ export class OrcidService {
    * is not JSON (empty, cut off, a proxy page) each become a transient `ServiceUnavailable` that
    * names ORCID only, retried like an outage. The runtime's message can carry the request URL
    * and the parser's quotes the body, so both stay on `cause`; logs use a fixed endpoint
-   * label (#28, #31).
+   * label (#28, #31). Redirects are followed; `finalUrl` is set only when one was.
    */
   private async fetchJson<T>(
     url: string,
     endpoint: string,
     ctx: Context,
     schema: z.ZodType<T>,
-  ): Promise<T> {
+  ): Promise<{ data: T; finalUrl?: string }> {
     // Create a RequestContext from the handler Context for withRetry's structured logging.
     const reqCtx = requestContextService.createRequestContext({
       operation: 'OrcidService.fetchJson',
       parentContext: { requestId: ctx.requestId, tenantId: ctx.tenantId, traceId: ctx.traceId },
     });
-    const json: unknown = await withRetry(
+    const { json, finalUrl } = await withRetry(
       async ({ signal }) => {
         const unreachable = (error: unknown): never => {
           if (signal.aborted) throw error;
@@ -215,7 +221,10 @@ export class OrcidService {
         const text = await response.text().catch(unreachable);
         this.assertNotHtml(text, endpoint, ctx);
         try {
-          return JSON.parse(text);
+          return {
+            json: JSON.parse(text) as unknown,
+            finalUrl: response.redirected ? response.url : undefined,
+          };
         } catch (error) {
           ctx.log.warning('ORCID returned a 2xx body that is not JSON.', {
             endpoint,
@@ -239,16 +248,46 @@ export class OrcidService {
       },
     );
     const parsed = schema.safeParse(json);
-    if (!parsed.success) {
-      throw serviceUnavailable(
-        'ORCID returned an incompatible response. Try again later; if this persists, report the failing tool and ORCID iD.',
-        {
-          reason: 'invalid_upstream_response',
-          retryable: false,
-        },
-      );
+    if (!parsed.success) throw incompatibleResponse();
+    return { data: parsed.data, ...(finalUrl !== undefined && { finalUrl }) };
+  }
+
+  /**
+   * Fetch one section of the record at `id` (a canonical bare iD) and normalize it. ORCID
+   * answers a deprecated (merged) iD with a 301 to the primary iD's same endpoint, which
+   * `fetch` follows; the record is then the primary's, and its iD — the one the normalizers
+   * compare `selfAsserted` against, passed to `normalize` — is the final URL's iD segment. A
+   * redirect that leaves the configured API base, or whose final URL carries no valid iD
+   * there, fails as `invalid_upstream_response`.
+   */
+  private async fetchRecord<T, R>(
+    id: string,
+    section: string,
+    endpoint: string,
+    ctx: Context,
+    schema: z.ZodType<T>,
+    normalize: (raw: T, orcidId: string) => R,
+  ): Promise<RecordResult<R>> {
+    const { data, finalUrl } = await this.fetchJson(
+      `${this.baseUrl}/${id}/${section}`,
+      endpoint,
+      ctx,
+      schema,
+    );
+    if (finalUrl === undefined) return { orcidId: id, data: normalize(data, id) };
+    const base = new URL(this.baseUrl);
+    const final = new URL(finalUrl);
+    const prefix = `${base.pathname.replace(/\/$/, '')}/`;
+    const segment =
+      final.origin === base.origin && final.pathname.startsWith(prefix)
+        ? final.pathname.slice(prefix.length).split('/')[0]
+        : undefined;
+    if (segment === undefined || !isValidOrcidId(segment)) {
+      ctx.log.warning('ORCID redirected to a URL that is not an ORCID record.', { endpoint });
+      throw incompatibleResponse();
     }
-    return parsed.data;
+    const orcidId = normalizeOrcidId(segment);
+    return { orcidId, data: normalize(data, orcidId) };
   }
 
   /**
@@ -261,7 +300,7 @@ export class OrcidService {
     if (params.start != null) qs.set('start', String(params.start));
     const url = `${this.baseUrl}/expanded-search/?${qs}`;
     ctx.log.debug('ORCID expanded-search', { q: params.q, rows: params.rows, start: params.start });
-    const raw = await this.fetchJson<RawExpandedSearchResponse>(
+    const { data: raw } = await this.fetchJson<RawExpandedSearchResponse>(
       url,
       'expanded-search',
       ctx,
@@ -274,24 +313,27 @@ export class OrcidService {
    * Fetch the person section for an ORCID iD.
    * Returns name, biography, keywords, researcher URLs, external IDs.
    */
-  async getPerson(orcidId: string, ctx: Context): Promise<NormalizedPerson> {
+  async getPerson(orcidId: string, ctx: Context): Promise<RecordResult<NormalizedPerson>> {
     const id = normalizeOrcidId(orcidId);
-    const url = `${this.baseUrl}/${id}/person`;
     ctx.log.debug('ORCID getPerson', { orcidId: id });
-    const raw = await this.fetchJson<RawPerson>(url, 'person', ctx, upstreamSchemas.person);
-    return normalizePerson(raw);
+    return await this.fetchRecord(
+      id,
+      'person',
+      'person',
+      ctx,
+      upstreamSchemas.person,
+      normalizePerson,
+    );
   }
 
   /**
    * Fetch the works summary list for an ORCID iD.
    * Returns titles, types, dates, journal names, and external IDs (DOIs, PMIDs, etc.).
    */
-  async getWorks(orcidId: string, ctx: Context): Promise<Work[]> {
+  async getWorks(orcidId: string, ctx: Context): Promise<RecordResult<Work[]>> {
     const id = normalizeOrcidId(orcidId);
-    const url = `${this.baseUrl}/${id}/works`;
     ctx.log.debug('ORCID getWorks', { orcidId: id });
-    const raw = await this.fetchJson<RawWorksResponse>(url, 'works', ctx, upstreamSchemas.works);
-    return normalizeWorks(raw, id);
+    return await this.fetchRecord(id, 'works', 'works', ctx, upstreamSchemas.works, normalizeWorks);
   }
 
   /**
@@ -302,118 +344,129 @@ export class OrcidService {
     orcidId: string,
     types: AffiliationType[],
     ctx: Context,
-  ): Promise<Affiliation[]> {
+  ): Promise<RecordResult<Affiliation[]>> {
     const id = normalizeOrcidId(orcidId);
-    const url = `${this.baseUrl}/${id}/activities`;
     ctx.log.debug('ORCID getAffiliations', { orcidId: id, types });
-    const raw = await this.fetchJson<RawActivities>(
-      url,
+    return await this.fetchRecord(
+      id,
+      'activities',
       'activities',
       ctx,
       upstreamSchemas.activities,
+      (raw, primaryId) => normalizeActivities(raw, types, primaryId),
     );
-    return normalizeActivities(raw, types, id);
   }
 
   /**
    * Fetch funding records for an ORCID iD.
    */
-  async getFundings(orcidId: string, ctx: Context): Promise<FundingRecord[]> {
+  async getFundings(orcidId: string, ctx: Context): Promise<RecordResult<FundingRecord[]>> {
     const id = normalizeOrcidId(orcidId);
-    const url = `${this.baseUrl}/${id}/fundings`;
     ctx.log.debug('ORCID getFundings', { orcidId: id });
-    const raw = await this.fetchJson<RawFundingsResponse>(
-      url,
+    return await this.fetchRecord(
+      id,
+      'fundings',
       'fundings',
       ctx,
       upstreamSchemas.fundings,
+      normalizeFundings,
     );
-    return normalizeFundings(raw, id);
   }
 
   /** Fetch only the selected award deposit under the shared call deadline. */
-  async getFundingDetail(orcidId: string, putCode: number, ctx: Context): Promise<FundingRecord> {
-    const id = normalizeOrcidId(orcidId);
-    const raw = await this.fetchJson(
-      `${this.baseUrl}/${id}/funding/${putCode}`,
+  async getFundingDetail(
+    orcidId: string,
+    putCode: number,
+    ctx: Context,
+  ): Promise<RecordResult<FundingRecord>> {
+    return await this.fetchRecord(
+      normalizeOrcidId(orcidId),
+      `funding/${putCode}`,
       'funding-detail',
       ctx,
       upstreamSchemas.fundingDetail,
+      normalizeFundingDetail,
     );
-    return normalizeFundingDetail(raw, id);
   }
 
   /**
    * Fetch peer review records for an ORCID iD.
    */
-  async getPeerReviews(orcidId: string, ctx: Context): Promise<PeerReview[]> {
+  async getPeerReviews(orcidId: string, ctx: Context): Promise<RecordResult<PeerReview[]>> {
     const id = normalizeOrcidId(orcidId);
-    const url = `${this.baseUrl}/${id}/peer-reviews`;
     ctx.log.debug('ORCID getPeerReviews', { orcidId: id });
-    const raw = await this.fetchJson<RawPeerReviewsResponse>(
-      url,
+    return await this.fetchRecord(
+      id,
+      'peer-reviews',
       'peer-reviews',
       ctx,
       upstreamSchemas.peerReviews,
+      normalizePeerReviews,
     );
-    return normalizePeerReviews(raw, id);
   }
 
   /**
    * Fetch full detail records for up to 100 works in a single bulk round-trip.
    * Uses GET /v3.0/{orcid}/works/{putCode1},{putCode2},...
    * Per-record errors (not-found put-codes) are returned as error entries rather
-   * than failing the entire call.
+   * than failing the entire call. ORCID does not redirect this endpoint for a deprecated
+   * iD: it answers 200 with an invalid-put-code error per code.
    */
   async getWorkDetails(
     orcidId: string,
     putCodes: number[],
     ctx: Context,
-  ): Promise<BulkWorkResult[]> {
+  ): Promise<RecordResult<BulkWorkResult[]>> {
     const id = normalizeOrcidId(orcidId);
-    const codesStr = putCodes.join(',');
-    const url = `${this.baseUrl}/${id}/works/${codesStr}`;
     ctx.log.debug('ORCID getWorkDetails (bulk)', { orcidId: id, count: putCodes.length });
-    const raw = await this.fetchJson<RawBulkWorksResponse>(
-      url,
+    return await this.fetchRecord(
+      id,
+      `works/${putCodes.join(',')}`,
       'work-detail',
       ctx,
       upstreamSchemas.bulkWorks,
+      normalizeBulkWorks,
     );
-    return normalizeBulkWorks(raw, id);
   }
 
   /**
    * Fetch research resources (equipment, facilities, compute allocations, etc.)
-   * associated with an ORCID iD.
+   * associated with an ORCID iD. ORCID does not redirect this endpoint for a deprecated iD:
+   * it answers 200 with an empty group, as it does for an iD that does not exist.
    */
-  async getResearchResources(orcidId: string, ctx: Context): Promise<ResearchResource[]> {
+  async getResearchResources(
+    orcidId: string,
+    ctx: Context,
+  ): Promise<RecordResult<ResearchResource[]>> {
     const id = normalizeOrcidId(orcidId);
-    const url = `${this.baseUrl}/${id}/research-resources`;
     ctx.log.debug('ORCID getResearchResources', { orcidId: id });
-    const raw = await this.fetchJson<RawResearchResourcesResponse>(
-      url,
+    return await this.fetchRecord(
+      id,
+      'research-resources',
       'research-resources',
       ctx,
       upstreamSchemas.resources,
+      normalizeResearchResources,
     );
-    return normalizeResearchResources(raw, id);
   }
 
-  /** Fetch one allocation's full proposal and items; the existing call deadline applies. */
+  /**
+   * Fetch one allocation's full proposal and items; the existing call deadline applies.
+   * ORCID does not redirect this endpoint for a deprecated iD: it answers 404.
+   */
   async getResearchResourceDetail(
     orcidId: string,
     putCode: number,
     ctx: Context,
-  ): Promise<ResearchResourceDetail> {
-    const id = normalizeOrcidId(orcidId);
-    const raw = await this.fetchJson<RawResearchResourceDetail>(
-      `${this.baseUrl}/${id}/research-resource/${putCode}`,
+  ): Promise<RecordResult<ResearchResourceDetail>> {
+    return await this.fetchRecord(
+      normalizeOrcidId(orcidId),
+      `research-resource/${putCode}`,
       'research-resource-detail',
       ctx,
       upstreamSchemas.resourceDetail,
+      normalizeResearchResourceDetail,
     );
-    return normalizeResearchResourceDetail(raw, id);
   }
 }
 

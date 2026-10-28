@@ -9,10 +9,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetProfile } from '@/mcp-server/tools/definitions/get-profile.tool.js';
 
 const mockGetPerson = vi.fn();
-vi.mock('@/services/orcid/orcid-service.js', () => ({
-  getOrcidService: () => ({ getPerson: mockGetPerson }),
-  normalizeOrcidId: (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim(),
-}));
+vi.mock('@/services/orcid/orcid-service.js', async () => {
+  const { served } = await import('../helpers/served-record.js');
+  const normalizeOrcidId = (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim();
+  return {
+    getOrcidService: () => ({ getPerson: served(mockGetPerson, normalizeOrcidId) }),
+    normalizeOrcidId,
+  };
+});
 
 /** Full person fixture. */
 const fullPerson = {

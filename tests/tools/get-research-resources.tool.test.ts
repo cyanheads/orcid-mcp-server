@@ -10,13 +10,17 @@ import { orcidGetResearchResources } from '@/mcp-server/tools/definitions/get-re
 
 const mockGetResearchResources = vi.fn();
 const mockGetPerson = vi.fn();
-vi.mock('@/services/orcid/orcid-service.js', () => ({
-  getOrcidService: () => ({
-    getResearchResources: mockGetResearchResources,
-    getPerson: mockGetPerson,
-  }),
-  normalizeOrcidId: (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim(),
-}));
+vi.mock('@/services/orcid/orcid-service.js', async () => {
+  const { served } = await import('../helpers/served-record.js');
+  const normalizeOrcidId = (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim();
+  return {
+    getOrcidService: () => ({
+      getResearchResources: served(mockGetResearchResources, normalizeOrcidId),
+      getPerson: served(mockGetPerson, normalizeOrcidId),
+    }),
+    normalizeOrcidId,
+  };
+});
 
 /** Minimal NormalizedPerson stand-in proving the record exists (empty-result path). */
 const existingPerson = {
@@ -154,6 +158,56 @@ describe('orcidGetResearchResources', () => {
     expect(error.data.recovery.hint).toContain('orcid_search_researchers');
     expect(mockGetResearchResources).toHaveBeenCalledTimes(1);
     expect(mockGetPerson).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [
+      'unavailable',
+      new McpError(JsonRpcErrorCode.ServiceUnavailable, 'ORCID returned HTTP 503.', {
+        retryable: true,
+      }),
+    ],
+    ['an unexpected error', new Error('socket hang up')],
+  ])(
+    'returns the empty summary and its notice when the /person probe is %s',
+    async (_label, failure) => {
+      mockGetResearchResources.mockResolvedValueOnce([]);
+      mockGetPerson.mockRejectedValueOnce(failure);
+
+      const result = await runToolContract(orcidGetResearchResources, {
+        orcid_id: '0000-0002-1825-0097',
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).toMatchObject({
+        view: 'summary',
+        orcidId: '0000-0002-1825-0097',
+        resourceCount: 0,
+        resources: [],
+        notice: expect.stringMatching(/^No research resources found\./),
+      });
+      const text = result.content.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
+      expect(text).toContain('> No research resources found.');
+      expect(mockGetResearchResources).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('rethrows caller cancellation that lands during the /person probe', async () => {
+    const controller = new AbortController();
+    mockGetResearchResources.mockResolvedValueOnce([]);
+    mockGetPerson.mockImplementationOnce(async () => {
+      controller.abort();
+      throw controller.signal.reason;
+    });
+
+    const ctx = createMockContext({
+      errors: orcidGetResearchResources.errors,
+      signal: controller.signal,
+    });
+    const input = orcidGetResearchResources.input.parse({ orcid_id: '0000-0002-1825-0097' });
+    await expect(orcidGetResearchResources.handler(input, ctx)).rejects.toMatchObject({
+      name: 'AbortError',
+    });
   });
 
   it('does not call getPerson when resources are present', async () => {

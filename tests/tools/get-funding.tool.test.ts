@@ -9,10 +9,14 @@ import { assert, beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetFunding } from '@/mcp-server/tools/definitions/get-funding.tool.js';
 
 const mockGetFundings = vi.fn();
-vi.mock('@/services/orcid/orcid-service.js', () => ({
-  getOrcidService: () => ({ getFundings: mockGetFundings }),
-  normalizeOrcidId: (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim(),
-}));
+vi.mock('@/services/orcid/orcid-service.js', async () => {
+  const { served } = await import('../helpers/served-record.js');
+  const normalizeOrcidId = (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim();
+  return {
+    getOrcidService: () => ({ getFundings: served(mockGetFundings, normalizeOrcidId) }),
+    normalizeOrcidId,
+  };
+});
 
 const sampleFunding = [
   {

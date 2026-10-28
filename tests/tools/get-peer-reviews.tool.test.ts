@@ -10,10 +10,14 @@ import { assert, beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetPeerReviews } from '@/mcp-server/tools/definitions/get-peer-reviews.tool.js';
 
 const mockGetPeerReviews = vi.fn();
-vi.mock('@/services/orcid/orcid-service.js', () => ({
-  getOrcidService: () => ({ getPeerReviews: mockGetPeerReviews }),
-  normalizeOrcidId: (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim(),
-}));
+vi.mock('@/services/orcid/orcid-service.js', async () => {
+  const { served } = await import('../helpers/served-record.js');
+  const normalizeOrcidId = (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim();
+  return {
+    getOrcidService: () => ({ getPeerReviews: served(mockGetPeerReviews, normalizeOrcidId) }),
+    normalizeOrcidId,
+  };
+});
 
 const sampleReviews = [
   {
@@ -267,6 +271,115 @@ describe('orcidGetPeerReviews', () => {
 
       expect(text).toContain('### Unknown organization\n**Role:** editor');
       expect(text).not.toContain('**Convening organization:**');
+    });
+  });
+
+  describe('page size and past-end paging (#79, #81)', () => {
+    const textOf = (result: { content: { type: string; text?: string }[] }) =>
+      result.content.map((block) => block.text ?? '').join('');
+    /** `n` reviews, each named by its index so order and identity are checkable. */
+    const reviews = (n: number, pad = 0) =>
+      Array.from({ length: n }, (_, i) => ({
+        groupIssn: `ISSN-${i}`,
+        conveningOrganization: { name: `Org ${i} ${'山'.repeat(pad)}` },
+        sources: [],
+      }));
+    type Page = {
+      reviewCount: number;
+      totalCount: number;
+      offset: number;
+      nextOffset?: number;
+      truncated: boolean;
+      peerReviews: { groupIssn?: string }[];
+      notice?: string;
+    };
+    async function page(input: Record<string, unknown>, history: object[]) {
+      mockGetPeerReviews.mockResolvedValueOnce(history);
+      const result = await runToolContract(orcidGetPeerReviews, {
+        orcid_id: '0000-0003-0637-599X',
+        ...input,
+      });
+      expect(result.isError).toBeFalsy();
+      return { result, structured: result.structuredContent as Page };
+    }
+
+    it('returns 25 reviews by default and continues at 25', async () => {
+      const { structured } = await page({}, reviews(51));
+      expect(structured).toMatchObject({
+        reviewCount: 25,
+        totalCount: 51,
+        nextOffset: 25,
+        truncated: true,
+      });
+      expect(structured).not.toHaveProperty('notice');
+    });
+
+    it('returns limit 1,000 large reviews of 1,200 in one page, whatever their size', async () => {
+      const history = reviews(1200, 200);
+      const { result, structured } = await page({ limit: 1000 }, history);
+
+      expect(Buffer.byteLength(JSON.stringify(result.structuredContent))).toBeGreaterThan(500_000);
+      expect(structured).toMatchObject({ reviewCount: 1000, nextOffset: 1000, truncated: true });
+      expect(structured.peerReviews.map((r) => r.groupIssn)).toEqual(
+        history.slice(0, 1000).map((r) => r.groupIssn),
+      );
+      expect(structured).not.toHaveProperty('notice');
+
+      const last = await page({ limit: 1000, offset: 1000 }, history);
+      expect(last.structured).toMatchObject({ reviewCount: 200, truncated: false });
+      expect(last.structured).not.toHaveProperty('nextOffset');
+    });
+
+    it('returns an oversized review inside a full page, without an exception notice', async () => {
+      const { structured } = await page({}, [
+        { groupIssn: 'x'.repeat(70_000), sources: [] },
+        { groupIssn: 'second', sources: [] },
+      ]);
+      expect(structured.reviewCount).toBe(2);
+      expect(structured.truncated).toBe(false);
+      expect(structured).not.toHaveProperty('notice');
+    });
+
+    it.each([1001, 10000])(
+      'clamps limit %i to 1,000 reviews with a notice naming both sizes',
+      async (limit) => {
+        const { result, structured } = await page({ limit }, reviews(1001));
+        const notice = `Requested limit ${limit}; effective cap 1000 reviews.`;
+        expect(structured).toMatchObject({ reviewCount: 1000, nextOffset: 1000, notice });
+        expect(textOf(result)).toContain(`> ${notice}`);
+      },
+    );
+
+    it.each([104, 500])(
+      'adds a past-end notice for offset %i at or past a non-zero totalCount',
+      async (offset) => {
+        const { result, structured } = await page({ offset }, reviews(104));
+        const notice = `Offset ${offset} exceeds totalCount (104). Reduce offset to page through the reviews.`;
+        expect(structured).toMatchObject({
+          reviewCount: 0,
+          totalCount: 104,
+          offset,
+          truncated: false,
+          peerReviews: [],
+          notice,
+        });
+        expect(structured).not.toHaveProperty('nextOffset');
+        expect(textOf(result)).toContain(`> ${notice}`);
+      },
+    );
+
+    it('composes the clamp and past-end notices into one, clamp first', async () => {
+      const { structured } = await page({ offset: 500, limit: 1001 }, reviews(104));
+      expect(structured.notice).toBe(
+        'Requested limit 1001; effective cap 1000 reviews. Offset 500 exceeds totalCount (104). Reduce offset to page through the reviews.',
+      );
+    });
+
+    it('keeps the empty-history notice, not a past-end notice, past the end of an empty history', async () => {
+      const { structured } = await page({ offset: 10 }, []);
+      expect(structured.notice).toBe(
+        'No peer review records found. Reviews reach ORCID from the researcher or from member organizations that import them, so coverage varies; absence does not mean no review activity.',
+      );
     });
   });
 

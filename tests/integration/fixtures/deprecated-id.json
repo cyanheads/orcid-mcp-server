@@ -1,0 +1,914 @@
+{
+  "person": {
+    "last-modified-date": {
+      "value": 1727982001454
+    },
+    "name": {
+      "created-date": {
+        "value": 1460755309254
+      },
+      "last-modified-date": {
+        "value": 1786543995156
+      },
+      "given-names": {
+        "value": "Hossein Ali"
+      },
+      "family-name": {
+        "value": "Khonakdar"
+      },
+      "credit-name": null,
+      "source": null,
+      "visibility": "public",
+      "path": "0000-0001-8143-9338"
+    },
+    "other-names": {
+      "last-modified-date": null,
+      "other-name": [],
+      "path": "/0000-0001-8143-9338/other-names"
+    },
+    "biography": {
+      "created-date": {
+        "value": 1460755309257
+      },
+      "last-modified-date": {
+        "value": 1725139814084
+      },
+      "content": "H.A. Khonakdar earned BSc (Bachelor of Engineering) from the Isfahan University of Technology and M.Sc (Master of Engineering) from the University of Tehran. He studied toward Ph.D. at the Iran Polymer and Petrochemical Institute. Part of his doctoral research was carried out at the Leibniz-Institut für Polymerforschung (IPF) Dresden in Germany in 2002. He has been working on Polymer Processing and advanced polymeric materials at Iran Polymer and Petrochemical Institute (IPPI) where he has been Lecturer since 2002.\nUpon completing his Ph.D., he has been continuing his collaboration with Prof. Wagenknecht thus far. The outcome of his mutual collaboration with Prof. Wagenknecht and other colleagues in IPF goes beyond the 300 research articles to which he made a great contribution. In August 2006, he was promoted to Associate Professorship in Polymer Processing, emphasizing Polymer Blends and nanocomposites in IPPI, Iran.\nIn March 2011, he was awarded the famed Alexander von Humboldt Fellowship from Germany to focus on modeling the interfacial reactions in PET/PEN blends inside a twin-screw extruder. He then joined Leibniz-Institut für Polymerforschung (IPF) Dresden e. V. Germany as a guest researcher from March 2011 till September 2014. In November 2014, he was promoted to Professorship in Polymer Processing in IPPI, Iran. He was External Scientific Member at Leibniz Institute of polymer research Dresden (IPF-Fellow) from October 2016 until September 2022.\nPresently, he is working as a Full Professor at Iran Polymer and Petrochemical Institute, Tehran, Iran. He is collaborating in various research activities at Leibniz Institute of Polymer Research Dresden, Max Bergmann Center of Biomaterials and Institute of Materials Science, Technische Universität Dresden, Bayreuth University, The University of British Columbia, University of Mississippi, etc. His research interests are in the development of advanced polymeric materials, biomaterials, polymer blends and their nanocomposites, and their applications in sustainable polymers.\nHe has authored over 450 refereed publications, including reviews, patents, papers, and editorial and commentary articles on various subjects in polymer and composites science and engineering (H-Index of 52, Citations > 10449). Presently, He is supervising several doctoral students and postdoctoral co-workers.\n In September 2020, he was awarded the DAAD Fellowship from Germany to focus on Fast triggered electroactive shape memory of biodegradable and high-performance Polylactic Acid/Thermoplastic Polyurethane Blends using graphene oxide nanoplatelets. In March 2022, awarded a 6-month fellowship (senior researcher) at Dresden University of Technology (Technische Universität Dresden), Germany (from March 2022 till September 2022) to focus on the preparation of multi-responsive hydrogel based on Poly(2-ethyl-2-oxazoline) for cartilage regeneration.\nIn July 2022, awarded the famed Alexander von Humboldt Fellowship from Germany (1.10.2022 till 31.12.2022) to focus on Drug-releasing Hydrogels for Treatment of Sciatic Nerve Injuries: Development and characterization of Gelatin Methacrylate (GelMA)/Poly(2-ethy-2-oxazoline) (PEtOx) Hydrogel Containing 4-Aminopyridine.\nAward of the Ministry of science, Research and technology of Iran as Iran's outstanding researcher in 2023.\nHe was selected as a “Highly Cited Researcher” in the list of top 2% scientists published by Stanford University for 2021, 2022 and 2023. \n(https://elsevier.digitalcommonsdata.com/datasets/btchxktzyw/4)\n He was awarded by the Ministry of Science, Research and Technology of Iran as Iran's outstanding researcher in 2023.",
+      "visibility": "public",
+      "path": "/0000-0001-8143-9338/biography"
+    },
+    "researcher-urls": {
+      "last-modified-date": null,
+      "researcher-url": [],
+      "path": "/0000-0001-8143-9338/researcher-urls"
+    },
+    "emails": {
+      "last-modified-date": null,
+      "email": [],
+      "path": "/0000-0001-8143-9338/email"
+    },
+    "addresses": {
+      "last-modified-date": {
+        "value": 1725139700990
+      },
+      "address": [
+        {
+          "created-date": {
+            "value": 1453659953736
+          },
+          "last-modified-date": {
+            "value": 1725139700990
+          },
+          "source": {
+            "source-orcid": {
+              "uri": "https://orcid.org/0000-0001-8143-9338",
+              "path": "0000-0001-8143-9338",
+              "host": "orcid.org"
+            },
+            "source-client-id": null,
+            "source-name": {
+              "value": "Hossein Ali Khonakdar"
+            },
+            "assertion-origin-orcid": null,
+            "assertion-origin-client-id": null,
+            "assertion-origin-name": null
+          },
+          "country": {
+            "value": "IR"
+          },
+          "visibility": "public",
+          "path": "/0000-0001-8143-9338/address/256502",
+          "put-code": 256502,
+          "display-index": 2
+        },
+        {
+          "created-date": {
+            "value": 1725139700982
+          },
+          "last-modified-date": {
+            "value": 1725139700982
+          },
+          "source": {
+            "source-orcid": {
+              "uri": "https://orcid.org/0000-0001-8143-9338",
+              "path": "0000-0001-8143-9338",
+              "host": "orcid.org"
+            },
+            "source-client-id": null,
+            "source-name": {
+              "value": "Hossein Ali Khonakdar"
+            },
+            "assertion-origin-orcid": null,
+            "assertion-origin-client-id": null,
+            "assertion-origin-name": null
+          },
+          "country": {
+            "value": "DE"
+          },
+          "visibility": "public",
+          "path": "/0000-0001-8143-9338/address/3480324",
+          "put-code": 3480324,
+          "display-index": 1
+        }
+      ],
+      "path": "/0000-0001-8143-9338/address"
+    },
+    "keywords": {
+      "last-modified-date": null,
+      "keyword": [],
+      "path": "/0000-0001-8143-9338/keywords"
+    },
+    "external-identifiers": {
+      "last-modified-date": {
+        "value": 1727982001454
+      },
+      "external-identifier": [
+        {
+          "created-date": {
+            "value": 1727982001454
+          },
+          "last-modified-date": {
+            "value": 1727982001454
+          },
+          "source": {
+            "source-orcid": null,
+            "source-client-id": {
+              "uri": "https://orcid.org/client/0000-0002-5982-8983",
+              "path": "0000-0002-5982-8983",
+              "host": "orcid.org"
+            },
+            "source-name": {
+              "value": "Scopus - Elsevier"
+            },
+            "assertion-origin-orcid": {
+              "uri": "https://orcid.org/0000-0001-8143-9338",
+              "path": "0000-0001-8143-9338",
+              "host": "orcid.org"
+            },
+            "assertion-origin-client-id": null,
+            "assertion-origin-name": {
+              "value": "Hossein Ali Khonakdar"
+            }
+          },
+          "external-id-type": "Scopus Author ID",
+          "external-id-value": "57220401072",
+          "external-id-url": {
+            "value": "http://www.scopus.com/inward/authorDetails.url?authorID=57220401072&partnerID=MN8TOARS"
+          },
+          "external-id-relationship": "self",
+          "visibility": "public",
+          "path": "/0000-0001-8143-9338/external-identifiers/3678620",
+          "put-code": 3678620,
+          "display-index": 1
+        },
+        {
+          "created-date": {
+            "value": 1510392738287
+          },
+          "last-modified-date": {
+            "value": 1510392738287
+          },
+          "source": {
+            "source-orcid": null,
+            "source-client-id": {
+              "uri": "https://orcid.org/client/0000-0003-1377-5676",
+              "path": "0000-0003-1377-5676",
+              "host": "orcid.org"
+            },
+            "source-name": {
+              "value": "ResearcherID"
+            },
+            "assertion-origin-orcid": {
+              "uri": "https://orcid.org/0000-0001-8143-9338",
+              "path": "0000-0001-8143-9338",
+              "host": "orcid.org"
+            },
+            "assertion-origin-client-id": null,
+            "assertion-origin-name": {
+              "value": "Hossein Ali Khonakdar"
+            }
+          },
+          "external-id-type": "ResearcherID",
+          "external-id-value": "T-2434-2017",
+          "external-id-url": {
+            "value": "http://www.researcherid.com/rid/T-2434-2017"
+          },
+          "external-id-relationship": "self",
+          "visibility": "public",
+          "path": "/0000-0001-8143-9338/external-identifiers/859832",
+          "put-code": 859832,
+          "display-index": 0
+        }
+      ],
+      "path": "/0000-0001-8143-9338/external-identifiers"
+    },
+    "path": "/0000-0001-8143-9338/person"
+  },
+  "works": {
+    "last-modified-date": {
+      "value": 1792729297584
+    },
+    "group": [
+      {
+        "last-modified-date": {
+          "value": 1792729297584
+        },
+        "external-ids": {
+          "external-id": [
+            {
+              "external-id-type": "doi",
+              "external-id-value": "10.1016/j.cep.2026.111097",
+              "external-id-normalized": {
+                "value": "10.1016/j.cep.2026.111097",
+                "transient": true
+              },
+              "external-id-normalized-error": null,
+              "external-id-url": {
+                "value": "https://doi.org/10.1016/j.cep.2026.111097"
+              },
+              "external-id-relationship": "self"
+            }
+          ]
+        },
+        "work-summary": [
+          {
+            "put-code": 230577139,
+            "created-date": {
+              "value": 1792485446706
+            },
+            "last-modified-date": {
+              "value": 1792729297584
+            },
+            "source": {
+              "source-orcid": null,
+              "source-client-id": {
+                "uri": "https://orcid.org/client/0000-0001-9884-1913",
+                "path": "0000-0001-9884-1913",
+                "host": "orcid.org"
+              },
+              "source-name": {
+                "value": "Crossref"
+              },
+              "assertion-origin-orcid": null,
+              "assertion-origin-client-id": null,
+              "assertion-origin-name": null
+            },
+            "title": {
+              "title": {
+                "value": "Novel integrated ultrafiltration-forward osmosis module for desalination and water purification"
+              },
+              "subtitle": null,
+              "translated-title": null
+            },
+            "external-ids": {
+              "external-id": [
+                {
+                  "external-id-type": "doi",
+                  "external-id-value": "10.1016/j.cep.2026.111097",
+                  "external-id-normalized": {
+                    "value": "10.1016/j.cep.2026.111097",
+                    "transient": true
+                  },
+                  "external-id-normalized-error": null,
+                  "external-id-url": {
+                    "value": "https://doi.org/10.1016/j.cep.2026.111097"
+                  },
+                  "external-id-relationship": "self"
+                }
+              ]
+            },
+            "url": {
+              "value": "https://doi.org/10.1016/j.cep.2026.111097"
+            },
+            "type": "journal-article",
+            "publication-date": {
+              "year": {
+                "value": "2026"
+              },
+              "month": {
+                "value": "12"
+              },
+              "day": null
+            },
+            "journal-title": {
+              "value": "Chemical Engineering and Processing - Process Intensification"
+            },
+            "visibility": "public",
+            "path": "/0000-0001-8143-9338/work/230577139",
+            "display-index": "1"
+          }
+        ]
+      },
+      {
+        "last-modified-date": {
+          "value": 1727982059065
+        },
+        "external-ids": {
+          "external-id": [
+            {
+              "external-id-type": "doi",
+              "external-id-value": "10.1016/j.seppur.2024.128986",
+              "external-id-normalized": {
+                "value": "10.1016/j.seppur.2024.128986",
+                "transient": true
+              },
+              "external-id-normalized-error": null,
+              "external-id-url": null,
+              "external-id-relationship": "self"
+            },
+            {
+              "external-id-type": "eid",
+              "external-id-value": "2-s2.0-85199943478",
+              "external-id-normalized": {
+                "value": "2-s2.0-85199943478",
+                "transient": true
+              },
+              "external-id-normalized-error": null,
+              "external-id-url": null,
+              "external-id-relationship": "self"
+            }
+          ]
+        },
+        "work-summary": [
+          {
+            "put-code": 168853534,
+            "created-date": {
+              "value": 1727982059065
+            },
+            "last-modified-date": {
+              "value": 1727982059065
+            },
+            "source": {
+              "source-orcid": null,
+              "source-client-id": {
+                "uri": "https://orcid.org/client/0000-0002-5982-8983",
+                "path": "0000-0002-5982-8983",
+                "host": "orcid.org"
+              },
+              "source-name": {
+                "value": "Scopus - Elsevier"
+              },
+              "assertion-origin-orcid": {
+                "uri": "https://orcid.org/0000-0001-8143-9338",
+                "path": "0000-0001-8143-9338",
+                "host": "orcid.org"
+              },
+              "assertion-origin-client-id": null,
+              "assertion-origin-name": {
+                "value": "Hossein Ali Khonakdar"
+              }
+            },
+            "title": {
+              "title": {
+                "value": "Molecular simulation-based assessing of a novel metal-organic framework modified with alginate and chitosan biopolymers for anionic reactive black 5 and cationic crystal violet pollutants capture"
+              },
+              "subtitle": null,
+              "translated-title": null
+            },
+            "external-ids": {
+              "external-id": [
+                {
+                  "external-id-type": "doi",
+                  "external-id-value": "10.1016/j.seppur.2024.128986",
+                  "external-id-normalized": {
+                    "value": "10.1016/j.seppur.2024.128986",
+                    "transient": true
+                  },
+                  "external-id-normalized-error": null,
+                  "external-id-url": null,
+                  "external-id-relationship": "self"
+                },
+                {
+                  "external-id-type": "eid",
+                  "external-id-value": "2-s2.0-85199943478",
+                  "external-id-normalized": {
+                    "value": "2-s2.0-85199943478",
+                    "transient": true
+                  },
+                  "external-id-normalized-error": null,
+                  "external-id-url": null,
+                  "external-id-relationship": "self"
+                },
+                {
+                  "external-id-type": "issn",
+                  "external-id-value": "18733794 13835866",
+                  "external-id-normalized": {
+                    "value": "1873-3794",
+                    "transient": true
+                  },
+                  "external-id-normalized-error": null,
+                  "external-id-url": null,
+                  "external-id-relationship": "part-of"
+                }
+              ]
+            },
+            "url": {
+              "value": "http://www.scopus.com/inward/record.url?eid=2-s2.0-85199943478&partnerID=MN8TOARS"
+            },
+            "type": "journal-article",
+            "publication-date": {
+              "year": {
+                "value": "2025"
+              },
+              "month": null,
+              "day": null
+            },
+            "journal-title": {
+              "value": "Separation and Purification Technology"
+            },
+            "visibility": "public",
+            "path": "/0000-0001-8143-9338/work/168853534",
+            "display-index": "1"
+          }
+        ]
+      }
+    ],
+    "path": "/0000-0001-8143-9338/works"
+  },
+  "activities": {
+    "employments": {
+      "last-modified-date": {
+        "value": 1405633283286
+      },
+      "affiliation-group": [
+        {
+          "last-modified-date": {
+            "value": 1405633283286
+          },
+          "external-ids": {
+            "external-id": []
+          },
+          "summaries": [
+            {
+              "employment-summary": {
+                "created-date": {
+                  "value": 1405633283286
+                },
+                "last-modified-date": {
+                  "value": 1405633283286
+                },
+                "source": {
+                  "source-orcid": {
+                    "uri": "https://orcid.org/0000-0001-8143-9338",
+                    "path": "0000-0001-8143-9338",
+                    "host": "orcid.org"
+                  },
+                  "source-client-id": null,
+                  "source-name": {
+                    "value": "Hossein Ali Khonakdar"
+                  },
+                  "assertion-origin-orcid": null,
+                  "assertion-origin-client-id": null,
+                  "assertion-origin-name": null
+                },
+                "put-code": 365330,
+                "department-name": null,
+                "role-title": null,
+                "start-date": {
+                  "year": {
+                    "value": "1994"
+                  },
+                  "month": {
+                    "value": "10"
+                  },
+                  "day": {
+                    "value": "01"
+                  }
+                },
+                "end-date": null,
+                "organization": {
+                  "name": "Iran Polymer and Petrochemical Institute",
+                  "address": {
+                    "city": "Tehran",
+                    "region": null,
+                    "country": "IR"
+                  },
+                  "disambiguated-organization": null
+                },
+                "url": null,
+                "external-ids": null,
+                "display-index": "0",
+                "visibility": "public",
+                "path": "/0000-0001-8143-9338/employment/365330"
+              }
+            }
+          ]
+        }
+      ],
+      "path": "/0000-0001-8143-9338/employments"
+    },
+    "path": "/0000-0001-8143-9338/activities"
+  },
+  "peerReviews": {
+    "last-modified-date": {
+      "value": 1788586743521
+    },
+    "group": [
+      {
+        "last-modified-date": {
+          "value": 1788586743521
+        },
+        "external-ids": {
+          "external-id": [
+            {
+              "external-id-type": "peer-review",
+              "external-id-value": "issn:0169-409X",
+              "external-id-normalized": null,
+              "external-id-normalized-error": null,
+              "external-id-url": null,
+              "external-id-relationship": null
+            }
+          ]
+        },
+        "peer-review-group": [
+          {
+            "last-modified-date": {
+              "value": 1788586743521
+            },
+            "external-ids": {
+              "external-id": [
+                {
+                  "external-id-type": "source-work-id",
+                  "external-id-value": "49f088ad-f6c8-4091-80d9-69b35a927597",
+                  "external-id-normalized": {
+                    "value": "49f088ad-f6c8-4091-80d9-69b35a927597",
+                    "transient": true
+                  },
+                  "external-id-normalized-error": null,
+                  "external-id-url": {
+                    "value": ""
+                  },
+                  "external-id-relationship": "self"
+                }
+              ]
+            },
+            "peer-review-summary": [
+              {
+                "created-date": {
+                  "value": 1788586743521
+                },
+                "last-modified-date": {
+                  "value": 1788586743521
+                },
+                "source": {
+                  "source-orcid": null,
+                  "source-client-id": {
+                    "uri": "https://orcid.org/client/0000-0002-7423-0090",
+                    "path": "0000-0002-7423-0090",
+                    "host": "orcid.org"
+                  },
+                  "source-name": {
+                    "value": "Elsevier Editorial "
+                  },
+                  "assertion-origin-orcid": null,
+                  "assertion-origin-client-id": null,
+                  "assertion-origin-name": null
+                },
+                "reviewer-role": "reviewer",
+                "external-ids": {
+                  "external-id": [
+                    {
+                      "external-id-type": "source-work-id",
+                      "external-id-value": "49f088ad-f6c8-4091-80d9-69b35a927597",
+                      "external-id-normalized": {
+                        "value": "49f088ad-f6c8-4091-80d9-69b35a927597",
+                        "transient": true
+                      },
+                      "external-id-normalized-error": null,
+                      "external-id-url": {
+                        "value": ""
+                      },
+                      "external-id-relationship": "self"
+                    }
+                  ]
+                },
+                "review-url": null,
+                "review-type": "review",
+                "completion-date": {
+                  "year": {
+                    "value": "2026"
+                  },
+                  "month": null,
+                  "day": null
+                },
+                "review-group-id": "issn:0169-409X",
+                "convening-organization": {
+                  "name": "Elsevier, Inc.",
+                  "address": {
+                    "city": "New York",
+                    "region": "NY",
+                    "country": "US"
+                  },
+                  "disambiguated-organization": {
+                    "disambiguated-organization-identifier": "5953",
+                    "disambiguation-source": "RINGGOLD"
+                  }
+                },
+                "visibility": "public",
+                "put-code": 28868358,
+                "path": "/0000-0001-8143-9338/peer-review/28868358",
+                "display-index": "1"
+              }
+            ]
+          },
+          {
+            "last-modified-date": {
+              "value": 1771223816384
+            },
+            "external-ids": {
+              "external-id": [
+                {
+                  "external-id-type": "source-work-id",
+                  "external-id-value": "d14829c7-d9b4-40d0-88f8-a8a276b7e60e",
+                  "external-id-normalized": {
+                    "value": "d14829c7-d9b4-40d0-88f8-a8a276b7e60e",
+                    "transient": true
+                  },
+                  "external-id-normalized-error": null,
+                  "external-id-url": {
+                    "value": ""
+                  },
+                  "external-id-relationship": "self"
+                }
+              ]
+            },
+            "peer-review-summary": [
+              {
+                "created-date": {
+                  "value": 1771223816384
+                },
+                "last-modified-date": {
+                  "value": 1771223816384
+                },
+                "source": {
+                  "source-orcid": null,
+                  "source-client-id": {
+                    "uri": "https://orcid.org/client/0000-0002-7423-0090",
+                    "path": "0000-0002-7423-0090",
+                    "host": "orcid.org"
+                  },
+                  "source-name": {
+                    "value": "Elsevier Editorial "
+                  },
+                  "assertion-origin-orcid": null,
+                  "assertion-origin-client-id": null,
+                  "assertion-origin-name": null
+                },
+                "reviewer-role": "reviewer",
+                "external-ids": {
+                  "external-id": [
+                    {
+                      "external-id-type": "source-work-id",
+                      "external-id-value": "d14829c7-d9b4-40d0-88f8-a8a276b7e60e",
+                      "external-id-normalized": {
+                        "value": "d14829c7-d9b4-40d0-88f8-a8a276b7e60e",
+                        "transient": true
+                      },
+                      "external-id-normalized-error": null,
+                      "external-id-url": {
+                        "value": ""
+                      },
+                      "external-id-relationship": "self"
+                    }
+                  ]
+                },
+                "review-url": null,
+                "review-type": "review",
+                "completion-date": {
+                  "year": {
+                    "value": "2026"
+                  },
+                  "month": null,
+                  "day": null
+                },
+                "review-group-id": "issn:0169-409X",
+                "convening-organization": {
+                  "name": "Elsevier, Inc.",
+                  "address": {
+                    "city": "New York",
+                    "region": "NY",
+                    "country": "US"
+                  },
+                  "disambiguated-organization": {
+                    "disambiguated-organization-identifier": "5953",
+                    "disambiguation-source": "RINGGOLD"
+                  }
+                },
+                "visibility": "public",
+                "put-code": 24726593,
+                "path": "/0000-0001-8143-9338/peer-review/24726593",
+                "display-index": "1"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "path": "/0000-0001-8143-9338/peer-reviews"
+  },
+  "bulkWork": {
+    "bulk": [
+      {
+        "work": {
+          "created-date": {
+            "value": 1792485446706
+          },
+          "last-modified-date": {
+            "value": 1792729297584
+          },
+          "source": {
+            "source-orcid": null,
+            "source-client-id": {
+              "uri": "https://orcid.org/client/0000-0001-9884-1913",
+              "path": "0000-0001-9884-1913",
+              "host": "orcid.org"
+            },
+            "source-name": {
+              "value": "Crossref"
+            },
+            "assertion-origin-orcid": null,
+            "assertion-origin-client-id": null,
+            "assertion-origin-name": null
+          },
+          "put-code": 230577139,
+          "path": "/0000-0001-8143-9338/work/230577139",
+          "title": {
+            "title": {
+              "value": "Novel integrated ultrafiltration-forward osmosis module for desalination and water purification"
+            },
+            "subtitle": null,
+            "translated-title": null
+          },
+          "journal-title": {
+            "value": "Chemical Engineering and Processing - Process Intensification"
+          },
+          "short-description": null,
+          "citation": null,
+          "type": "journal-article",
+          "publication-date": {
+            "year": {
+              "value": "2026"
+            },
+            "month": {
+              "value": "12"
+            },
+            "day": null
+          },
+          "external-ids": {
+            "external-id": [
+              {
+                "external-id-type": "doi",
+                "external-id-value": "10.1016/j.cep.2026.111097",
+                "external-id-normalized": {
+                  "value": "10.1016/j.cep.2026.111097",
+                  "transient": true
+                },
+                "external-id-normalized-error": null,
+                "external-id-url": {
+                  "value": "https://doi.org/10.1016/j.cep.2026.111097"
+                },
+                "external-id-relationship": "self"
+              }
+            ]
+          },
+          "url": {
+            "value": "https://doi.org/10.1016/j.cep.2026.111097"
+          },
+          "contributors": {
+            "contributor": [
+              {
+                "contributor-orcid": null,
+                "credit-name": {
+                  "value": "Salam Bakly"
+                },
+                "contributor-email": null,
+                "contributor-attributes": {
+                  "contributor-sequence": null,
+                  "contributor-role": "author"
+                }
+              },
+              {
+                "contributor-orcid": null,
+                "credit-name": {
+                  "value": "Adnan Alhathal Alanezi"
+                },
+                "contributor-email": null,
+                "contributor-attributes": {
+                  "contributor-sequence": null,
+                  "contributor-role": "author"
+                }
+              },
+              {
+                "contributor-orcid": null,
+                "credit-name": {
+                  "value": "Ali Altaee"
+                },
+                "contributor-email": null,
+                "contributor-attributes": {
+                  "contributor-sequence": null,
+                  "contributor-role": "author"
+                }
+              },
+              {
+                "contributor-orcid": null,
+                "credit-name": {
+                  "value": "Saleh O. Alaswad"
+                },
+                "contributor-email": null,
+                "contributor-attributes": {
+                  "contributor-sequence": null,
+                  "contributor-role": "author"
+                }
+              },
+              {
+                "contributor-orcid": null,
+                "credit-name": {
+                  "value": "Lilyan Alsaka"
+                },
+                "contributor-email": null,
+                "contributor-attributes": {
+                  "contributor-sequence": null,
+                  "contributor-role": "author"
+                }
+              },
+              {
+                "contributor-orcid": null,
+                "credit-name": {
+                  "value": "Armaghan Moghaddam"
+                },
+                "contributor-email": null,
+                "contributor-attributes": {
+                  "contributor-sequence": null,
+                  "contributor-role": "author"
+                }
+              },
+              {
+                "contributor-orcid": null,
+                "credit-name": {
+                  "value": "Hossein Ali Khonakdar"
+                },
+                "contributor-email": null,
+                "contributor-attributes": {
+                  "contributor-sequence": null,
+                  "contributor-role": "author"
+                }
+              },
+              {
+                "contributor-orcid": null,
+                "credit-name": {
+                  "value": "Md A Kalam"
+                },
+                "contributor-email": null,
+                "contributor-attributes": {
+                  "contributor-sequence": null,
+                  "contributor-role": "author"
+                }
+              },
+              {
+                "contributor-orcid": null,
+                "credit-name": {
+                  "value": "TMI Mahlia"
+                },
+                "contributor-email": null,
+                "contributor-attributes": {
+                  "contributor-sequence": null,
+                  "contributor-role": "author"
+                }
+              }
+            ]
+          },
+          "language-code": null,
+          "country": null,
+          "visibility": "public"
+        }
+      }
+    ]
+  },
+  "bulkErrors": {
+    "bulk": [
+      {
+        "error": {
+          "response-code": 400,
+          "developer-message": "400 Bad Request: The put code provided is not valid. Full validation error: '230577139' is not a valid put code",
+          "user-message": "There was an error when updating the record. Please try again. If the error persists, please contact ${clientName} for assistance.",
+          "error-code": 9034,
+          "more-info": "https://members.orcid.org/api/resources/troubleshooting"
+        }
+      },
+      {
+        "error": {
+          "response-code": 400,
+          "developer-message": "400 Bad Request: The put code provided is not valid. Full validation error: '218623489' is not a valid put code",
+          "user-message": "There was an error when updating the record. Please try again. If the error persists, please contact ${clientName} for assistance.",
+          "error-code": 9034,
+          "more-info": "https://members.orcid.org/api/resources/troubleshooting"
+        }
+      }
+    ]
+  },
+  "emptyResources": {
+    "last-modified-date": null,
+    "group": [],
+    "path": "/0000-0002-7759-8499/research-resources"
+  }
+}

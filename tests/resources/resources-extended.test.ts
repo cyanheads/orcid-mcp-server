@@ -12,13 +12,17 @@ import { researcherWorksResource } from '@/mcp-server/resources/definitions/rese
 const mockGetPerson = vi.fn();
 const mockGetWorks = vi.fn();
 
-vi.mock('@/services/orcid/orcid-service.js', () => ({
-  getOrcidService: () => ({
-    getPerson: mockGetPerson,
-    getWorks: mockGetWorks,
-  }),
-  normalizeOrcidId: (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim(),
-}));
+vi.mock('@/services/orcid/orcid-service.js', async () => {
+  const { served } = await import('../helpers/served-record.js');
+  const normalizeOrcidId = (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim();
+  return {
+    getOrcidService: () => ({
+      getPerson: served(mockGetPerson, normalizeOrcidId),
+      getWorks: served(mockGetWorks, normalizeOrcidId),
+    }),
+    normalizeOrcidId,
+  };
+});
 
 // ---------------------------------------------------------------------------
 // researcher-profile resource — validation

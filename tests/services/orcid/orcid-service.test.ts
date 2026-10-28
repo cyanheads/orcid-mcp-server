@@ -18,6 +18,7 @@ import {
   type MockContextLogger,
 } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { getServerConfig } from '@/config/server-config.js';
 import { orcidResolveResearcher } from '@/mcp-server/tools/definitions/resolve-researcher.tool.js';
 import { initOrcidService, OrcidService } from '@/services/orcid/orcid-service.js';
 
@@ -711,5 +712,189 @@ describe('OrcidService — one deadline across the retry ladder, and transport f
       expect(fetchMock).toHaveBeenCalledTimes(7);
       expect(getEnrichment(ctx)).toMatchObject({ queryUsed: 'pmid-self:"1"', totalFound: 0 });
     });
+  });
+});
+
+describe('OrcidService — a deprecated iD resolves to its primary record (#80)', () => {
+  const realFetch = globalThis.fetch;
+  const BASE = getServerConfig().orcidApiBaseUrl.replace(/\/$/, '');
+  /** Deprecated iD ORCID merged into PRIMARY; every redirecting section 301s to PRIMARY's. */
+  const DEPRECATED = '0000-0002-7759-8499';
+  const PRIMARY = '0000-0001-8143-9338';
+  /** A source block for an item the researcher behind PRIMARY added themselves. */
+  const byPrimary = { 'source-orcid': { path: PRIMARY }, 'source-name': { value: 'Researcher' } };
+  /** The sparsest person section ORCID serves. */
+  const PERSON = { name: null };
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  /**
+   * A `Response` as `fetch` returns it: when `finalUrl` is set, after following a redirect
+   * there — `redirected: true` and `url` on the final location — otherwise unredirected.
+   */
+  function answer(body: unknown, finalUrl?: string): Response {
+    const response = Response.json(body);
+    if (finalUrl !== undefined)
+      Object.defineProperties(response, {
+        redirected: { value: true },
+        url: { value: finalUrl },
+      });
+    return response;
+  }
+
+  function stub(body: unknown, finalUrl?: string) {
+    const fetchMock = vi.fn(async (_url: string) => answer(body, finalUrl));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    return fetchMock;
+  }
+
+  /** Every record method: its call, the section path, a body, and its first source. */
+  type Case = {
+    name: string;
+    path: string;
+    body: unknown;
+    call: (s: OrcidService, id: string) => Promise<{ orcidId: string; data: unknown }>;
+    source?: (data: never) => { selfAsserted: boolean } | undefined;
+  };
+  const cases: Case[] = [
+    {
+      name: 'getPerson',
+      path: 'person',
+      body: { name: null },
+      call: (s, id) => s.getPerson(id, ctx()),
+    },
+    {
+      name: 'getWorks',
+      path: 'works',
+      body: { group: [{ 'work-summary': [{ 'put-code': 1, source: byPrimary }] }] },
+      call: (s, id) => s.getWorks(id, ctx()),
+      source: (data: { sources: { selfAsserted: boolean }[] }[]) => data[0]?.sources[0],
+    },
+    {
+      name: 'getAffiliations',
+      path: 'activities',
+      body: {
+        employments: {
+          'affiliation-group': [{ summaries: [{ 'employment-summary': { source: byPrimary } }] }],
+        },
+      },
+      call: (s, id) => s.getAffiliations(id, ['employment'], ctx()),
+      source: (data: { sources: { selfAsserted: boolean }[] }[]) => data[0]?.sources[0],
+    },
+    {
+      name: 'getFundings',
+      path: 'fundings',
+      body: { group: [{ 'funding-summary': [{ 'put-code': 1, source: byPrimary }] }] },
+      call: (s, id) => s.getFundings(id, ctx()),
+      source: (data: { sources: { selfAsserted: boolean }[] }[]) => data[0]?.sources[0],
+    },
+    {
+      name: 'getFundingDetail',
+      path: 'funding/1',
+      body: { 'put-code': 1, source: byPrimary },
+      call: (s, id) => s.getFundingDetail(id, 1, ctx()),
+      source: (data: { sources: { selfAsserted: boolean }[] }) => data.sources[0],
+    },
+    {
+      name: 'getPeerReviews',
+      path: 'peer-reviews',
+      body: {
+        group: [
+          {
+            'peer-review-group': [
+              { 'peer-review-summary': [{ 'put-code': 1, source: byPrimary }] },
+            ],
+          },
+        ],
+      },
+      call: (s, id) => s.getPeerReviews(id, ctx()),
+      source: (data: { sources: { selfAsserted: boolean }[] }[]) => data[0]?.sources[0],
+    },
+    {
+      name: 'getWorkDetails',
+      path: 'works/1',
+      body: { bulk: [{ work: { 'put-code': 1, source: byPrimary } }] },
+      call: (s, id) => s.getWorkDetails(id, [1], ctx()),
+      source: (data: { detail?: { sources: { selfAsserted: boolean }[] } }[]) =>
+        data[0]?.detail?.sources[0],
+    },
+    {
+      name: 'getResearchResources',
+      path: 'research-resources',
+      body: { group: [{ 'research-resource-summary': [{ 'put-code': 1, source: byPrimary }] }] },
+      call: (s, id) => s.getResearchResources(id, ctx()),
+      source: (data: { sources: { selfAsserted: boolean }[] }[]) => data[0]?.sources[0],
+    },
+    {
+      name: 'getResearchResourceDetail',
+      path: 'research-resource/1',
+      body: { 'put-code': 1, source: byPrimary },
+      call: (s, id) => s.getResearchResourceDetail(id, 1, ctx()),
+      source: (data: { sources: { selfAsserted: boolean }[] }) => data.sources[0],
+    },
+  ];
+  const ctx = () => createMockContext();
+  const service = () => new OrcidService(appConfig, storage);
+
+  it.each(cases)(
+    '$name reports the redirect target as the record iD and compares selfAsserted to it',
+    async ({ path, body, call, source }) => {
+      const fetchMock = stub(body, `${BASE}/${PRIMARY}/${path}`);
+      const result = await call(service(), DEPRECATED);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(`${BASE}/${DEPRECATED}/${path}`);
+      expect(result.orcidId).toBe(PRIMARY);
+      if (source)
+        expect(source(result.data as never)).toEqual({ name: 'Researcher', selfAsserted: true });
+    },
+  );
+
+  it.each(cases)(
+    '$name reports the requested iD of an unredirected response and compares selfAsserted to it',
+    async ({ path, body, call, source }) => {
+      const fetchMock = stub(body);
+      const result = await call(service(), `https://orcid.org/${DEPRECATED}`);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(`${BASE}/${DEPRECATED}/${path}`);
+      expect(result.orcidId).toBe(DEPRECATED);
+      // The item's asserting party is PRIMARY, not the iD the record was served under.
+      if (source)
+        expect(source(result.data as never)).toEqual({ name: 'Researcher', selfAsserted: false });
+    },
+  );
+
+  it('keeps the iD of a redirect that stays on the same record', async () => {
+    stub(PERSON, `${BASE}/${DEPRECATED}/person`);
+    expect((await service().getPerson(DEPRECATED, ctx())).orcidId).toBe(DEPRECATED);
+  });
+
+  it('canonicalizes a lowercase check digit in the redirect target', async () => {
+    stub(PERSON, `${BASE}/0000-0002-9999-111x/person`);
+    expect((await service().getPerson(DEPRECATED, ctx())).orcidId).toBe('0000-0002-9999-111X');
+  });
+
+  it.each([
+    ['another origin', `https://orcid.example/v3.0/${PRIMARY}/person`],
+    ['another port on the API host', `${BASE.replace('.org', '.org:8443')}/${PRIMARY}/person`],
+    ['another path on the API origin', `${new URL(BASE).origin}/v2.1/${PRIMARY}/person`],
+    ['no iD segment', `${BASE}/person`],
+    ['an iD with a bad check digit', `${BASE}/0000-0001-8143-9339/person`],
+    ['a prefixed iD segment', `${BASE}/orcid.org${PRIMARY}/person`],
+  ])('fails a redirect to %s as invalid_upstream_response without a retry', async (_, finalUrl) => {
+    const fetchMock = stub(PERSON, finalUrl);
+    const context = createMockContext();
+    const error = (await service()
+      .getPerson(DEPRECATED, context)
+      .catch((e: unknown) => e)) as McpError;
+    expect(error).toBeInstanceOf(McpError);
+    expect(error.code).toBe(JsonRpcErrorCode.ServiceUnavailable);
+    expect(error.data).toMatchObject({ reason: 'invalid_upstream_response', retryable: false });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Neither the error nor its log line carries the redirect target.
+    const warnings = (context.log as MockContextLogger).calls.filter((r) => r.level === 'warning');
+    expect(warnings).toEqual([expect.objectContaining({ data: { endpoint: 'person' } })]);
+    expect(JSON.stringify([error.message, error.data, warnings])).not.toContain(finalUrl);
   });
 });

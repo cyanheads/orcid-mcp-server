@@ -9,10 +9,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { researcherProfileResource } from '@/mcp-server/resources/definitions/researcher-profile.resource.js';
 
 const mockGetPerson = vi.fn();
-vi.mock('@/services/orcid/orcid-service.js', async () => ({
-  getOrcidService: () => ({ getPerson: mockGetPerson }),
-  normalizeOrcidId: (await import('@/services/orcid/orcid-id.js')).normalizeOrcidId,
-}));
+vi.mock('@/services/orcid/orcid-service.js', async () => {
+  const { served } = await import('../helpers/served-record.js');
+  const { normalizeOrcidId } = await import('@/services/orcid/orcid-id.js');
+  return {
+    getOrcidService: () => ({ getPerson: served(mockGetPerson, normalizeOrcidId) }),
+    normalizeOrcidId,
+  };
+});
 
 const fullPerson = {
   givenNames: 'Jennifer',

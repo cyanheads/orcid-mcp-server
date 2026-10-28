@@ -6,16 +6,20 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { deprecatedIdNotice } from '@/mcp-server/tools/deprecated-id-notice.js';
+import { joinNotices } from '@/mcp-server/tools/notices.js';
 import { SourceSchema, sourcesText } from '@/mcp-server/tools/record-sources.js';
-import { jsonBytes, RESPONSE_BYTE_BUDGET } from '@/mcp-server/tools/response-budget.js';
 import { singleLine } from '@/mcp-server/tools/third-party-text.js';
 import { orcidIdSchema } from '@/services/orcid/orcid-id.js';
-import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
+import {
+  getOrcidService,
+  normalizeOrcidId,
+  type RecordResult,
+} from '@/services/orcid/orcid-service.js';
 import type {
   ExternalIdentifier,
   Organization,
   ResearchResource,
-  ResearchResourceDetail,
   ResearchResourceItem,
 } from '@/services/orcid/types.js';
 
@@ -44,10 +48,15 @@ const OrgSchema = z
   })
   .describe('Hosting organization for the research resource.');
 
+/** Detail items per page when item_limit is omitted. */
+const DEFAULT_ITEM_LIMIT = 25;
+/** Most detail items one page returns; a larger item_limit is reduced with a notice. */
+const MAX_ITEM_LIMIT = 100;
+
 export const orcidGetResearchResources = tool('orcid_get_research_resources', {
   title: 'Get ORCID Research Resources',
   description:
-    'List allocation proposals for an ORCID researcher, or supply put_code from a summary record to retrieve its actual resource items. Summary is the default view and includes every proposal host, identifiers, access period, and source provenance; hostOrganization remains the first proposal host. Detail adds item names, types, all operators, identifiers, and URLs. Page items with item_offset (default 0) and item_limit (default 50, effective maximum 100, hard maximum 10,000), both requiring put_code; continue at nextItemOffset with the same selector. Both detail surfaces fit 64,000 bytes including metadata and continuation, with an explicit budgetOverflow exception for an indivisible oversized item returned alone or oversized proposal metadata. Most researchers have no entries; allocation systems such as ACCESS deposit these records.',
+    'List allocation proposals for an ORCID researcher, or supply put_code from a summary record to retrieve its actual resource items. Summary is the default view and includes every proposal host, identifiers, access period, and source provenance; hostOrganization remains the first proposal host. Detail adds item names, types, all operators, identifiers, and URLs, paged by item_offset and item_limit (both require put_code); continue at nextItemOffset with the same put_code. Most researchers have no entries; allocation systems such as ACCESS deposit these records.',
   annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
@@ -63,14 +72,17 @@ export const orcidGetResearchResources = tool('orcid_get_research_resources', {
       .int()
       .nonnegative()
       .optional()
-      .describe('Detail item offset, default 0; requires put_code.'),
+      .describe('Detail item offset. Default 0; requires put_code.'),
+    // No .default(): detail_required detects paging without put_code by an explicit value.
     item_limit: z
       .number()
       .int()
       .min(1)
       .max(10_000)
       .optional()
-      .describe('Detail page size, default 50, effective maximum 100; requires put_code.'),
+      .describe(
+        `Items per detail page. Default ${DEFAULT_ITEM_LIMIT}; a larger value returns at most ${MAX_ITEM_LIMIT} and says so. Requires put_code.`,
+      ),
   }),
 
   output: z.object({
@@ -88,12 +100,6 @@ export const orcidGetResearchResources = tool('orcid_get_research_resources', {
       .string()
       .optional()
       .describe('Notice when the requested item limit is reduced to the effective maximum of 100.'),
-    budgetOverflow: z
-      .string()
-      .optional()
-      .describe(
-        'Explicit exception when an indivisible item or proposal metadata exceeds the 64,000-byte surface budget.',
-      ),
     resourceCount: z.number().describe('Total number of research resources returned.'),
     resources: z
       .array(
@@ -165,7 +171,7 @@ export const orcidGetResearchResources = tool('orcid_get_research_resources', {
       .string()
       .optional()
       .describe(
-        'Note when no research resources are found — this section is sparsely populated across ORCID profiles.',
+        'Note when no research resources are found — this section is sparsely populated across ORCID profiles — or when a deprecated iD was served from its primary iD.',
       ),
   },
 
@@ -201,99 +207,116 @@ export const orcidGetResearchResources = tool('orcid_get_research_resources', {
     ) {
       throw ctx.fail('detail_required');
     }
+    const requestedId = normalizeOrcidId(input.orcid_id);
     if (input.put_code !== undefined) {
       const putCode = input.put_code;
-      let detail: ResearchResourceDetail;
-      try {
-        detail = await service.getResearchResourceDetail(input.orcid_id, input.put_code, ctx);
-      } catch (error) {
-        if (error instanceof McpError && error.code === JsonRpcErrorCode.NotFound)
-          throw ctx.fail('resource_not_found');
-        throw error;
-      }
-      const bareId = normalizeOrcidId(input.orcid_id);
-      const offset = input.item_offset ?? 0;
-      const { items, ...proposal } = detail;
-      const candidates = items.slice(offset, offset + Math.min(input.item_limit ?? 50, 100));
-      const page = (count: number, budgetOverflow?: string): ResourceResult => {
-        const next = offset + count;
-        const more = next < items.length;
-        return {
-          orcidId: bareId,
-          orcidUri: `https://orcid.org/${bareId}`,
-          view: 'detail',
-          putCode,
-          truncated: more,
-          ...((input.item_limit ?? 50) > 100 && {
-            itemLimitNotice: `Requested item_limit ${input.item_limit}; effective maximum is 100 items per page.`,
-          }),
-          resourceCount: 1,
-          ...(budgetOverflow && { budgetOverflow }),
-          resources: [
-            {
-              ...proposal,
-              items: candidates.slice(0, count),
-              itemCount: items.length,
-              returnedItemCount: count,
-              itemOffset: offset,
-              itemsTruncated: more,
-              ...(more && { nextItemOffset: next }),
-            },
-          ],
-        };
+      const fetchDetail = async (orcidId: string) => {
+        try {
+          return await service.getResearchResourceDetail(orcidId, putCode, ctx);
+        } catch (error) {
+          if (error instanceof McpError && error.code === JsonRpcErrorCode.NotFound) return;
+          throw error;
+        }
       };
-      const fits = (value: ResourceResult) =>
-        jsonBytes(value) <= RESPONSE_BYTE_BUDGET &&
-        jsonBytes(renderResources(value)) <= RESPONSE_BYTE_BUDGET;
-      if (fits(page(candidates.length))) return page(candidates.length);
-      let low = 0;
-      let high = candidates.length;
-      while (low < high) {
-        const mid = Math.ceil((low + high) / 2);
-        if (fits(page(mid))) low = mid;
-        else high = mid - 1;
+      // ORCID answers allocation detail for a deprecated iD with 404 instead of redirecting it.
+      // On a 404, /person (which does redirect) names the primary iD; a differing one gets the
+      // request again. The probe is best-effort: a /person 404 (the iD itself is unknown) or any
+      // other failure but caller cancellation leaves the answer at resource_not_found.
+      let record = await fetchDetail(input.orcid_id);
+      if (!record) {
+        const primaryId = await service.getPerson(input.orcid_id, ctx).then(
+          (person) => person.orcidId,
+          (error: unknown) => {
+            if (ctx.signal.aborted) throw error;
+            if (!(error instanceof McpError && error.code === JsonRpcErrorCode.NotFound))
+              ctx.log.warning('Deprecated-iD probe failed; reporting the allocation as missing.', {
+                orcidId: requestedId,
+              });
+            return;
+          },
+        );
+        if (primaryId !== undefined && primaryId !== requestedId)
+          record = await fetchDetail(primaryId);
       }
-      if (low > 0) return page(low);
-      return page(
-        Math.min(candidates.length, 1),
-        candidates.length
-          ? 'One indivisible allocation item and its proposal metadata exceed the 64,000-byte budget; returned alone.'
-          : 'Indivisible proposal metadata exceeds the 64,000-byte budget; no allocation items remain.',
-      );
+      if (!record) throw ctx.fail('resource_not_found');
+      const { orcidId: bareId, data: detail } = record;
+      const notice = deprecatedIdNotice(requestedId, bareId);
+      if (notice) ctx.enrich.notice(notice);
+      const offset = input.item_offset ?? 0;
+      const requestedLimit = input.item_limit ?? DEFAULT_ITEM_LIMIT;
+      const { items, ...proposal } = detail;
+      const page = items.slice(offset, offset + Math.min(requestedLimit, MAX_ITEM_LIMIT));
+      const next = offset + page.length;
+      const more = next < items.length;
+      return {
+        orcidId: bareId,
+        orcidUri: `https://orcid.org/${bareId}`,
+        view: 'detail' as const,
+        putCode,
+        truncated: more,
+        ...(requestedLimit > MAX_ITEM_LIMIT && {
+          itemLimitNotice: `Requested item_limit ${requestedLimit}; effective maximum is ${MAX_ITEM_LIMIT} items per page.`,
+        }),
+        resourceCount: 1,
+        resources: [
+          {
+            ...proposal,
+            items: page,
+            itemCount: items.length,
+            returnedItemCount: page.length,
+            itemOffset: offset,
+            itemsTruncated: more,
+            ...(more && { nextItemOffset: next }),
+          },
+        ],
+      };
     }
 
-    let resources: ResearchResource[];
+    let record: RecordResult<ResearchResource[]>;
     try {
-      resources = await service.getResearchResources(input.orcid_id, ctx);
+      record = await service.getResearchResources(input.orcid_id, ctx);
       // The /research-resources endpoint is unique among ORCID sections: it returns
-      // HTTP 200 {"group":[]} for non-existent iDs instead of 404, so an empty result
-      // is ambiguous (genuinely empty vs. no such record). Disambiguate by fetching
-      // /person, which does 404 for non-existent iDs. Only on the empty path — a
-      // populated result already proves the record exists, so no extra round-trip there.
-      if (resources.length === 0) {
-        await service.getPerson(input.orcid_id, ctx);
+      // HTTP 200 {"group":[]} for non-existent and deprecated iDs alike instead of a 404 or
+      // a redirect, so an empty result is ambiguous (genuinely empty, no such record, or a
+      // merged record). Disambiguate by fetching /person, which 404s for a non-existent iD
+      // and redirects a deprecated one to its primary, whose resources are then fetched.
+      // Only on the empty path — a populated result already proves the record exists, so
+      // no extra round-trip there. A /person 404 is the answer (profile_not_found); any other
+      // probe failure but caller cancellation leaves the empty summary as served.
+      if (record.data.length === 0) {
+        const primaryId = await service.getPerson(input.orcid_id, ctx).then(
+          (person) => person.orcidId,
+          (error: unknown) => {
+            if (ctx.signal.aborted) throw error;
+            if (error instanceof McpError && error.code === JsonRpcErrorCode.NotFound) throw error;
+            ctx.log.warning('Deprecated-iD probe failed; returning the empty summary as served.', {
+              orcidId: requestedId,
+            });
+            return;
+          },
+        );
+        if (primaryId !== undefined && primaryId !== record.orcidId)
+          record = await service.getResearchResources(primaryId, ctx);
       }
     } catch (err) {
       if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
-        throw ctx.fail(
-          'profile_not_found',
-          `ORCID iD ${normalizeOrcidId(input.orcid_id)} not found`,
-        );
+        throw ctx.fail('profile_not_found', `ORCID iD ${requestedId} not found`);
       }
       throw err;
     }
 
-    const bareId = normalizeOrcidId(input.orcid_id);
+    const { orcidId: bareId, data: resources } = record;
     ctx.log.info('orcid_get_research_resources completed', {
       orcidId: bareId,
       resourceCount: resources.length,
     });
 
-    if (resources.length === 0) {
-      ctx.enrich.notice(
+    const notice = joinNotices(
+      deprecatedIdNotice(requestedId, bareId),
+      resources.length === 0 &&
         'No research resources found. This ORCID section is sparsely populated — most researchers have no entries. Resources are typically deposited by allocation systems (e.g. ACCESS, XSEDE) rather than self-reported.',
-      );
-    }
+    );
+    if (notice) ctx.enrich.notice(notice);
 
     return {
       view: 'summary' as const,
@@ -322,7 +345,6 @@ type ResourceResult = {
   resources: PagedResource[];
   view: 'summary' | 'detail';
   putCode?: number;
-  budgetOverflow?: string;
   truncated?: boolean;
   itemLimitNotice?: string;
 };
@@ -335,7 +357,6 @@ function renderResources(result: ResourceResult): { type: 'text'; text: string }
     `**Total Resources:** ${result.resourceCount}`,
     `**View:** ${result.view}`,
     ...(result.putCode !== undefined ? [`**Selected put-code:** ${result.putCode}`] : []),
-    ...(result.budgetOverflow ? [`**Budget exception:** ${result.budgetOverflow}`] : []),
     ...(result.truncated !== undefined
       ? [`**Allocation items truncated:** ${result.truncated}`]
       : []),

@@ -3,16 +3,21 @@
  * @module tests/resources/researcher-works.resource.test
  */
 
+import { z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { researcherWorksResource } from '@/mcp-server/resources/definitions/researcher-works.resource.js';
 
 const mockGetWorks = vi.fn();
-vi.mock('@/services/orcid/orcid-service.js', async () => ({
-  getOrcidService: () => ({ getWorks: mockGetWorks }),
-  normalizeOrcidId: (await import('@/services/orcid/orcid-id.js')).normalizeOrcidId,
-}));
+vi.mock('@/services/orcid/orcid-service.js', async () => {
+  const { served } = await import('../helpers/served-record.js');
+  const { normalizeOrcidId } = await import('@/services/orcid/orcid-id.js');
+  return {
+    getOrcidService: () => ({ getWorks: served(mockGetWorks, normalizeOrcidId) }),
+    normalizeOrcidId,
+  };
+});
 
 const sampleWorks = [
   {
@@ -100,6 +105,15 @@ describe('researcherWorksResource', () => {
     expect(result.works).toHaveLength(25); // conservative compact cap
     expect(result.works[0]!.title).toBe('Work 0');
     expect(result.works[24]!.title).toBe('Work 24');
+  });
+
+  it("names ORCID's data-set spelling, not dataset, in the workType describe", () => {
+    const schema = z.toJSONSchema(researcherWorksResource.output!) as unknown as {
+      properties: { works: { items: { properties: { workType: { description: string } } } } };
+    };
+    const { description } = schema.properties.works.items.properties.workType;
+    expect(description).toContain('data-set');
+    expect(description).not.toMatch(/\bdataset\b/);
   });
 
   it('returns empty works with workCount 0 when no works', async () => {

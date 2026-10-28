@@ -25,7 +25,7 @@ export const SourceSchema = z
     selfAsserted: z
       .boolean()
       .describe(
-        'True when the asserting party (the assertion origin when recorded, otherwise the source) is the requested ORCID iD; false when a member organization or another ORCID user asserted the item.',
+        "True when the asserting party (the assertion origin when recorded, otherwise the source) is the record's ORCID iD (orcidId); false when a member organization or another ORCID user asserted the item.",
       ),
   })
   .describe('A party that asserted this item on the ORCID record.');

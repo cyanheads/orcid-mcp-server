@@ -145,8 +145,9 @@ describe('orcidResolveResearcher — byline initials (#53)', () => {
       primaryTotalFound: 0,
     });
     const text = contentText(result);
-    expect(text).toContain('**Query Used:** given-and-family-names:("Doudna" AND J\\*)');
-    expect(text).toContain('**Primary Query:** given-and-family-names:"J. Doudna"');
+    // Trailer strings render as code spans, which CommonMark reads back verbatim.
+    expect(text).toContain('**Query Used:** `given-and-family-names:("Doudna" AND J*)`');
+    expect(text).toContain('**Primary Query:** `given-and-family-names:"J. Doudna"`');
     expect(text).toContain('**Name Match:** partial');
     expect(text).not.toContain('**Name Match:** exact');
   });
@@ -167,7 +168,7 @@ describe('orcidResolveResearcher — byline initials (#53)', () => {
     ]);
     expect(structured.queryUsed).toBe(byline);
     expect(contentText(result)).toContain(
-      '**Query Used:** given-and-family-names:"Jennifer Doudna"\\~1',
+      '**Query Used:** `given-and-family-names:"Jennifer Doudna"~1`',
     );
   });
 
@@ -325,6 +326,20 @@ describe('orcidResolveResearcher — "Family, Given" names (#53)', () => {
       'No ORCID records found matching "Doudna, Jennifer". Try a different spelling or use orcid_search_researchers with a broader query.',
     );
   });
+
+  it('escapes Markdown in the name the empty-result notice quotes', async () => {
+    mockExpandedSearch.mockResolvedValue(NONE);
+
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
+    await orcidResolveResearcher.handler(
+      orcidResolveResearcher.input.parse({ name: 'Jennifer *Doudna*' }),
+      ctx,
+    );
+
+    expect(getEnrichment(ctx).notice).toBe(
+      'No ORCID records found matching "Jennifer \\*Doudna\\*". Try a different spelling or use orcid_search_researchers with a broader query.',
+    );
+  });
 });
 
 describe('orcidResolveResearcher — other-names aliases (#53)', () => {
@@ -348,7 +363,7 @@ describe('orcidResolveResearcher — other-names aliases (#53)', () => {
       ['0000-0002-1825-0097', 'partial'],
     ]);
     expect(structured).toMatchObject({ queryUsed: alias, relaxedQuery: alias, totalFound: 1 });
-    expect(contentText(result)).toContain(`**Query Used:** ${alias}`);
+    expect(contentText(result)).toContain(`**Query Used:** \`${alias}\``);
   });
 
   it('keeps every anchor on the other-names stage but no affiliation', async () => {

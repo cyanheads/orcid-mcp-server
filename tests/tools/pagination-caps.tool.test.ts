@@ -2,11 +2,13 @@
  * @fileoverview Complete-surface pagination and bounded request contracts.
  * @module tests/tools/pagination-caps.tool.test
  */
+import { z } from '@cyanheads/mcp-ts-core';
 import { createMockContext, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetPeerReviews } from '@/mcp-server/tools/definitions/get-peer-reviews.tool.js';
 import { orcidGetWorkDetail } from '@/mcp-server/tools/definitions/get-work-detail.tool.js';
 import { orcidGetWorks } from '@/mcp-server/tools/definitions/get-works.tool.js';
+import { orcidResolveResearcher } from '@/mcp-server/tools/definitions/resolve-researcher.tool.js';
 import { orcidSearchResearchers } from '@/mcp-server/tools/definitions/search-researchers.tool.js';
 
 const api = vi.hoisted(() => ({
@@ -15,14 +17,24 @@ const api = vi.hoisted(() => ({
   getWorkDetails: vi.fn(),
   expandedSearch: vi.fn(),
 }));
-vi.mock('@/services/orcid/orcid-service.js', () => ({
-  getOrcidService: () => api,
-  normalizeOrcidId: (id: string) => id,
-}));
+vi.mock('@/services/orcid/orcid-service.js', async () => {
+  const { served } = await import('../helpers/served-record.js');
+  const normalizeOrcidId = (id: string) => id;
+  return {
+    getOrcidService: () => ({
+      expandedSearch: api.expandedSearch,
+      getPeerReviews: served(api.getPeerReviews, normalizeOrcidId),
+      getWorks: served(api.getWorks, normalizeOrcidId),
+      getWorkDetails: served(api.getWorkDetails, normalizeOrcidId),
+      // The zero-resolved-works deprecation probe; a served iD never differs here.
+      getPerson: served(async () => ({}), normalizeOrcidId),
+    }),
+    normalizeOrcidId,
+  };
+});
 const ID = '0000-0002-1825-0097';
 const text = (result: { content: { type: string; text?: string }[] }) =>
   result.content.map((b) => b.text ?? '').join('');
-const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
 const work = (putCode: number) => ({ putCode, externalIds: [], contributors: [], sources: [] });
 
 describe('pagination caps', () => {
@@ -38,16 +50,15 @@ describe('pagination caps', () => {
     expect(text(result)).toContain('### Journal ISSN ISSN-2\n**Sources:** Source 2');
     expect(text(result).indexOf('ISSN-2')).toBeLessThan(text(result).indexOf('ISSN-1'));
   });
-  it('pages peer histories through every slice within both complete surface budgets', async () => {
-    const reviews = Array.from({ length: 1000 }, (_, i) => ({
+  it('pages a clamped peer history in full 1,000-review pages through every slice', async () => {
+    const reviews = Array.from({ length: 2500 }, (_, i) => ({
       groupIssn: `ISSN-${i}`,
       conveningOrganization: { name: '山'.repeat(200) },
       sources: [{ name: 'Import service', selfAsserted: false }],
     }));
     api.getPeerReviews.mockResolvedValue(reviews);
     const seen: unknown[] = [];
-    let maxJsonBytes = 0;
-    let maxTextBytes = 0;
+    const sizes: number[] = [];
     let offset: number | undefined = 0;
     while (offset !== undefined) {
       const result = await runToolContract(orcidGetPeerReviews, {
@@ -65,22 +76,18 @@ describe('pagination caps', () => {
         truncated: boolean;
         notice?: string;
       };
-      expect(bytes(page)).toBeLessThanOrEqual(64000);
-      expect(Buffer.byteLength(text(result))).toBeLessThanOrEqual(64000);
-      maxJsonBytes = Math.max(maxJsonBytes, bytes(page));
-      maxTextBytes = Math.max(maxTextBytes, Buffer.byteLength(text(result)));
-      expect(page.totalCount).toBe(1000);
+      expect(page.totalCount).toBe(2500);
       expect(page.offset).toBe(offset);
       expect(page.reviewCount).toBe(page.peerReviews.length);
-      expect(page.reviewCount).toBeGreaterThan(0);
-      expect(page.notice).toContain('10000');
+      expect(page.notice).toBe('Requested limit 10000; effective cap 1000 reviews.');
       expect(text(result)).toContain(page.notice!);
+      sizes.push(page.reviewCount);
       seen.push(...page.peerReviews);
       offset = page.nextOffset;
       expect(page.truncated).toBe(offset !== undefined);
     }
+    expect(sizes).toEqual([1000, 1000, 500]);
     expect(seen).toEqual(reviews);
-    console.info('peer max complete surface bytes', maxJsonBytes, maxTextBytes);
   });
   it.each([1001, 10000])(
     'clamps supported search and works sizes %i before I/O and reports the cap',
@@ -101,7 +108,7 @@ describe('pagination caps', () => {
       expect(search.structuredContent).toMatchObject({ truncated: false });
     },
   );
-  it('defers absent upstream work results even without a byte cut', async () => {
+  it('defers absent upstream work results', async () => {
     api.getWorkDetails.mockResolvedValue([
       { type: 'work', detail: work(2) },
       { type: 'error', putCode: 1, message: 'Not found' },
@@ -113,7 +120,7 @@ describe('pagination caps', () => {
     expect(result.structuredContent).toMatchObject({ deferredPutCodes: [3] });
     expect(text(result)).toContain('**Deferred put-codes:** 3');
   });
-  it('caps compact works and peer reviews at 1000 before byte admission', async () => {
+  it('caps compact works and peer reviews at 1000', async () => {
     api.getWorks.mockResolvedValue(
       Array.from({ length: 1001 }, (_, putCode) => ({ putCode, sources: [], externalIds: [] })),
     );
@@ -130,8 +137,6 @@ describe('pagination caps', () => {
       expect(page.returnedCount ?? page.reviewCount).toBe(1000);
       expect(page.nextOffset).toBe(1000);
       expect(page.truncated).toBe(true);
-      expect(bytes(page)).toBeLessThanOrEqual(64000);
-      expect(Buffer.byteLength(text(result))).toBeLessThanOrEqual(64000);
     }
   });
   it('deduplicates before the distinct cap and fetches once', async () => {
@@ -149,7 +154,7 @@ describe('pagination caps', () => {
     );
     expect(result.structuredContent).not.toHaveProperty('deferredPutCodes');
   });
-  it('combines cap, byte, and missing-result deferrals in request order with widest metadata', async () => {
+  it('combines cap and missing-result deferrals in request order and returns every fetched record', async () => {
     const requested = Array.from({ length: 1000 }, (_, i) => Number.MAX_SAFE_INTEGER - i);
     api.getWorkDetails.mockImplementation(async (_id: string, codes: number[]) => [
       { type: 'work', detail: { ...work(codes[2]!), abstract: '山'.repeat(5000) } },
@@ -173,20 +178,20 @@ describe('pagination caps', () => {
       deferredPutCodes: number[];
       notice: string;
     };
-    const settled = new Set([...page.works, ...page.errors].map((r) => r.putCode));
-    expect(page.deferredPutCodes).toEqual(requested.filter((code) => !settled.has(code)));
+    // Every work the endpoint returned is kept, in its order; only codes[1] went unanswered.
+    expect(page.works.map((w) => w.putCode)).toEqual([
+      requested[2],
+      ...requested.slice(3, 100).toReversed(),
+    ]);
     expect(page.errors).toEqual([{ putCode: requested[0], message: 'Not found' }]);
-    expect(page.notice).toContain('effective fetch cap 100');
-    expect(page.notice).toContain('900 put-codes deferred by the input cap');
-    expect(page.notice).toContain(`so ${99 - settled.size} put-codes were deferred`);
-    expect(page.notice).toContain('no identified result for 1 requested put-codes');
+    expect(page.deferredPutCodes).toEqual([requested[1], ...requested.slice(100)]);
+    expect(page.notice).toBe(
+      'Requested 1000 raw put-codes (1000 distinct); effective fetch cap 100 distinct put-codes in one request; 900 put-codes deferred by the input cap. ORCID returned no identified result for 1 requested put-codes; they remain deferred. Call orcid_get_work_detail again with deferredPutCodes as put_codes.',
+    );
     expect(text(result)).toContain(page.notice);
     expect(text(result)).toContain(page.deferredPutCodes.join(', '));
-    expect(bytes(page)).toBeLessThanOrEqual(64000);
-    expect(Buffer.byteLength(text(result))).toBeLessThanOrEqual(64000);
     expect(api.getWorkDetails).toHaveBeenCalledTimes(1);
     expect(api.getWorkDetails.mock.calls[0]?.[1]).toEqual(requested.slice(0, 100));
-    console.info('widest detail bytes', bytes(page), Buffer.byteLength(text(result)));
   });
   it.each([{ reviews: [] }, { reviews: [{ sources: [] }] }])(
     'peer empty/past-end pages retain total and have no continuation',
@@ -208,13 +213,13 @@ describe('pagination caps', () => {
       expect(text(result)).toContain('**Returned:** 0 (offset 5000)');
     },
   );
-  it('peer default page is 50 and one oversized review is returned alone with an exception', async () => {
+  it('peer default page is 25 and an oversized review shares its page', async () => {
     api.getPeerReviews.mockResolvedValue(Array.from({ length: 51 }, () => ({ sources: [] })));
     const first = await runToolContract(orcidGetPeerReviews, { orcid_id: ID });
     expect(first.structuredContent).toMatchObject({
-      reviewCount: 50,
+      reviewCount: 25,
       totalCount: 51,
-      nextOffset: 50,
+      nextOffset: 25,
       truncated: true,
     });
     api.getPeerReviews.mockResolvedValue([
@@ -222,12 +227,9 @@ describe('pagination caps', () => {
       { sources: [] },
     ]);
     const over = await runToolContract(orcidGetPeerReviews, { orcid_id: ID });
-    expect(over.structuredContent).toMatchObject({ reviewCount: 1, nextOffset: 1 });
-    expect((over.structuredContent as { notice: string }).notice).toContain('indivisible');
-    expect(text(over)).toContain('indivisible');
-    const last = await runToolContract(orcidGetPeerReviews, { orcid_id: ID, offset: 1 });
-    expect(last.structuredContent).toMatchObject({ reviewCount: 1, truncated: false });
-    expect(last.structuredContent).not.toHaveProperty('nextOffset');
+    expect(over.structuredContent).toMatchObject({ reviewCount: 2, truncated: false });
+    expect(over.structuredContent).not.toHaveProperty('nextOffset');
+    expect(over.structuredContent).not.toHaveProperty('notice');
   });
   it.each([0, -1, 1.5, 10001])(
     'rejects invalid page size %s without upstream I/O',
@@ -273,14 +275,57 @@ describe('pagination caps', () => {
       truncated: boolean;
       notice: string;
     };
-    expect(page.rows).toBeLessThan(1000);
-    expect(page.nextStart).toBe(9000 + page.rows);
+    expect(page.rows).toBe(1000);
+    expect(page.nextStart).toBe(10000);
     expect(page.truncated).toBe(true);
-    expect(page.notice).toContain('effective cap 1000');
+    expect(page.notice).toContain('Requested rows 10000; effective cap 1000 results.');
     expect(page.notice).toContain('offset 10,000');
     expect(text(result)).toContain(page.notice);
-    expect(bytes(page)).toBeLessThanOrEqual(64000);
-    expect(Buffer.byteLength(text(result))).toBeLessThanOrEqual(64000);
+  });
+  it('advertises one default and one cap per count input, the 10,000 ceilings, and no byte budget', () => {
+    const counts = [
+      [
+        orcidSearchResearchers,
+        'rows',
+        20,
+        'Results per page. Default 20; a larger value returns at most 1,000 (the most ORCID serves per request) and says so.',
+      ],
+      [
+        orcidResolveResearcher,
+        'rows',
+        5,
+        'Candidates to return. Default 5; a larger value returns at most 20 per search stage and says so.',
+      ],
+      [
+        orcidGetWorks,
+        'limit',
+        25,
+        'Works per page. Default 25; a larger value returns at most 1,000 and says so.',
+      ],
+      [
+        orcidGetPeerReviews,
+        'limit',
+        25,
+        'Reviews per page. Default 25; a larger value returns at most 1,000 and says so.',
+      ],
+    ] as const;
+    for (const [definition, key, defaultValue, description] of counts) {
+      const input = z.toJSONSchema(definition.input, { io: 'input' }) as {
+        properties: Record<string, { default?: number; maximum?: number; description?: string }>;
+      };
+      expect(input.properties[key]).toMatchObject({
+        default: defaultValue,
+        maximum: 10000,
+        description,
+      });
+      const advertised = JSON.stringify([
+        definition.description,
+        input,
+        z.toJSONSchema(definition.output),
+        definition.enrichment && z.toJSONSchema(z.object(definition.enrichment)),
+      ]);
+      expect(advertised, definition.name).not.toMatch(/budget|\bbytes?\b|64,000/i);
+    }
   });
   it('bounds fastest-path scan CPU for empty peer histories and missing detail responses', async () => {
     api.getPeerReviews.mockResolvedValue([]);

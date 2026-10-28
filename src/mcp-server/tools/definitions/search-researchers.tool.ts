@@ -6,7 +6,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { countWithinBudget, recordCost } from '@/mcp-server/tools/response-budget.js';
+import { clampNotice, joinNotices } from '@/mcp-server/tools/notices.js';
 import { singleLine } from '@/mcp-server/tools/third-party-text.js';
 import { getOrcidService } from '@/services/orcid/orcid-service.js';
 import {
@@ -25,6 +25,9 @@ import type { ExpandedSearchResponse } from '@/services/orcid/types.js';
 
 /** The ORCID Public API rejects `start` beyond this offset for unauthenticated requests. */
 const MAX_START = 10_000;
+
+/** The ORCID Public API rejects `rows` above this; a larger request is clamped with a notice. */
+const MAX_ROWS = 1000;
 
 const SearchResultSchema = z
   .object({
@@ -54,10 +57,7 @@ function renderHeader(page: { rows: number; start: number; nextStart?: number | 
   ];
 }
 
-/**
- * One result as `format()` renders it, closing blank line included. Shared with the response
- * byte budget so each result is charged the text it actually adds to `content[]`.
- */
+/** One result as `format()` renders it, closing blank line included. */
 function renderResult(r: SearchResult): string {
   const nameParts = [r.givenNames, r.familyNames].filter(Boolean);
   const displayName = r.creditName ?? (nameParts.length ? nameParts.join(' ') : r.orcidId);
@@ -147,7 +147,7 @@ function buildSolrQuery(input: {
 export const orcidSearchResearchers = tool('orcid_search_researchers', {
   title: 'Search ORCID Researchers',
   description:
-    'Search the ORCID registry using structured field parameters or raw Solr syntax. Provide at least one non-blank search field; all provided structured params are ANDed together. The `query` field adds raw Solr syntax, ANDed with the structured params as one group. Returns ORCID iDs with inline name and institution data — no follow-up profile fetches needed for basic disambiguation. For ranked disambiguation of an ambiguous author name, use orcid_resolve_researcher instead. The ORCID Public API caps results at 10,000 — use pagination for large result sets. Each response also stops at 64,000 bytes; continue a cut page from nextStart.',
+    'Search the ORCID registry using structured field parameters or raw Solr syntax. Provide at least one non-blank search field; all provided structured params are ANDed together. The `query` field adds raw Solr syntax, ANDed with the structured params as one group. Returns ORCID iDs with inline name and institution data — no follow-up profile fetches needed for basic disambiguation. For ranked disambiguation of an ambiguous author name, use orcid_resolve_researcher instead. Continue a page from nextStart; the ORCID Public API pages only the first 10,000 matches, so narrow the query to reach the rest.',
   annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z
@@ -221,7 +221,7 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
         .max(10000)
         .default(20)
         .describe(
-          'Requested results (1–10,000, effective maximum 1,000, default 20). Each surface also stops at 64,000 bytes; continue from nextStart.',
+          'Results per page. Default 20; a larger value returns at most 1,000 (the most ORCID serves per request) and says so.',
         ),
       start: z
         .number()
@@ -252,7 +252,7 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
     rows: z
       .number()
       .describe(
-        'Number of results returned in this response. Below the requested rows when the 64,000-byte response budget cut the page; nextStart then continues from the first result left out.',
+        'Number of results returned in this response: the requested rows, fewer only on the last page.',
       ),
     start: z.number().describe('Pagination offset used for this response.'),
     nextStart: z
@@ -300,7 +300,7 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
   async handler(input, ctx) {
     const service = getOrcidService();
     const effectiveQuery = buildSolrQuery(input);
-    const rows = Math.min(input.rows, 1000);
+    const rows = Math.min(input.rows, MAX_ROWS);
 
     ctx.log.info('orcid_search_researchers', {
       effectiveQuery,
@@ -346,12 +346,8 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
             ? `ORCID reports ${numFound.toLocaleString('en-US')} matches, but the public API cannot page beyond offset 10,000. Narrow or partition the query with additional structured fields or raw Solr constraints to retrieve the remaining records.`
             : undefined;
 
-    const capNotice =
-      input.rows > rows
-        ? `Requested rows ${input.rows}; effective cap ${rows} results before the response byte budget.`
-        : undefined;
-    const notice = [capNotice, resultNotice].filter(Boolean).join(' ') || undefined;
-    const candidates: SearchResult[] = response.results.slice(0, rows).map((r) => ({
+    const notice = joinNotices(clampNotice('rows', input.rows, rows, 'results'), resultNotice);
+    const results: SearchResult[] = response.results.slice(0, rows).map((r) => ({
       orcidId: r.orcidId,
       orcidUri: `https://orcid.org/${r.orcidId}`,
       ...(r.givenNames && { givenNames: r.givenNames }),
@@ -360,34 +356,13 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
       otherNames: r.otherNames,
       institutionNames: r.institutionNames,
     }));
-
-    // Results are admitted in order while both surfaces stay within the byte budget. The
-    // envelope carries the enrichment both surfaces show and its widest counters; its text
-    // twin is the page header plus the framework's enrichment trailer (one `**Label:** value`
-    // line per field, the notice as a quote), and the larger of the two is charged.
-    const widest = { rows: candidates.length, start: input.start, nextStart: MAX_START };
-    const envelopeBytes = recordCost(
-      { results: [], ...widest, effectiveQuery, numFound, truncated, notice },
-      `${renderHeader(widest).join('\n')}\n\n\n**Effective Query:** ${effectiveQuery}\n**Total Found:** ${numFound}\n**Truncated:** ${truncated}${notice ? `\n> ${notice}` : ''}`,
-    );
-    const results = candidates.slice(
-      0,
-      countWithinBudget(
-        candidates.values().map((r) => recordCost(r, renderResult(r))),
-        envelopeBytes,
-      ),
-    );
     const returned = results.length;
     // Next legal offset: just past the last returned result. Offered only while another
     // page both holds more matches and stays within the 10,000-offset ceiling.
     const endStart = input.start + returned;
     const hasNextPage = endStart < numFound && endStart <= MAX_START;
 
-    ctx.log.info('orcid_search_researchers completed', {
-      numFound,
-      fetched: candidates.length,
-      returned,
-    });
+    ctx.log.info('orcid_search_researchers completed', { numFound, returned });
 
     ctx.enrich({ effectiveQuery, numFound, truncated });
     if (notice) ctx.enrich.notice(notice);

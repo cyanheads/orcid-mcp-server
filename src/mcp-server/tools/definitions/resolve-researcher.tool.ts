@@ -7,6 +7,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline } from '@cyanheads/mcp-ts-core/utils';
 import { singleLine } from '@/mcp-server/tools/third-party-text.js';
 import { getOrcidService } from '@/services/orcid/orcid-service.js';
 import {
@@ -276,7 +277,7 @@ function computeInstitutionOverlap(
 export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
   title: 'Resolve ORCID Researcher',
   description:
-    'Disambiguate an author name to a verified ORCID iD. Returns ranked candidates (5 by default; rows accepts 1–10000 and is capped at 20 per search stage with a notice when clamped) with transparent disambiguation signals: name match type (exact/partial/other-name/none), institution overlap flag, and whether a DOI or PMID anchor was used in the query. The name is searched as an exact phrase first; when that finds nothing, byline initials (J. Doudna, Jennifer A. Doudna) and then the other names listed on ORCID records are tried. A DOI or PMID anchor is near-deterministic — it filters to researchers who have linked that specific work to their ORCID record. Use this tool (not orcid_search_researchers) when the input is an ambiguous name that needs ranked disambiguation. No synthetic scores are used — raw signals only.',
+    'Disambiguate an author name to a verified ORCID iD. Returns ranked candidates (5 by default, at most 20 per search stage) with transparent disambiguation signals: name match type (exact/partial/other-name/none), institution overlap flag, and whether a DOI or PMID anchor was used in the query. The name is searched as an exact phrase first; when that finds nothing, byline initials (J. Doudna, Jennifer A. Doudna) and then the other names listed on ORCID records are tried. A DOI or PMID anchor is near-deterministic — it filters to researchers who have linked that specific work to their ORCID record. Use this tool (not orcid_search_researchers) when the input is an ambiguous name that needs ranked disambiguation. No synthetic scores are used — raw signals only.',
   annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
@@ -320,7 +321,7 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
       .max(10000)
       .default(5)
       .describe(
-        'Requested candidate count (1–10000), capped at 20 per search stage with a notice when clamped. Defaults to 5.',
+        'Candidates to return. Default 5; a larger value returns at most 20 per search stage and says so.',
       ),
   }),
 
@@ -579,13 +580,15 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
       );
     }
     if (candidates.length === 0) {
+      // A notice is authored Markdown, so the caller's name inside it is escaped.
+      const quotedName = escapeMarkdownInline(input.name);
       if (anchorType !== 'none') {
         notices.push(
-          `No ORCID records found matching "${input.name}" with the provided ${anchorType.toUpperCase()} anchor. Verify the ${anchorType.toUpperCase()} is correct or try without the anchor using orcid_search_researchers.`,
+          `No ORCID records found matching "${quotedName}" with the provided ${anchorType.toUpperCase()} anchor. Verify the ${anchorType.toUpperCase()} is correct or try without the anchor using orcid_search_researchers.`,
         );
       } else {
         notices.push(
-          `No ORCID records found matching "${input.name}". Try a different spelling or use orcid_search_researchers with a broader query.`,
+          `No ORCID records found matching "${quotedName}". Try a different spelling or use orcid_search_researchers with a broader query.`,
         );
       }
     }

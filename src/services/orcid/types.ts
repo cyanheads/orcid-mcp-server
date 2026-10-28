@@ -522,7 +522,7 @@ export type Source = {
   name?: string;
   /** `assertion-origin-name`: set when the source added the item on that party's behalf. */
   assertionOriginName?: string;
-  /** The asserting party (assertion origin when recorded, else the source) is the requested iD. */
+  /** The asserting party (assertion origin when recorded, else the source) is the record's iD. */
   selfAsserted: boolean;
 };
 

@@ -9,7 +9,11 @@ import { resource, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import type { NormalizedPerson } from '@/services/orcid/normalizers.js';
 import { isValidOrcidId, orcidIdParamSchema } from '@/services/orcid/orcid-id.js';
-import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
+import {
+  getOrcidService,
+  normalizeOrcidId,
+  type RecordResult,
+} from '@/services/orcid/orcid-service.js';
 
 export const researcherProfileResource = resource('orcid://researcher/{orcid_id}/profile', {
   name: 'orcid-researcher-profile',
@@ -89,9 +93,9 @@ export const researcherProfileResource = resource('orcid://researcher/{orcid_id}
 
     // Remap the upstream 404 to a NotFound that names the iD, so the client gets a
     // resource-level message rather than the HTTP status details on McpError.data.
-    let person: NormalizedPerson;
+    let record: RecordResult<NormalizedPerson>;
     try {
-      person = await service.getPerson(bareId, ctx);
+      record = await service.getPerson(bareId, ctx);
     } catch (err) {
       if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
         throw ctx.fail(
@@ -103,6 +107,7 @@ export const researcherProfileResource = resource('orcid://researcher/{orcid_id}
       }
       throw err;
     }
+    const { orcidId, data: person } = record;
 
     if (!person.givenNames && !person.familyName && !person.creditName) {
       throw ctx.fail(
@@ -111,9 +116,10 @@ export const researcherProfileResource = resource('orcid://researcher/{orcid_id}
       );
     }
 
+    // A deprecated iD is served from the primary record it was merged into; report that iD.
     return {
-      orcidId: bareId,
-      orcidUri: `https://orcid.org/${bareId}`,
+      orcidId,
+      orcidUri: `https://orcid.org/${orcidId}`,
       ...(person.givenNames && { givenNames: person.givenNames }),
       ...(person.familyName && { familyName: person.familyName }),
       ...(person.creditName && { creditName: person.creditName }),

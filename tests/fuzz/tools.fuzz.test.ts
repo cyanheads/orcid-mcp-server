@@ -5,7 +5,7 @@
  * every other route — so a run exercises validation and normalization rather than the
  * network. A thrown McpError is a handled outcome — these assertions cover crashes,
  * client-visible stack or path leaks, and prototype pollution, plus the search input
- * contract and the works response byte budget.
+ * contract, the search and works page sizes and works filters, and work-detail batching.
  * @module tests/fuzz/tools.fuzz.test
  */
 
@@ -35,15 +35,22 @@ const SEED = 20_260_824;
 /** Works list size the faked `/works` route serves for every ORCID iD. */
 const GENERATED_WORK_COUNT = 300;
 
-/** Structured-output ceiling the works tools hold every multi-record response to (#36). */
-const RESPONSE_BYTE_BUDGET = 64_000;
-
 /** Record size varies with the put-code, from a bare record to ~9 KB of abstract. */
 const sizeFor = (code: number) => (code * 7_919) % 9_000;
 
+/** Work types the generated works list cycles through, by position. */
+const GENERATED_WORK_TYPES = ['journal-article', 'preprint', 'data-set', 'software'] as const;
+
+/** Type of the generated work at position `i`. */
+const generatedWorkType = (i: number) => GENERATED_WORK_TYPES[i % GENERATED_WORK_TYPES.length]!;
+
+/** Publication year of the generated work at position `i`; every fifth work is undated. */
+const generatedWorkYear = (i: number) => (i % 5 === 4 ? undefined : 2015 + (i % 11));
+
 /**
  * A work summary list sized like a prolific live record: titles and journals vary in
- * length with the put-code, and some carry the inline markup ORCID relays.
+ * length with the put-code, some carry the inline markup ORCID relays, and types and
+ * publication dates (year, year-month, or none) vary with the position.
  */
 function generatedWorks() {
   return {
@@ -54,7 +61,13 @@ function generatedWorks() {
           title: {
             title: { value: `Work ${i} <i>in vivo</i> ${'t'.repeat(sizeFor(i + 1) / 20)}` },
           },
-          type: 'journal-article',
+          type: generatedWorkType(i),
+          ...(generatedWorkYear(i) !== undefined && {
+            'publication-date': {
+              year: { value: String(generatedWorkYear(i)) },
+              month: i % 3 === 0 ? { value: '06' } : null,
+            },
+          }),
           'journal-title': { value: `Journal ${'j'.repeat(i % 80)}` },
           'external-ids': {
             'external-id': [{ 'external-id-type': 'doi', 'external-id-value': `10.1/${i}` }],
@@ -412,18 +425,14 @@ describe('orcid_search_researchers input contract', () => {
 });
 
 /**
- * The search response byte budget (#54): for any page request, a multi-result response keeps
- * each surface within the budget, returns a contiguous run of ORCID's order starting at
- * `start`, and reports nextStart exactly where the next page begins.
+ * The search page size (#79): for any page request, a response returns min(rows, 1,000)
+ * results — fewer only at the end of the matches — as a contiguous run of ORCID's order
+ * starting at `start`, and reports nextStart exactly where the next page begins.
  */
-describe('search response byte budget', () => {
-  it('orcid_search_researchers: every page fits the budget and continues exactly where it stopped', async () => {
-    const textBytes = (result: Awaited<ReturnType<typeof runToolContract>>) =>
-      Buffer.byteLength(
-        result.content.map((block) => (block.type === 'text' ? block.text : '')).join(''),
-      );
+describe('search page size', () => {
+  it('orcid_search_researchers: every page is full until the end and continues exactly where it stopped', async () => {
     const before = http.calls.length;
-    let cutPages = 0;
+    let clampedPages = 0;
 
     await fc.assert(
       fc.asyncProperty(
@@ -439,49 +448,41 @@ describe('search response byte budget', () => {
             results: { orcidId: string }[];
             rows: number;
             nextStart?: number;
+            notice?: string;
           };
 
-          if (page.results.length > 1) {
-            expect(Buffer.byteLength(JSON.stringify(result.structuredContent))).toBeLessThanOrEqual(
-              RESPONSE_BYTE_BUDGET,
-            );
-            expect(textBytes(result)).toBeLessThanOrEqual(RESPONSE_BYTE_BUDGET);
-          }
+          const end = Math.min(start + Math.min(rows, 1000), GENERATED_RESEARCHER_COUNT);
+          expect(page.rows).toBe(Math.max(end - start, 0));
           expect(page.rows).toBe(page.results.length);
-          expect(page.rows).toBeLessThanOrEqual(rows);
-          if (start < GENERATED_RESEARCHER_COUNT) expect(page.rows).toBeGreaterThan(0);
-          const end = start + page.rows;
-          if (end < Math.min(start + rows, GENERATED_RESEARCHER_COUNT)) cutPages++;
           expect(page.nextStart).toBe(end < GENERATED_RESEARCHER_COUNT ? end : undefined);
           expect(page.results.map((r) => r.orcidId)).toEqual(
             generatedResearchers.slice(start, end).map((r) => r['orcid-id']),
           );
+          if (rows > 1000) {
+            clampedPages++;
+            expect(page.notice).toContain(`Requested rows ${rows}; effective cap 1000 results.`);
+          }
         },
       ),
       { numRuns: 150, seed: SEED },
     );
 
-    // The property reached the upstream and exercised the cut, not only whole pages.
+    // The property reached the upstream and exercised the clamp, not only small pages.
     expect(http.calls.length).toBeGreaterThan(before);
-    expect(cutPages).toBeGreaterThan(10);
+    expect(clampedPages).toBeGreaterThan(10);
   });
 });
 
 /**
- * The response byte budget (#36): for any page or batch request, a multi-record response
- * stays within the budget, and the continuation it reports — nextOffset for works,
- * deferredPutCodes for work detail — accounts for every record exactly once.
+ * Works and work-detail paging (#79, #81): for any page or batch request, the continuation a
+ * response reports — nextOffset for works, deferredPutCodes for work detail — accounts for
+ * every record exactly once.
  */
-describe('works response byte budget', () => {
+describe('works and work-detail paging', () => {
   const ORCID = '0000-0002-1825-0097';
   const bytesOf = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
-  /** What a client receives: the text surface plus structuredContent, capped at 130,000 B. */
-  const withinCombinedCeiling = (result: Awaited<ReturnType<typeof runToolContract>>) => {
-    const text = result.content.map((block) => (block.type === 'text' ? block.text : '')).join('');
-    return bytesOf(result.structuredContent) + Buffer.byteLength(text) < 130_000;
-  };
 
-  it('orcid_get_works: every page fits the budget and continues exactly where it stopped', async () => {
+  it('orcid_get_works: every page is full until the end and continues exactly where it stopped', async () => {
     await fc.assert(
       fc.asyncProperty(
         fc.integer({ min: 1, max: 10000 }),
@@ -496,21 +497,20 @@ describe('works response byte budget', () => {
           });
           const page = result.structuredContent as {
             workCount: number;
+            matchedCount: number;
             returnedCount: number;
             nextOffset?: number;
             truncated: boolean;
-            works: { title?: string }[];
+            works: { putCode: number; title?: string }[];
           };
 
-          if (page.returnedCount > 1) {
-            expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(RESPONSE_BYTE_BUDGET);
-            expect(withinCombinedCeiling(result)).toBe(true);
-          }
           expect(page.workCount).toBe(GENERATED_WORK_COUNT);
-          expect(page.returnedCount).toBe(page.works.length);
-          expect(page.returnedCount).toBeLessThanOrEqual(limit);
-          if (offset < GENERATED_WORK_COUNT) expect(page.returnedCount).toBeGreaterThan(0);
-          const end = offset + page.returnedCount;
+          expect(page.matchedCount).toBe(GENERATED_WORK_COUNT);
+          const end = Math.min(offset + Math.min(limit, 1000), GENERATED_WORK_COUNT);
+          expect(page.returnedCount).toBe(Math.max(end - offset, 0));
+          expect(page.works.map((w) => w.putCode)).toEqual(
+            Array.from({ length: page.returnedCount }, (_, i) => offset + i + 1),
+          );
           expect(page.truncated).toBe(end < GENERATED_WORK_COUNT);
           expect(page.nextOffset).toBe(end < GENERATED_WORK_COUNT ? end : undefined);
           for (const work of page.works) expect(work.title).not.toMatch(/<\/?i>/);
@@ -520,7 +520,79 @@ describe('works response byte budget', () => {
     );
   });
 
-  it('orcid_get_work_detail: every batch fits the budget and settles each put-code exactly once', async () => {
+  it('orcid_get_works: any filter pages its matches from offset 0 exactly once, in ORCID order (#81)', async () => {
+    const typesArb = fc.subarray([...GENERATED_WORK_TYPES, 'patent' as const]);
+    const yearArb = fc.option(fc.integer({ min: 2013, max: 2027 }), { nil: undefined });
+    let emptyMatches = 0;
+    let multiPage = 0;
+
+    await fc.assert(
+      fc.asyncProperty(
+        typesArb,
+        yearArb,
+        yearArb,
+        fc.integer({ min: 1, max: 120 }),
+        async (types, from, to, limit) => {
+          const [yearFrom, yearTo] =
+            from !== undefined && to !== undefined && from > to ? [to, from] : [from, to];
+          const yearFiltered = yearFrom !== undefined || yearTo !== undefined;
+          const expected: number[] = [];
+          let undated = 0;
+          for (let i = 0; i < GENERATED_WORK_COUNT; i++) {
+            if (types.length > 0 && !types.includes(generatedWorkType(i))) continue;
+            const year = generatedWorkYear(i);
+            if (yearFiltered && year === undefined) {
+              undated++;
+              continue;
+            }
+            if (yearFrom !== undefined && year! < yearFrom) continue;
+            if (yearTo !== undefined && year! > yearTo) continue;
+            expected.push(i + 1);
+          }
+
+          const seen: number[] = [];
+          let offset: number | undefined = 0;
+          let pages = 0;
+          while (offset !== undefined) {
+            const result = await runToolContract(orcidGetWorks, {
+              orcid_id: ORCID,
+              work_types: types,
+              ...(yearFrom !== undefined && { year_from: yearFrom }),
+              ...(yearTo !== undefined && { year_to: yearTo }),
+              limit,
+              offset,
+            });
+            expect(result.isError).toBeFalsy();
+            const page = result.structuredContent as {
+              workCount: number;
+              matchedCount: number;
+              nextOffset?: number;
+              truncated: boolean;
+              works: { putCode: number }[];
+              notice?: string;
+            };
+            expect(page.workCount).toBe(GENERATED_WORK_COUNT);
+            expect(page.matchedCount).toBe(expected.length);
+            expect(page.truncated).toBe(page.nextOffset !== undefined);
+            if (undated > 0) expect(page.notice).toContain(`${undated} work`);
+            seen.push(...page.works.map((w) => w.putCode));
+            offset = page.nextOffset;
+            pages++;
+          }
+          expect(seen).toEqual(expected);
+          if (expected.length === 0) emptyMatches++;
+          if (pages > 1) multiPage++;
+        },
+      ),
+      { numRuns: 60, seed: SEED },
+    );
+
+    // Both no-match and multi-page filters were exercised.
+    expect(emptyMatches).toBeGreaterThan(0);
+    expect(multiPage).toBeGreaterThan(5);
+  });
+
+  it('orcid_get_work_detail: every batch returns each fetched code and defers only the input-cap remainder', async () => {
     await fc.assert(
       fc.asyncProperty(
         // Codes drawn from a narrow range, so most batches repeat some put-codes.
@@ -537,10 +609,6 @@ describe('works response byte budget', () => {
             notice?: string;
           };
 
-          if (batch.works.length + batch.errors.length > 1) {
-            expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(RESPONSE_BYTE_BUDGET);
-            expect(withinCombinedCeiling(result)).toBe(true);
-          }
           const settled = [
             ...batch.works.map((w) => w.putCode),
             ...batch.errors.map((e) => e.putCode),
@@ -548,12 +616,12 @@ describe('works response byte budget', () => {
           const returned = new Set(settled);
           // A repeated put-code resolves or fails once — never a work and an error both (#49).
           expect(returned.size).toBe(settled.length);
+          // The fake answers every fetched code, so the first 100 distinct all return and only
+          // the input cap defers, in request order.
+          const distinct = [...new Set(putCodes)];
+          expect(returned).toEqual(new Set(distinct.slice(0, 100)));
           const deferred = batch.deferredPutCodes ?? [];
-          expect(new Set(deferred).size).toBe(deferred.length);
-          for (const code of deferred) expect(returned.has(code)).toBe(false);
-          for (const code of new Set(putCodes)) {
-            expect(returned.has(code) || deferred.includes(code)).toBe(true);
-          }
+          expect(deferred).toEqual(distinct.slice(100));
           expect(batch.notice !== undefined).toBe(deferred.length > 0);
           for (const work of batch.works) expect(work.abstract).not.toContain('<h4>');
         },
@@ -604,9 +672,14 @@ describe('works response byte budget', () => {
     titleLength: fc.integer({ min: 1, max: 1_000 }),
   });
 
-  it('orcid_get_work_detail: capped records keep the contributor and citation contract and fit the budget alone (#52)', async () => {
+  it('orcid_get_work_detail: capped records keep the contributor and citation contract and stay bounded (#52)', async () => {
     const textOf = (result: Awaited<ReturnType<typeof runToolContract>>) =>
       result.content.map((block) => (block.type === 'text' ? block.text : '')).join('');
+    /**
+     * Ceiling on a batch of at most four capped records per surface. Uncapped, one generated
+     * record (5,000 contributors, a 70 KB citation) alone runs past it.
+     */
+    const CAPPED_BATCH_MAX = 64_000;
     let cutRecords = 0;
     let omittedCitations = 0;
 
@@ -654,9 +727,9 @@ describe('works response byte budget', () => {
           put_codes: records.map((r) => r.putCode),
         });
         expect(result.isError).toBeFalsy();
-        // Every batch fits, one-record batches included: the caps bound a record on its own.
-        expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(RESPONSE_BYTE_BUDGET);
-        expect(Buffer.byteLength(textOf(result))).toBeLessThanOrEqual(RESPONSE_BYTE_BUDGET);
+        // The caps bound a record on its own, so a small batch stays small on both surfaces.
+        expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(CAPPED_BATCH_MAX);
+        expect(Buffer.byteLength(textOf(result))).toBeLessThanOrEqual(CAPPED_BATCH_MAX);
 
         const batch = result.structuredContent as {
           works: {
@@ -668,7 +741,7 @@ describe('works response byte budget', () => {
             citationOmitted?: boolean;
           }[];
         };
-        expect(batch.works.length).toBeGreaterThan(0);
+        expect(batch.works.map((work) => work.putCode)).toEqual(records.map((r) => r.putCode));
         for (const work of batch.works) {
           const record = records[work.putCode - 1]!;
           const n = record.contributors.length;

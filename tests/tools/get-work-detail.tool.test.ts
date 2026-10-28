@@ -9,10 +9,19 @@ import { assert, beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetWorkDetail } from '@/mcp-server/tools/definitions/get-work-detail.tool.js';
 
 const mockGetWorkDetails = vi.fn();
-vi.mock('@/services/orcid/orcid-service.js', () => ({
-  getOrcidService: () => ({ getWorkDetails: mockGetWorkDetails }),
-  normalizeOrcidId: (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim(),
-}));
+const mockGetPerson = vi.fn();
+vi.mock('@/services/orcid/orcid-service.js', async () => {
+  const { served } = await import('../helpers/served-record.js');
+  const normalizeOrcidId = (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim();
+  return {
+    getOrcidService: () => ({
+      getWorkDetails: served(mockGetWorkDetails, normalizeOrcidId),
+      // The zero-resolved-works deprecation probe; a served iD never differs here.
+      getPerson: served(mockGetPerson, normalizeOrcidId),
+    }),
+    normalizeOrcidId,
+  };
+});
 
 /** Canonical work detail returned by the service (normalized shape). */
 const workDetailA = {
@@ -287,6 +296,74 @@ describe('orcidGetWorkDetail', () => {
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]!.putCode).toBeUndefined();
     expect(result.errors[0]!.message).toBe('Unexpected server error');
+  });
+
+  // ---------------------------------------------------------------------------
+  // The zero-resolved-works /person probe is best-effort
+  // ---------------------------------------------------------------------------
+
+  describe('a failing deprecation probe', () => {
+    const allErrors = [
+      { type: 'error', putCode: 1, message: "'1' is not a valid put code" },
+      { type: 'error', putCode: 2, message: "'2' is not a valid put code" },
+    ];
+
+    it.each([
+      [
+        'unavailable',
+        new McpError(JsonRpcErrorCode.ServiceUnavailable, 'ORCID returned HTTP 503.', {
+          retryable: true,
+        }),
+      ],
+      ['not found', new McpError(JsonRpcErrorCode.NotFound, 'ORCID returned HTTP 404.')],
+      ['an unexpected error', new Error('socket hang up')],
+    ])('returns the per-code errors when /person is %s', async (_label, failure) => {
+      mockGetWorkDetails.mockResolvedValueOnce(allErrors);
+      mockGetPerson.mockRejectedValueOnce(failure);
+
+      const result = await runToolContract(orcidGetWorkDetail, {
+        orcid_id: '0000-0001-9161-999X',
+        put_codes: [1, 2],
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).toEqual({
+        orcidId: '0000-0001-9161-999X',
+        orcidUri: 'https://orcid.org/0000-0001-9161-999X',
+        works: [],
+        errors: [
+          { putCode: 1, message: "'1' is not a valid put code" },
+          { putCode: 2, message: "'2' is not a valid put code" },
+        ],
+      });
+      const text = result.content.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
+      expect(text).toContain("- '2' is not a valid put code (put-code 2)");
+      expect(text).not.toContain('bulk works endpoint');
+      expect(mockGetPerson).toHaveBeenCalledTimes(1);
+      expect(mockGetWorkDetails).toHaveBeenCalledTimes(1);
+    });
+
+    it('rethrows caller cancellation that lands during the probe', async () => {
+      const controller = new AbortController();
+      mockGetWorkDetails.mockResolvedValueOnce(allErrors);
+      mockGetPerson.mockImplementationOnce(async () => {
+        controller.abort();
+        throw controller.signal.reason;
+      });
+
+      const ctx = createMockContext({
+        errors: orcidGetWorkDetail.errors,
+        signal: controller.signal,
+      });
+      const input = orcidGetWorkDetail.input.parse({
+        orcid_id: '0000-0001-9161-999X',
+        put_codes: [1, 2],
+      });
+      await expect(orcidGetWorkDetail.handler(input, ctx)).rejects.toMatchObject({
+        name: 'AbortError',
+      });
+      expect(mockGetWorkDetails).toHaveBeenCalledTimes(1);
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -578,10 +655,10 @@ describe('orcidGetWorkDetail', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Responses under the byte budget
+  // Both result surfaces
   // ---------------------------------------------------------------------------
 
-  it('returns an under-budget response byte-identical on both surfaces', async () => {
+  it('returns a mixed batch byte-identical on both surfaces', async () => {
     mockGetWorkDetails.mockResolvedValueOnce([
       { type: 'work', detail: workDetailA },
       { type: 'error', putCode: 999, message: "'999' is not a valid put code" },
@@ -747,11 +824,10 @@ describe('orcidGetWorkDetail', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Byte budget on structuredContent (#36)
+  // Page size: every fetched record returns (#36, #79)
   // ---------------------------------------------------------------------------
 
-  describe('byte budget on structuredContent (#36)', () => {
-    const BUDGET = 64_000;
+  describe('page size', () => {
     const ORCID = '0000-0001-9161-999X';
     const bytesOf = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
     const textOf = (result: { content: { type: string; text?: string }[] }) =>
@@ -820,97 +896,48 @@ describe('orcidGetWorkDetail', () => {
       mockGetWorkDetails.mockReset();
     });
 
-    it('defers every put-code past the budget and says so on both surfaces', async () => {
+    it('returns all 100 records of 100 distinct put-codes that resolve, with no deferral', async () => {
       serveBulk();
       const { result, structured } = await call(hundred);
 
-      expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(BUDGET);
-      const returned = structured.works.map((w) => w.putCode);
-      expect(returned.length).toBeGreaterThan(0);
-      expect(returned.length).toBeLessThan(100);
+      // Upstream order is kept: the fake endpoint answers in reverse request order.
+      expect(structured.works.map((w) => w.putCode)).toEqual(hundred.toReversed());
       expect(structured.errors).toEqual([]);
-      // Records are kept in upstream order; what is deferred is the rest, in request order.
-      expect(returned).toEqual(hundred.toReversed().slice(0, returned.length));
-      expect(structured.deferredPutCodes).toEqual(hundred.slice(0, 100 - returned.length));
-      expect(structured.notice).toBe(
-        `Adding the next record would exceed the 64,000-byte response budget, so ${100 - returned.length} put-codes were deferred. Call orcid_get_work_detail again with deferredPutCodes as put_codes to fetch them.`,
-      );
-
+      expect(structured).not.toHaveProperty('deferredPutCodes');
+      expect(structured).not.toHaveProperty('notice');
+      // ~2.2 KB per record: well past what a 64,000-byte cut would have admitted.
+      expect(bytesOf(result.structuredContent)).toBeGreaterThan(200_000);
       const text = textOf(result);
-      expect(text).toContain(`> ${structured.notice}`);
-      expect(text).toContain(`**Deferred put-codes:** ${structured.deferredPutCodes!.join(', ')}`);
+      expect(text).toContain('**Works resolved:** 100 | **Errors:** 0');
+      expect(text.match(/^## Work \d+$/gm)).toHaveLength(100);
+      expect(text).not.toContain('Deferred');
+      expect(mockGetWorkDetails).toHaveBeenCalledTimes(1);
     });
 
-    it('resolves the rest when re-called with deferredPutCodes, each put-code exactly once', async () => {
-      serveBulk();
-      const resolved: number[] = [];
-      let pending: number[] | undefined = hundred;
-      let calls = 0;
-      while (pending) {
-        const { result, structured } = await call(pending);
-        expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(BUDGET);
-        resolved.push(...structured.works.map((w) => w.putCode));
-        pending = structured.deferredPutCodes;
-        calls++;
-      }
-
-      expect(resolved).toHaveLength(100);
-      expect(resolved.toSorted((a, b) => a - b)).toEqual(hundred);
-      expect(calls).toBeGreaterThan(1);
-    });
-
-    it('returns one record alone when it by itself exceeds the budget', async () => {
+    it('returns a record over 100 KB beside the rest of the batch', async () => {
       // 300_002 comes back first from the fake endpoint.
       serveBulk((code) => (code === 300_002 ? 140_000 : 1_800));
-      const { result, structured } = await call(hundred.slice(0, 3));
+      const { structured } = await call(hundred.slice(0, 3));
 
-      expect(structured.works.map((w) => w.putCode)).toEqual([300_002]);
-      expect(structured.deferredPutCodes).toEqual([300_000, 300_001]);
-      expect(bytesOf(result.structuredContent)).toBeGreaterThan(BUDGET);
-      // The notice stays true when the one admitted record alone overflowed the budget.
+      expect(structured.works.map((w) => w.putCode)).toEqual([300_002, 300_001, 300_000]);
+      expect(structured).not.toHaveProperty('deferredPutCodes');
+      expect(structured).not.toHaveProperty('notice');
+    });
+
+    it('defers only the codes past the 100-code fetch cap, in request order', async () => {
+      serveBulk();
+      const codes = [...hundred, 400_001, 400_000];
+      const { result, structured } = await call(codes);
+
+      expect(structured.works).toHaveLength(100);
+      expect(structured.deferredPutCodes).toEqual([400_001, 400_000]);
       expect(structured.notice).toBe(
-        'Adding the next record would exceed the 64,000-byte response budget, so 2 put-codes were deferred. Call orcid_get_work_detail again with deferredPutCodes as put_codes to fetch them.',
+        'Requested 102 raw put-codes (102 distinct); effective fetch cap 100 distinct put-codes in one request; 2 put-codes deferred by the input cap.',
       );
-    });
-
-    it('keeps the whole response under 130,000 bytes when the text outweighs the structured records', async () => {
-      // Untitled records whose contributors carry no field: `{}` in JSON, `- (unnamed)` in text.
-      // 100 contributors is the most a record keeps whole (#52), so each stays uncut.
-      mockGetWorkDetails.mockImplementation(async (_id: string, putCodes: number[]) =>
-        putCodes.map((putCode) => ({
-          type: 'work',
-          detail: {
-            putCode,
-            externalIds: [],
-            contributors: Array.from({ length: 100 }, () => ({})),
-            sources: [],
-          },
-        })),
-      );
-      const { result, structured } = await call(hundred);
-
-      const textBytes = Buffer.byteLength(textOf(result));
-      expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(BUDGET);
-      expect(bytesOf(result.structuredContent) + textBytes).toBeLessThan(130_000);
-      expect(structured.deferredPutCodes).toHaveLength(100 - structured.works.length);
-    });
-
-    it('charges the quoted abstract, so the quote prefix can defer a record (#63)', async () => {
-      // A one-character line costs 3 JSON bytes (`a\n`) but 4 rendered bytes (`> a` and its
-      // newline): two records fit the budget as JSON or as unquoted text, not as quoted text.
-      const abstract = Array.from({ length: 9_000 }, () => 'a').join('\n');
-      mockGetWorkDetails.mockResolvedValueOnce(
-        [1, 2].map((putCode) => ({
-          type: 'work',
-          detail: { putCode, abstract, externalIds: [], contributors: [], sources: [] },
-        })),
-      );
-      const { result, structured } = await call([1, 2]);
-
-      expect(structured.works.map((w) => w.putCode)).toEqual([1]);
-      expect(structured.deferredPutCodes).toEqual([2]);
-      expect(Buffer.byteLength(textOf(result))).toBeLessThanOrEqual(BUDGET);
-      expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(BUDGET);
+      const text = textOf(result);
+      expect(text).toContain(`> ${structured.notice}`);
+      expect(text).toContain('**Deferred put-codes:** 400001, 400000');
+      expect(mockGetWorkDetails.mock.calls[0]?.[1]).toEqual(hundred);
     });
 
     describe('a repeated put-code (#49)', () => {
@@ -927,49 +954,27 @@ describe('orcidGetWorkDetail', () => {
         expect(text).not.toContain('not a valid put code');
       });
 
-      it('resolves each put-code once in a batch that fits', async () => {
+      it('resolves each put-code once in a batch', async () => {
         serveBulk(() => 25_000);
         const [a, b] = hundred;
-        const { result, structured } = await call([a!, b!, a!]);
+        const { structured } = await call([a!, b!, a!]);
 
         expect(structured.works.map((w) => w.putCode)).toEqual([b, a]);
         expect(structured.errors).toEqual([]);
         expect(structured).not.toHaveProperty('deferredPutCodes');
-        expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(BUDGET);
       });
 
-      it('is neither deferred nor an error in a cut batch when its record was returned', async () => {
-        // Two ~25 KB records fit, the third does not; the fake endpoint returns c, b, a.
-        serveBulk(() => 25_000);
-        const [a, b, c] = hundred;
-        const { structured } = await call([a!, b!, c!, c!]);
-
-        expect(structured.works.map((w) => w.putCode)).toEqual([c, b]);
-        expect(structured.errors).toEqual([]);
-        expect(structured.deferredPutCodes).toEqual([a]);
-      });
-
-      it('is listed once when its record is deferred', async () => {
-        serveBulk(() => 25_000);
-        const [a, b, c] = hundred;
-        const { structured } = await call([a!, a!, b!, c!, a!]);
+      it('is listed once when the fetch cap defers it', async () => {
+        serveBulk();
+        const extra = 400_000;
+        const { structured } = await call([...hundred, extra, hundred[0]!, extra]);
 
         expect(structured.errors).toEqual([]);
-        expect(structured.deferredPutCodes).toEqual([a]);
+        expect(structured.deferredPutCodes).toEqual([extra]);
         expect(structured.notice).toBe(
-          'Adding the next record would exceed the 64,000-byte response budget, so 1 put-code was deferred. Call orcid_get_work_detail again with deferredPutCodes as put_codes to fetch it.',
+          'Requested 103 raw put-codes (101 distinct); effective fetch cap 100 distinct put-codes in one request; 1 put-codes deferred by the input cap.',
         );
       });
-    });
-
-    it('adds no deferral fields when the whole batch fits', async () => {
-      serveBulk();
-      const { result, structured } = await call(hundred.slice(0, 5));
-
-      expect(structured.works).toHaveLength(5);
-      expect(structured).not.toHaveProperty('deferredPutCodes');
-      expect(structured).not.toHaveProperty('notice');
-      expect(textOf(result)).not.toContain('Deferred');
     });
   });
 
@@ -978,7 +983,11 @@ describe('orcidGetWorkDetail', () => {
   // ---------------------------------------------------------------------------
 
   describe('per-record contributor and citation caps (#52)', () => {
-    const BUDGET = 64_000;
+    /**
+     * Ceiling on one capped large-collaboration record per surface. Uncapped, the 5,246-author
+     * record below runs to hundreds of kilobytes; capped, its size tracks its other fields.
+     */
+    const CAPPED_RECORD_MAX = 16_000;
     const OWNER = '0000-0003-4643-515X';
     const bytesOf = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
     const textOf = (result: { content: { type: string; text?: string }[] }) =>
@@ -1039,7 +1048,7 @@ describe('orcidGetWorkDetail', () => {
       mockGetWorkDetails.mockReset();
     });
 
-    it("keeps the first 100 contributors plus the owner's entry and fits both surfaces", async () => {
+    it("keeps the first 100 contributors plus the owner's entry, bounding the record", async () => {
       const source = contributorsOf(5_246, [2_091]);
       const { result, structured, text } = await call(OWNER, [workWith(73_747_988, source)]);
 
@@ -1053,8 +1062,8 @@ describe('orcidGetWorkDetail', () => {
       expect(work.contributorsTruncated).toBe(true);
       expect(work).not.toHaveProperty('citationOmitted');
 
-      expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(BUDGET);
-      expect(Buffer.byteLength(text)).toBeLessThanOrEqual(BUDGET);
+      expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(CAPPED_RECORD_MAX);
+      expect(Buffer.byteLength(text)).toBeLessThanOrEqual(CAPPED_RECORD_MAX);
       expect(text).toContain('\n**Contributors (first 100 of 5,246, plus the record owner):**\n');
       expect(text).toContain(`\n- Author2091, A. — author (additional) [${OWNER}]`);
       expect(text).not.toContain('- Author100, A.');
@@ -1070,7 +1079,7 @@ describe('orcidGetWorkDetail', () => {
     });
 
     it('returns two capped large-collaboration records together with no deferral', async () => {
-      const { result, structured, text } = await call(OWNER, [
+      const { structured } = await call(OWNER, [
         workWith(72_709_805, contributorsOf(3_084, [1_500])),
         workWith(73_747_988, contributorsOf(5_246, [2_091])),
       ]);
@@ -1080,8 +1089,6 @@ describe('orcidGetWorkDetail', () => {
       expect(structured.works.map((work) => work.contributors.length)).toEqual([101, 101]);
       expect(structured).not.toHaveProperty('deferredPutCodes');
       expect(structured).not.toHaveProperty('notice');
-      expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(BUDGET);
-      expect(Buffer.byteLength(text)).toBeLessThanOrEqual(BUDGET);
     });
 
     it('drops a citation over 8,192 bytes and keeps exactly 100 contributors when none is the owner', async () => {
@@ -1106,7 +1113,7 @@ describe('orcidGetWorkDetail', () => {
       );
       expect(text).not.toContain('**Citation (');
       expect(text).not.toContain('@article{Abbott');
-      expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(BUDGET);
+      expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(CAPPED_RECORD_MAX);
     });
 
     it('leaves exactly 100 contributors whole and cuts 101', async () => {
@@ -1177,38 +1184,19 @@ describe('orcidGetWorkDetail', () => {
       }
     });
 
-    it('pages capped records through the budget, each put-code exactly once', async () => {
+    it('returns a batch of capped records in one call, each put-code exactly once', async () => {
       const codes = Array.from({ length: 12 }, (_, i) => 500_000 + i);
-      mockGetWorkDetails.mockImplementation(async (_id: string, putCodes: number[]) =>
-        putCodes.map((code) => ({
-          type: 'work',
-          detail: workWith(code, contributorsOf(5_000, [4_000])),
-        })),
+      const { structured } = await call(
+        OWNER,
+        codes.map((code) => workWith(code, contributorsOf(5_000, [4_000]))),
       );
 
-      const resolved: number[] = [];
-      let pending: number[] | undefined = codes;
-      let calls = 0;
-      while (pending) {
-        const result = await runToolContract(orcidGetWorkDetail, {
-          orcid_id: OWNER,
-          put_codes: pending,
-        });
-        const structured = result.structuredContent as CappedResult;
-        expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(BUDGET);
-        expect(Buffer.byteLength(textOf(result))).toBeLessThanOrEqual(BUDGET);
-        expect(structured.works.length).toBeGreaterThan(1);
-        for (const work of structured.works) {
-          expect(work.contributors).toHaveLength(101);
-          expect(work.contributorCount).toBe(5_000);
-        }
-        resolved.push(...structured.works.map((work) => work.putCode));
-        pending = structured.deferredPutCodes;
-        calls++;
+      expect(structured.works.map((work) => work.putCode)).toEqual(codes);
+      for (const work of structured.works) {
+        expect(work.contributors).toHaveLength(101);
+        expect(work.contributorCount).toBe(5_000);
       }
-
-      expect(resolved.toSorted((a, b) => a - b)).toEqual(codes);
-      expect(calls).toBeGreaterThan(1);
+      expect(structured).not.toHaveProperty('deferredPutCodes');
     });
   });
 });

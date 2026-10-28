@@ -1,7 +1,7 @@
 /**
  * @fileoverview Resource for injecting a researcher's works list from ORCID as
- * stable inline context into prompts. Returns a compact, capped page of the most
- * recent works plus the total count; the orcid_get_works tool paginates the full
+ * stable inline context into prompts. Returns the first 25 works in ORCID order
+ * plus the total count; the orcid_get_works tool paginates the full
  * list. DOIs and PMIDs are ready for Crossref/PubMed chaining.
  * @module mcp-server/resources/definitions/researcher-works.resource
  */
@@ -9,7 +9,12 @@
 import { resource, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { isValidOrcidId, orcidIdParamSchema } from '@/services/orcid/orcid-id.js';
-import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
+import {
+  getOrcidService,
+  normalizeOrcidId,
+  type RecordResult,
+} from '@/services/orcid/orcid-service.js';
+import type { Work } from '@/services/orcid/types.js';
 
 /**
  * Cap on works returned inline — the resource is compact prompt context, not an
@@ -42,7 +47,10 @@ export const researcherWorksResource = resource('orcid://researcher/{orcid_id}/w
         z
           .object({
             title: z.string().optional().describe('Work title.'),
-            workType: z.string().optional().describe('Work type (journal-article, dataset, etc.).'),
+            workType: z
+              .string()
+              .optional()
+              .describe("Work type in ORCID's vocabulary (journal-article, data-set, etc.)."),
             publicationDate: z.string().optional().describe('Publication date.'),
             journalTitle: z.string().optional().describe('Journal or container title.'),
             externalIds: z
@@ -93,9 +101,9 @@ export const researcherWorksResource = resource('orcid://researcher/{orcid_id}/w
 
     ctx.log.debug('orcid-researcher-works resource', { orcidId: bareId });
 
-    let works: Awaited<ReturnType<typeof service.getWorks>>;
+    let record: RecordResult<Work[]>;
     try {
-      works = await service.getWorks(bareId, ctx);
+      record = await service.getWorks(bareId, ctx);
     } catch (err) {
       if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
         throw ctx.fail(
@@ -107,10 +115,12 @@ export const researcherWorksResource = resource('orcid://researcher/{orcid_id}/w
       }
       throw err;
     }
+    // A deprecated iD is served from the primary record it was merged into; report that iD.
+    const { orcidId, data: works } = record;
 
     return {
-      orcidId: bareId,
-      orcidUri: `https://orcid.org/${bareId}`,
+      orcidId,
+      orcidUri: `https://orcid.org/${orcidId}`,
       workCount: works.length,
       works: works.slice(0, MAX_WORKS).map((w) => ({
         ...(w.title && { title: w.title }),

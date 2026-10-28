@@ -396,15 +396,8 @@ describe('orcidSearchResearchers — rendered page shape (characterization)', ()
   });
 });
 
-describe('orcidSearchResearchers — response byte budget (#54)', () => {
-  const BUDGET = 64_000;
+describe('orcidSearchResearchers — page size (#79)', () => {
   const bytesOf = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
-  const textBytes = (result: { content: readonly { type: string }[] }) =>
-    Buffer.byteLength(
-      result.content
-        .flatMap((block) => ('text' in block && typeof block.text === 'string' ? [block.text] : []))
-        .join(''),
-    );
 
   type Researcher = {
     orcidId: string;
@@ -451,7 +444,7 @@ describe('orcidSearchResearchers — response byte budget (#54)', () => {
     notice?: string;
   };
 
-  it('cuts a 1,000-row page to fit both surfaces and continues exactly where it stopped', async () => {
+  it('returns rows 1,000 results when numFound exceeds 1,000, and continues at 1,000', async () => {
     const records = registry(2_500);
     serve(records);
 
@@ -462,62 +455,50 @@ describe('orcidSearchResearchers — response byte budget (#54)', () => {
     const page1 = first.structuredContent as Page;
 
     expect(first.isError).toBeFalsy();
-    expect(bytesOf(first.structuredContent)).toBeLessThanOrEqual(BUDGET);
-    expect(textBytes(first)).toBeLessThanOrEqual(BUDGET);
-    expect(page1.rows).toBe(page1.results.length);
-    expect(page1.rows).toBeGreaterThan(0);
-    expect(page1.rows).toBeLessThan(1000);
-    expect(page1.nextStart).toBe(page1.start + page1.rows);
-    expect(page1.numFound).toBe(2_500);
+    expect(page1).toMatchObject({ rows: 1000, start: 0, nextStart: 1000, numFound: 2_500 });
     expect(page1.truncated).toBe(false);
-    expect(contentText(first)).toContain(`**Returned:** ${page1.rows} | **Offset:** 0`);
+    expect(page1).not.toHaveProperty('notice');
+    expect(page1.results.map((r) => r.orcidId)).toEqual(
+      records.slice(0, 1000).map((r) => r.orcidId),
+    );
+    expect(contentText(first)).toContain(
+      '**Returned:** 1000 | **Offset:** 0\n**Next Start:** 1000',
+    );
+    expect(contentText(first).match(/^### /gm)).toHaveLength(1000);
 
-    const second = await runToolContract(orcidSearchResearchers, {
+    const last = await runToolContract(orcidSearchResearchers, {
       family_name: 'Smith',
       rows: 1000,
-      start: page1.nextStart,
+      start: 2000,
     });
-    const page2 = second.structuredContent as Page;
-
-    expect(bytesOf(second.structuredContent)).toBeLessThanOrEqual(BUDGET);
-    expect(textBytes(second)).toBeLessThanOrEqual(BUDGET);
-    const ids1 = page1.results.map((r) => r.orcidId);
-    const ids2 = page2.results.map((r) => r.orcidId);
-    expect(ids1.filter((id) => ids2.includes(id))).toEqual([]);
-    // Together the two pages are one contiguous read of the upstream order.
-    expect([...ids1, ...ids2]).toEqual(
-      records.slice(0, page1.rows + page2.rows).map((r) => r.orcidId),
-    );
-    expect(page2.nextStart).toBe(page2.start + page2.rows);
+    const page3 = last.structuredContent as Page;
+    expect(page3.rows).toBe(500);
+    expect(page3).not.toHaveProperty('nextStart');
   });
 
-  it('holds the text surface to the budget when records render as large as their JSON', async () => {
-    // Name-less records render their iD as the heading, so text and JSON run neck and neck.
-    serve(registry(1_000, true), 24_632);
+  it.each([1001, 10000])(
+    'asks ORCID for 1,000 rows when %i are requested, with a notice naming both sizes',
+    async (rows) => {
+      serve(registry(2_500));
 
-    const result = await runToolContract(orcidSearchResearchers, {
-      query: 'email:*example.edu',
-      rows: 1000,
-    });
-    const page = result.structuredContent as Page;
+      const result = await runToolContract(orcidSearchResearchers, { family_name: 'Smith', rows });
+      const page = result.structuredContent as Page;
 
-    expect(bytesOf(result.structuredContent)).toBeLessThanOrEqual(BUDGET);
-    expect(textBytes(result)).toBeLessThanOrEqual(BUDGET);
-    expect(page.rows).toBeLessThan(1000);
-    expect(page.nextStart).toBe(page.rows);
-    // The ceiling notice still rides the cut page, and truncated keeps its ceiling meaning.
-    expect(page.truncated).toBe(true);
-    expect(page.notice).toContain('10,000');
-  });
+      expect(mockExpandedSearch.mock.calls.at(-1)?.[0]).toMatchObject({ rows: 1000 });
+      const notice = `Requested rows ${rows}; effective cap 1000 results.`;
+      expect(page).toMatchObject({ rows: 1000, nextStart: 1000, notice });
+      expect(contentText(result)).toContain(`> ${notice}`);
+    },
+  );
 
-  it('always returns the first record, however large', async () => {
+  it('returns an oversized first record inside a full page instead of ending the page at it', async () => {
     serve([
       {
         orcidId: '0000-0000-0000-0001',
         familyNames: 'Smith',
         otherNames: [],
         emails: [],
-        // ~100 KB on its own — past the budget before any other record is considered.
+        // ~85 KB on its own: past the 64,000 bytes that once ended a page after it.
         institutionNames: Array.from(
           { length: 2_500 },
           (_, k) => `Institution number ${k} of many`,
@@ -529,14 +510,13 @@ describe('orcidSearchResearchers — response byte budget (#54)', () => {
     const result = await runToolContract(orcidSearchResearchers, { family_name: 'Smith' });
     const page = result.structuredContent as Page;
 
-    expect(bytesOf(result.structuredContent)).toBeGreaterThan(BUDGET);
-    expect(page.rows).toBe(1);
+    expect(bytesOf(result.structuredContent)).toBeGreaterThan(64_000);
+    expect(page.rows).toBe(6);
     expect(page.results[0]?.orcidId).toBe('0000-0000-0000-0001');
-    expect(page.nextStart).toBe(1);
+    expect(page).not.toHaveProperty('nextStart');
   });
 
-  it('omits nextStart when a cut page reaches neither more matches nor a legal offset', async () => {
-    // A cut at start 9,990 still continues at most to the 10,000 ceiling.
+  it('omits nextStart when the page ends past the 10,000-offset ceiling', async () => {
     const records = registry(11_000);
     serve(records, 24_632);
 
@@ -547,9 +527,10 @@ describe('orcidSearchResearchers — response byte budget (#54)', () => {
     });
     const page = result.structuredContent as Page;
 
-    expect(page.rows).toBeLessThan(1000);
-    expect(page.rows).toBeGreaterThan(10);
+    expect(page.rows).toBe(1000);
     expect(page.nextStart).toBeUndefined();
+    expect(page.truncated).toBe(true);
+    expect(page.notice).toContain('10,000');
   });
 });
 

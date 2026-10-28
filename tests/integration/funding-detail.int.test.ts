@@ -70,11 +70,12 @@ describe('selected funding detail', () => {
           putCode: 2329252,
           amount: { value: '330000.0', currency: 'USD' },
           description: award['short-description'],
-          descriptionOffset: 0,
-          descriptionLength: Array.from(award['short-description']).length,
         },
       ],
     });
+    const record = (result.structuredContent as { funding: Record<string, unknown>[] }).funding[0];
+    expect(record).not.toHaveProperty('descriptionOffset');
+    expect(record).not.toHaveProperty('descriptionLength');
     expect(text(result)).toContain('330000.0');
     expect(result.structuredContent).toMatchObject({
       funding: [{ sources: [{ name: 'ProposalCentral', selfAsserted: false }] }],
@@ -116,8 +117,11 @@ describe('selected funding detail', () => {
     },
   );
 
-  it('pages deposited code points without losing CRLF and repeats metadata within both budgets', async () => {
-    const description = '😀é\r\n山"\\'.repeat(18000);
+  it('returns a 5,000-code-point description whole, CRLF included, on both surfaces', async () => {
+    // ORCID's schema caps short-description at 5,000 characters; four-byte code points and
+    // JSON-escaped characters make this the heaviest shape a schema-valid deposit can take.
+    const description = '😀é\r\n山"\\😀'.repeat(625);
+    expect(Array.from(description)).toHaveLength(5_000);
     const fetchMock = vi.fn(async () =>
       Response.json({
         'put-code': 1,
@@ -127,38 +131,24 @@ describe('selected funding detail', () => {
       }),
     );
     vi.stubGlobal('fetch', fetchMock);
-    let offset = 0;
-    let reconstructed = '';
-    let pages = 0;
-    for (;;) {
-      const result = await runToolContract(orcidGetFunding, {
-        orcid_id: id,
-        put_code: 1,
-        description_offset: offset,
-      });
-      expect(result.isError).toBeFalsy();
-      const parsed = orcidGetFunding.output.parse(result.structuredContent);
-      const record = parsed.funding[0]!;
-      expect(record.amount?.value).toBe('0.0000000000000000001');
-      expect(record.descriptionOffset).toBe(offset);
-      expect(record.descriptionLength).toBe(Array.from(description).length);
-      expect(text(result)).toContain(JSON.stringify(record.description));
-      expect(Buffer.byteLength(JSON.stringify(result.structuredContent))).toBeLessThanOrEqual(
-        64000,
-      );
-      expect(Buffer.byteLength(JSON.stringify(result.content))).toBeLessThanOrEqual(64000);
-      reconstructed += record.description;
-      pages++;
-      if (record.nextDescriptionOffset === undefined) break;
-      expect(record.nextDescriptionOffset).toBeGreaterThan(offset);
-      offset = record.nextDescriptionOffset;
-    }
-    expect(pages).toBeGreaterThan(2);
-    expect(reconstructed).toBe(description);
+    const result = await runToolContract(orcidGetFunding, { orcid_id: id, put_code: 1 });
+    expect(result.isError).toBeFalsy();
+    const record = orcidGetFunding.output.parse(result.structuredContent).funding[0]!;
+    expect(record).toEqual({
+      putCode: 1,
+      title: 'Award',
+      description,
+      amount: { value: '0.0000000000000000001', currency: 'USD' },
+      grantNumbers: [],
+      sources: [],
+    });
+    expect(text(result)).toContain(`**Description (JSON string):** ${JSON.stringify(description)}`);
+    expect(text(result)).not.toContain('Description offset');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it.each([undefined, null, '', 'short'])(
-    'terminates missing/empty/past-end description %s',
+    'keeps a missing, empty, or short description as deposited: %s',
     async (description) => {
       vi.stubGlobal(
         'fetch',
@@ -166,36 +156,39 @@ describe('selected funding detail', () => {
           Response.json({ 'put-code': 1, 'short-description': description, amount: null }),
         ),
       );
-      const result = await runToolContract(orcidGetFunding, {
-        orcid_id: id,
-        put_code: 1,
-        description_offset: 99,
-      });
+      const result = await runToolContract(orcidGetFunding, { orcid_id: id, put_code: 1 });
       expect(result.isError).toBeFalsy();
       const record = orcidGetFunding.output.parse(result.structuredContent).funding[0]!;
-      expect(record.nextDescriptionOffset).toBeUndefined();
       expect(record.amount).toBeUndefined();
-      expect(record.description).toBe(description == null ? undefined : '');
+      expect(record.description).toBe(description ?? undefined);
+      if (description == null) expect(text(result)).not.toContain('**Description');
+      else
+        expect(text(result)).toContain(
+          `**Description (JSON string):** ${JSON.stringify(description)}`,
+        );
     },
   );
 
-  it('discloses unavoidable metadata overflow and advances at least one code point', async () => {
+  it('returns oversized award metadata whole, with no overflow field', async () => {
+    const title = 'a'.repeat(64_000);
     vi.stubGlobal(
       'fetch',
       vi.fn(async () =>
         Response.json({
           'put-code': 1,
-          title: { title: { value: 'a'.repeat(64000) } },
+          title: { title: { value: title } },
           'short-description': '😀ab',
         }),
       ),
     );
     const result = await runToolContract(orcidGetFunding, { orcid_id: id, put_code: 1 });
     expect(result.isError).toBeFalsy();
-    const parsed = orcidGetFunding.output.parse(result.structuredContent);
-    expect(parsed.budgetOverflow).toContain('64,000');
-    expect(parsed.funding[0]).toMatchObject({ description: '😀', nextDescriptionOffset: 1 });
-    expect(text(result)).toContain(parsed.budgetOverflow!);
+    expect(result.structuredContent).not.toHaveProperty('budgetOverflow');
+    expect(result.structuredContent).toMatchObject({
+      funding: [{ title, description: '😀ab' }],
+    });
+    expect(text(result)).toContain(title);
+    expect(text(result)).not.toContain('Budget exception');
   });
 
   it.each([{ value: '0' }, { 'currency-code': 'JPY' }, { value: null, 'currency-code': null }])(
@@ -218,44 +211,23 @@ describe('selected funding detail', () => {
     },
   );
 
-  it('discloses metadata overflow even without description text', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () =>
-        Response.json({ 'put-code': 1, title: { title: { value: 'a'.repeat(64000) } } }),
-      ),
-    );
-    const result = await runToolContract(orcidGetFunding, { orcid_id: id, put_code: 1 });
-    const parsed = orcidGetFunding.output.parse(result.structuredContent);
-    expect(parsed.budgetOverflow).toContain('64,000');
-    expect(parsed.funding[0]?.nextDescriptionOffset).toBeUndefined();
-    expect(text(result)).toContain(parsed.budgetOverflow!);
-  });
-
   it.each([
+    { description_offset: 0, put_code: 1 },
     { description_offset: 0 },
-    { description_offset: -1, put_code: 1 },
-    { description_offset: 1.2, put_code: 1 },
     { put_code: 0 },
     { put_code: Number.MAX_SAFE_INTEGER + 1 },
-  ])('rejects invalid selection %# before I/O', async (args) => {
+  ])('rejects invalid selection %j before I/O', async (args) => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
-    const result = await runToolContract(orcidGetFunding, { orcid_id: id, ...args });
+    // description_offset is no longer part of the input type; the call is what a stale client sends.
+    const result = await runToolContract(orcidGetFunding, { orcid_id: id, ...args } as {
+      orcid_id: string;
+    });
     expect(result.isError).toBe(true);
     expect(fetchMock).not.toHaveBeenCalled();
-    if ('description_offset' in args && !('put_code' in args))
-      expect(result.structuredContent).toMatchObject({
-        error: {
-          data: {
-            reason: 'detail_required',
-            recovery: { hint: expect.stringContaining('put_code') },
-          },
-        },
-      });
-    else
-      expect(result.structuredContent).toMatchObject({
-        error: { code: JsonRpcErrorCode.InvalidParams },
-      });
+    expect(result.structuredContent).toMatchObject({
+      error: { code: JsonRpcErrorCode.InvalidParams, data: { reason: 'invalid_arguments' } },
+    });
+    if ('description_offset' in args) expect(text(result)).toContain('description_offset');
   });
 });

@@ -6,11 +6,16 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { deprecatedIdNotice } from '@/mcp-server/tools/deprecated-id-notice.js';
+import { joinNotices } from '@/mcp-server/tools/notices.js';
 import { SourceSchema, sourcesText } from '@/mcp-server/tools/record-sources.js';
-import { jsonBytes, RESPONSE_BYTE_BUDGET } from '@/mcp-server/tools/response-budget.js';
 import { singleLine } from '@/mcp-server/tools/third-party-text.js';
 import { orcidIdSchema } from '@/services/orcid/orcid-id.js';
-import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
+import {
+  getOrcidService,
+  normalizeOrcidId,
+  type RecordResult,
+} from '@/services/orcid/orcid-service.js';
 import type { FundingRecord } from '@/services/orcid/types.js';
 
 const FundingOutputSchema = z.object({
@@ -20,12 +25,6 @@ const FundingOutputSchema = z.object({
     .enum(['summary', 'detail'])
     .default('summary')
     .describe('Grouped summaries or one selected deposit.'),
-  budgetOverflow: z
-    .string()
-    .optional()
-    .describe(
-      'Explicit exception when metadata or one indivisible code point exceeds the 64,000-byte detail budget.',
-    ),
   fundingCount: z
     .number()
     .describe('Number of funding items returned: one per group in summary, one deposit in detail.'),
@@ -42,20 +41,8 @@ const FundingOutputSchema = z.object({
           description: z
             .string()
             .optional()
-            .describe('Exact deposited description page, including its original line endings.'),
-          descriptionOffset: z
-            .number()
-            .optional()
-            .describe('Starting Unicode code-point offset of this description page.'),
-          descriptionLength: z
-            .number()
-            .optional()
-            .describe('Full deposited description length in Unicode code points.'),
-          nextDescriptionOffset: z
-            .number()
-            .optional()
             .describe(
-              'First omitted code point; pass as description_offset with the same put_code.',
+              'Deposited description, whole and exact, including its original line endings. Detail view only.',
             ),
           amount: z
             .object({
@@ -135,7 +122,7 @@ const FundingOutputSchema = z.object({
 export const orcidGetFunding = tool('orcid_get_funding', {
   title: 'Get ORCID Researcher Funding',
   description:
-    'List funding for an ORCID researcher, or supply a summary putCode as put_code to fetch one deposited award. Summary returns one preferred record per grant group with all sources and distinct periods. Detail returns that deposit alone with its own source, optional exact decimal amount and currency, URL, and deposited description. Continue description text by passing nextDescriptionOffset as description_offset with the same put_code; offsets count Unicode code points. Complete detail surfaces fit 64,000 bytes, with explicit metadata or single-code-point overflow exceptions. Funding records are sparse; absence does not imply no funding.',
+    'List funding for an ORCID researcher, or supply a summary putCode as put_code to fetch one deposited award. Summary returns one preferred record per grant group with all sources and distinct periods. Detail returns that deposit alone with its own source, optional exact decimal amount and currency, URL, and its whole deposited description (ORCID caps it at 5,000 characters). Funding records are sparse; absence does not imply no funding.',
   annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
@@ -147,15 +134,6 @@ export const orcidGetFunding = tool('orcid_get_funding', {
       .safe()
       .optional()
       .describe('Selected deposit putCode from a funding summary. Omit to list grouped summaries.'),
-    description_offset: z
-      .number()
-      .int()
-      .nonnegative()
-      .safe()
-      .optional()
-      .describe(
-        'Unicode code-point offset into the deposited description, default 0; requires put_code.',
-      ),
   }),
 
   output: FundingOutputSchema,
@@ -167,18 +145,11 @@ export const orcidGetFunding = tool('orcid_get_funding', {
       .string()
       .optional()
       .describe(
-        'Note when no funding is found — absence of records does not mean absence of funding.',
+        'Note when no funding is found — absence of records does not mean absence of funding — or when a deprecated iD was served from its primary iD.',
       ),
   },
 
   errors: [
-    {
-      reason: 'detail_required',
-      code: JsonRpcErrorCode.InvalidParams,
-      when: 'description_offset is provided without a funding selector.',
-      recovery:
-        'Supply put_code from orcid_get_funding summaries to page a selected description, or omit description_offset.',
-    },
     {
       reason: 'funding_not_found',
       code: JsonRpcErrorCode.NotFound,
@@ -206,12 +177,11 @@ export const orcidGetFunding = tool('orcid_get_funding', {
     const service = getOrcidService();
     ctx.log.info('orcid_get_funding', { orcidId: input.orcid_id });
 
-    if (input.put_code === undefined && input.description_offset !== undefined)
-      throw ctx.fail('detail_required');
+    const requestedId = normalizeOrcidId(input.orcid_id);
     if (input.put_code !== undefined) {
-      let detail: FundingRecord;
+      let record: RecordResult<FundingRecord>;
       try {
-        detail = await service.getFundingDetail(input.orcid_id, input.put_code, ctx);
+        record = await service.getFundingDetail(input.orcid_id, input.put_code, ctx);
       } catch (error) {
         if (error instanceof McpError && error.code === JsonRpcErrorCode.NotFound)
           throw ctx.fail('funding_not_found');
@@ -219,70 +189,37 @@ export const orcidGetFunding = tool('orcid_get_funding', {
           throw ctx.fail('funding_inaccessible');
         throw error;
       }
-      const bareId = normalizeOrcidId(input.orcid_id);
-      const offset = input.description_offset ?? 0;
-      const { description, ...metadata } = detail;
-      const codePoints = description === undefined ? undefined : Array.from(description);
-      const remaining = codePoints?.slice(offset) ?? [];
-      const page = (count: number, budgetOverflow?: string): FundingResult => ({
+      const { orcidId: bareId, data: detail } = record;
+      const notice = deprecatedIdNotice(requestedId, bareId);
+      if (notice) ctx.enrich.notice(notice);
+      return {
         orcidId: bareId,
         orcidUri: `https://orcid.org/${bareId}`,
-        view: 'detail',
+        view: 'detail' as const,
         fundingCount: 1,
-        ...(budgetOverflow && { budgetOverflow }),
-        funding: [
-          {
-            ...metadata,
-            ...(codePoints !== undefined && {
-              description: remaining.slice(0, count).join(''),
-              descriptionOffset: offset,
-              descriptionLength: codePoints.length,
-              ...(offset + count < codePoints.length && { nextDescriptionOffset: offset + count }),
-            }),
-          },
-        ],
-      });
-      const fits = (value: FundingResult) =>
-        jsonBytes(value) <= RESPONSE_BYTE_BUDGET &&
-        jsonBytes(renderFunding(value)) <= RESPONSE_BYTE_BUDGET;
-      if (fits(page(remaining.length))) return page(remaining.length);
-      let low = 0;
-      let high = remaining.length;
-      while (low < high) {
-        const middle = Math.ceil((low + high) / 2);
-        if (fits(page(middle))) low = middle;
-        else high = middle - 1;
-      }
-      if (low > 0) return page(low);
-      return page(
-        Math.min(remaining.length, 1),
-        remaining.length
-          ? 'Award metadata and one indivisible description code point exceed the 64,000-byte budget; one code point is returned to advance continuation.'
-          : 'Award metadata exceeds the 64,000-byte budget; no description text remains.',
-      );
+        funding: [detail],
+      };
     }
 
-    let records: FundingRecord[];
+    let record: RecordResult<FundingRecord[]>;
     try {
-      records = await service.getFundings(input.orcid_id, ctx);
+      record = await service.getFundings(input.orcid_id, ctx);
     } catch (err) {
       if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
-        throw ctx.fail(
-          'profile_not_found',
-          `ORCID iD ${normalizeOrcidId(input.orcid_id)} not found`,
-        );
+        throw ctx.fail('profile_not_found', `ORCID iD ${requestedId} not found`);
       }
       throw err;
     }
-    const bareId = normalizeOrcidId(input.orcid_id);
+    const { orcidId: bareId, data: records } = record;
 
     ctx.log.info('orcid_get_funding completed', { orcidId: bareId, fundingCount: records.length });
 
-    if (records.length === 0) {
-      ctx.enrich.notice(
+    const notice = joinNotices(
+      deprecatedIdNotice(requestedId, bareId),
+      records.length === 0 &&
         'No funding records found. Funding reaches ORCID from the researcher or from member organizations, and most records carry none. Absence does not imply no funding.',
-      );
-    }
+    );
+    if (notice) ctx.enrich.notice(notice);
 
     return {
       orcidId: bareId,
@@ -305,7 +242,6 @@ function renderFunding(result: FundingResult): { type: 'text'; text: string }[] 
     `**URI:** ${result.orcidUri}`,
     `**View:** ${result.view}`,
     `**Total Funding Records:** ${result.fundingCount}`,
-    ...(result.budgetOverflow ? [`**Budget exception:** ${result.budgetOverflow}`] : []),
   ];
 
   if (result.funding.length === 0) {
@@ -318,15 +254,8 @@ function renderFunding(result: FundingResult): { type: 'text'; text: string }[] 
     if (f.putCode !== undefined) lines.push(`**Put-code:** ${f.putCode}`);
     if (f.amount?.value !== undefined) lines.push(`**Amount:** ${f.amount.value}`);
     if (f.amount?.currency !== undefined) lines.push(`**Currency:** ${f.amount.currency}`);
-    if (f.description !== undefined) {
-      lines.push(
-        `**Description offset:** ${f.descriptionOffset}`,
-        `**Description length:** ${f.descriptionLength}`,
-        `**Description (JSON string):** ${JSON.stringify(f.description)}`,
-      );
-    }
-    if (f.nextDescriptionOffset !== undefined)
-      lines.push(`**Next description offset:** ${f.nextDescriptionOffset}`);
+    if (f.description !== undefined)
+      lines.push(`**Description (JSON string):** ${JSON.stringify(f.description)}`);
     if (f.type) lines.push(`**Type:** ${f.type}`);
     if (f.funder?.name) lines.push(`**Funder:** ${singleLine(f.funder.name)}`);
     if (f.funder?.city) lines.push(`**Funder City:** ${singleLine(f.funder.city)}`);

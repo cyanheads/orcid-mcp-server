@@ -42,9 +42,10 @@ describe('ORCID endpoint boundaries', () => {
       results: [],
       numFound: 0,
     });
-    expect(await service.getFundings(id, createMockContext())).toEqual([
-      { grantNumbers: [], sources: [] },
-    ]);
+    expect(await service.getFundings(id, createMockContext())).toEqual({
+      orcidId: id,
+      data: [{ grantNumbers: [], sources: [] }],
+    });
   });
 
   it.each(methods.map((call, index) => ({ call, index })))(
@@ -189,12 +190,15 @@ describe('ORCID endpoint boundaries', () => {
     );
     const service = new OrcidService(config, createInMemoryStorage());
     expect(await service.getPerson(id, createMockContext())).toMatchObject({
-      otherNames: [],
-      emails: [],
+      orcidId: id,
+      data: { otherNames: [], emails: [] },
     });
-    expect(await service.getWorkDetails(id, [1, 2], createMockContext())).toEqual([
-      { type: 'work', detail: { putCode: 1, externalIds: [], contributors: [], sources: [] } },
-      { type: 'error', putCode: 2, message: "'2' is not a valid put code" },
-    ]);
+    expect(await service.getWorkDetails(id, [1, 2], createMockContext())).toEqual({
+      orcidId: id,
+      data: [
+        { type: 'work', detail: { putCode: 1, externalIds: [], contributors: [], sources: [] } },
+        { type: 'error', putCode: 2, message: "'2' is not a valid put code" },
+      ],
+    });
   });
 });

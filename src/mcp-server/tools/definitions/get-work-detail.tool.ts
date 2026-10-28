@@ -1,33 +1,36 @@
 /**
  * @fileoverview Fetch full detail records for one or more ORCID works by their put-codes
- * using the bulk works endpoint. Records past the shared response byte budget are
- * deferred and named for a follow-up call.
+ * using the bulk works endpoint. Put-codes past the 100-code fetch cap, and any ORCID returns
+ * no result for, are named for a follow-up call.
  * @module mcp-server/tools/definitions/get-work-detail
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { deprecatedIdNotice } from '@/mcp-server/tools/deprecated-id-notice.js';
+import { joinNotices } from '@/mcp-server/tools/notices.js';
 import { SourceSchema, sourcesText } from '@/mcp-server/tools/record-sources.js';
-import {
-  countWithinBudget,
-  RESPONSE_BYTE_BUDGET,
-  recordCost,
-} from '@/mcp-server/tools/response-budget.js';
 import { blockquote, fence, singleLine } from '@/mcp-server/tools/third-party-text.js';
 import { orcidIdSchema } from '@/services/orcid/orcid-id.js';
-import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
+import {
+  getOrcidService,
+  normalizeOrcidId,
+  type RecordResult,
+} from '@/services/orcid/orcid-service.js';
 import type { BulkWorkResult, WorkDetail } from '@/services/orcid/types.js';
 
 /**
  * Contributors a record keeps whole. A longer list keeps this many, in upstream order, plus
- * every later entry carrying the requested iD, so one large-collaboration record (thousands of
- * authors) fits the response budget beside others.
+ * every later entry carrying the requested iD. A large-collaboration record lists thousands of
+ * authors (one ATLAS paper: 5,246, about 774 KB across both surfaces), so without the cut a
+ * single record could outweigh a whole batch; with it, a record's size tracks its own fields.
  */
 const CONTRIBUTOR_CAP = 100;
 
 /**
  * Largest deposited citation kept, in UTF-8 bytes. Some sources deposit BibTeX naming every
- * author; a cut citation would be invalid, so a longer one is left out whole.
+ * author (60,532 B for one LIGO paper), repeating the contributor list the cap above bounds. A
+ * cut citation would be invalid, so a longer one is left out whole; the DOI still resolves it.
  */
 const CITATION_MAX_BYTES = 8_192;
 
@@ -65,7 +68,7 @@ const WorkDetailSchema = z
     workType: z
       .string()
       .optional()
-      .describe('Work type (e.g. journal-article, dataset, software, preprint).'),
+      .describe('Work type (e.g. journal-article, data-set, software, preprint).'),
     publicationDate: z
       .string()
       .optional()
@@ -215,13 +218,6 @@ function toWorkRecord(d: WorkDetail, ownerId: string): WorkDetailRecord {
 
 type WorkError = { putCode?: number; message: string };
 
-/** One bulk entry in response order, before it is sorted into `works` or `errors`. */
-type WorkEntry = { kind: 'work'; record: WorkDetailRecord } | { kind: 'error'; record: WorkError };
-
-function deferredNotice(count: number): string {
-  return `Adding the next record would exceed the ${RESPONSE_BYTE_BUDGET.toLocaleString('en-US')}-byte response budget, so ${count} put-code${count === 1 ? ' was' : 's were'} deferred. Call orcid_get_work_detail again with deferredPutCodes as put_codes to fetch ${count === 1 ? 'it' : 'them'}.`;
-}
-
 /** Transient upstream codes the handler keeps, mapped to the outcome its message names. */
 const TRANSIENT_OUTCOMES = new Map<number, string>([
   [JsonRpcErrorCode.ServiceUnavailable, 'is unavailable'],
@@ -242,7 +238,7 @@ const WorkErrorSchema = z
 export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
   title: 'Get ORCID Work Details (Bulk)',
   description:
-    "Fetch full work details by put-code from orcid_get_works. Accepts 1–1,000 raw codes, deduplicates in first-occurrence order, and fetches the first 100 distinct codes in one request. Returns abstracts, contributors with CRediT roles, the record's external IDs (DOI, PMID, arXiv, ISBN, etc.), citation metadata, journal title, URL, and source provenance. A record listing more than 100 contributors keeps the first 100 plus the requested researcher's own entries, with contributorCount and contributorsTruncated; a citation over 8,192 bytes is left out and flagged by citationOmitted. Per-record errors are returned alongside successful works. Records are admitted under a 64,000-byte budget on each complete response surface. Every requested distinct code unsettled by an admitted work or identified error is listed in deferredPutCodes in request order, including input-cap, byte-budget, and absent-upstream-result deferrals; pass those codes in another call. Notices distinguish the causes; no automatic chunk fetching occurs.",
+    "Fetch full work details by put-code from orcid_get_works. Accepts 1–1,000 raw codes, deduplicates in first-occurrence order, and fetches the first 100 distinct codes in one request, returning every record ORCID sends. Returns abstracts, contributors with CRediT roles, the record's external IDs (DOI, PMID, arXiv, ISBN, etc.), citation metadata, journal title, URL, and source provenance. A record listing more than 100 contributors keeps the first 100 plus the requested researcher's own entries, with contributorCount and contributorsTruncated; a citation over 8,192 bytes is left out and flagged by citationOmitted. Per-record errors are returned alongside successful works. deferredPutCodes lists, in request order, the codes past the 100-code fetch cap and any ORCID returned no result for; pass them as put_codes in another call.",
   annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
@@ -252,7 +248,7 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
       .min(1)
       .max(1000)
       .describe(
-        'Array of 1–1,000 raw work put-codes from orcid_get_works. Deduplicated in first-occurrence order; at most 100 distinct codes are fetched once. Every unsettled code is returned in deferredPutCodes for another call, including input-cap and response-budget deferrals.',
+        'Array of 1–1,000 raw work put-codes from orcid_get_works. Deduplicated in first-occurrence order; the first 100 distinct codes are fetched and the rest return in deferredPutCodes. A record costs what its fields hold: 100 large-collaboration records, even with contributor lists cut to 100, exceed 1 MB.',
       ),
   }),
 
@@ -269,7 +265,7 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
       .array(z.number().describe('Deferred work put-code.'))
       .optional()
       .describe(
-        'Every requested distinct put-code unsettled by an admitted work or identified error, in request order: input-cap, response-budget, or absent upstream results. Pass as put_codes in another call. Omitted when all are settled.',
+        'Requested distinct put-codes no returned work or error settled, in request order: those past the 100-code fetch cap and any ORCID returned no result for. Pass as put_codes in another call. Omitted when all are settled.',
       ),
   }),
 
@@ -280,7 +276,7 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
       .string()
       .optional()
       .describe(
-        'Separate notices for input-cap, response-budget, and absent-upstream-result deferrals; call again with deferredPutCodes.',
+        'Deprecated-iD disclosure naming the primary iD, then separate notices for put-codes past the 100-code fetch cap and put-codes ORCID returned no result for; call again with deferredPutCodes.',
       ),
   },
 
@@ -302,7 +298,7 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
 
   async handler(input, ctx) {
     const service = getOrcidService();
-    const bareId = normalizeOrcidId(input.orcid_id);
+    const requestedId = normalizeOrcidId(input.orcid_id);
     // The bulk endpoint answers a repeated put-code with its record plus an invalid-put-code
     // error, so repeats are collapsed (first occurrence kept) before the request is sent.
     const requestedCodes = [...new Set(input.put_codes)];
@@ -311,12 +307,33 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
       requestedCodes.length > putCodes.length
         ? `Requested ${input.put_codes.length} raw put-codes (${requestedCodes.length} distinct); effective fetch cap 100 distinct put-codes in one request; ${requestedCodes.length - putCodes.length} put-codes deferred by the input cap.`
         : '';
-    ctx.log.info('orcid_get_work_detail', { orcidId: bareId, count: putCodes.length });
+    ctx.log.info('orcid_get_work_detail', { orcidId: requestedId, count: putCodes.length });
 
-    let results: BulkWorkResult[];
+    let record: RecordResult<BulkWorkResult[]>;
     try {
-      results = await service.getWorkDetails(input.orcid_id, putCodes, ctx);
+      record = await service.getWorkDetails(input.orcid_id, putCodes, ctx);
+      // ORCID answers the bulk endpoint for a deprecated iD with an invalid-put-code error per
+      // code instead of redirecting it. When no work resolves, /person (which does redirect)
+      // names the primary iD; a differing one gets the request again. A call that resolves any
+      // work makes no extra request. The probe is best-effort: when it fails for any reason but
+      // caller cancellation, the per-code errors already in hand are the answer.
+      if (!record.data.some((result) => result.type === 'work')) {
+        const primaryId = await service.getPerson(input.orcid_id, ctx).then(
+          (person) => person.orcidId,
+          (error: unknown) => {
+            if (ctx.signal.aborted) throw error;
+            ctx.log.warning('Deprecated-iD probe failed; returning the bulk results as served.', {
+              orcidId: requestedId,
+            });
+            return;
+          },
+        );
+        if (primaryId !== undefined && primaryId !== record.orcidId)
+          record = await service.getWorkDetails(primaryId, putCodes, ctx);
+      }
     } catch (err) {
+      // Caller cancellation propagates as thrown, never relabelled as an upstream failure.
+      if (ctx.signal.aborted) throw err;
       // A whole-request 404 means the ORCID iD itself does not resolve. A transient
       // upstream failure (retries already exhausted in the service layer) keeps its
       // original code, plus any retryable/retryAfter signal it carried, so clients can
@@ -325,7 +342,7 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
       // spreading the caught error's data), which is what redacts upstream transport
       // details (url/status/statusText/body) from the client payload.
       if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
-        throw ctx.fail('profile_not_found', `ORCID iD ${bareId} not found`);
+        throw ctx.fail('profile_not_found', `ORCID iD ${requestedId} not found`);
       }
       const transientOutcome =
         err instanceof McpError ? TRANSIENT_OUTCOMES.get(err.code) : undefined;
@@ -335,7 +352,7 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
         const { retryable, retryAfter, reason } = err.data ?? {};
         throw new McpError(
           err.code,
-          `ORCID bulk works endpoint ${transientOutcome} for ${bareId}.`,
+          `ORCID bulk works endpoint ${transientOutcome} for ${requestedId}.`,
           {
             ...(retryable !== undefined && { retryable }),
             ...(retryAfter !== undefined && { retryAfter }),
@@ -344,73 +361,30 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
           { cause: err },
         );
       }
-      throw ctx.fail('fetch_failed', `ORCID bulk works endpoint failed for ${bareId}`, undefined, {
-        cause: err,
-      });
+      throw ctx.fail(
+        'fetch_failed',
+        `ORCID bulk works endpoint failed for ${requestedId}`,
+        undefined,
+        { cause: err },
+      );
     }
+    const { orcidId: bareId, data: results } = record;
+    const deprecation = deprecatedIdNotice(requestedId, bareId);
 
-    const entries = results.map(
-      (result): WorkEntry =>
-        result.type === 'error'
-          ? {
-              kind: 'error',
-              record: {
-                ...(result.putCode !== undefined && { putCode: result.putCode }),
-                message: result.message,
-              },
-            }
-          : { kind: 'work', record: toWorkRecord(result.detail, bareId) },
-    );
-
-    // Entries are budgeted in upstream order: the bulk endpoint returns works first, in an
-    // order of its own rather than the request's, then error entries. A work is charged after
-    // its caps, so a capped record fits beside others. The complete envelope reserves every
-    // requested code as deferred and all possible notices on the larger surface; the actual
-    // response only includes unsettled codes and the notices whose causes occurred.
-    const orcidUri = `https://orcid.org/${bareId}`;
-    const missingNotice = (count: number) =>
-      `ORCID returned no identified result for ${count} requested put-codes; they remain deferred. Call orcid_get_work_detail again with deferredPutCodes as put_codes.`;
-    const reservedNotice = [
-      capNotice,
-      deferredNotice(requestedCodes.length),
-      missingNotice(requestedCodes.length),
-    ]
-      .filter(Boolean)
-      .join(' ');
-    const kept = entries.slice(
-      0,
-      countWithinBudget(
-        entries
-          .values()
-          .map((entry) =>
-            entry.kind === 'work'
-              ? recordCost(entry.record, renderWorkDetail(entry.record))
-              : recordCost(
-                  entry.record,
-                  `- ${entry.record.message}${entry.record.putCode !== undefined ? ` (put-code ${entry.record.putCode})` : ''}`,
-                ),
-          ),
-        recordCost(
-          {
-            orcidId: bareId,
-            orcidUri,
-            works: [],
-            errors: [],
-            deferredPutCodes: requestedCodes,
-            notice: reservedNotice,
-          },
-          `**ORCID iD:** ${bareId} | **URI:** ${orcidUri}\n**Works resolved:** ${entries.length} | **Errors:** ${entries.length}\n\n---\n**Errors:**\n\n---\n**Deferred put-codes:** ${requestedCodes.join(', ')}\n\n> ${reservedNotice}`,
-        ),
-      ),
-    );
-
+    // The bulk endpoint returns works first, in an order of its own rather than the request's,
+    // then error entries; both keep that order.
     const works: WorkDetailRecord[] = [];
     const errors: WorkError[] = [];
-    for (const entry of kept) {
-      if (entry.kind === 'work') works.push(entry.record);
-      else errors.push(entry.record);
+    for (const result of results) {
+      if (result.type === 'work') works.push(toWorkRecord(result.detail, bareId));
+      else
+        errors.push({
+          ...(result.putCode !== undefined && { putCode: result.putCode }),
+          message: result.message,
+        });
     }
-    // Deferred = requested put-codes no kept entry settled, in request order.
+    // Deferred = requested put-codes no returned entry settled, in request order: the input
+    // cap's remainder plus any fetched code ORCID answered nothing for.
     const settled = new Set([...works, ...errors].map((record) => record.putCode));
     const deferredPutCodes = requestedCodes.filter((code) => !settled.has(code));
 
@@ -421,18 +395,18 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
       deferred: deferredPutCodes.length,
     });
 
-    const notices = [capNotice];
-    const answered = new Set(entries.map((entry) => entry.record.putCode));
-    const budgetCount = putCodes.filter((code) => answered.has(code) && !settled.has(code)).length;
-    if (budgetCount > 0) notices.push(deferredNotice(budgetCount));
-    const missingCount = putCodes.filter((code) => !answered.has(code)).length;
-    if (missingCount > 0) notices.push(missingNotice(missingCount));
-    const notice = notices.filter(Boolean).join(' ');
+    const missingCount = putCodes.filter((code) => !settled.has(code)).length;
+    const notice = joinNotices(
+      deprecation,
+      capNotice,
+      missingCount > 0 &&
+        `ORCID returned no identified result for ${missingCount} requested put-codes; they remain deferred. Call orcid_get_work_detail again with deferredPutCodes as put_codes.`,
+    );
     if (notice) ctx.enrich.notice(notice);
 
     return {
       orcidId: bareId,
-      orcidUri,
+      orcidUri: `https://orcid.org/${bareId}`,
       works,
       errors,
       ...(deferredPutCodes.length > 0 && { deferredPutCodes }),

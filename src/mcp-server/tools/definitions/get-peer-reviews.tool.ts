@@ -8,18 +8,22 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { deprecatedIdNotice } from '@/mcp-server/tools/deprecated-id-notice.js';
+import { clampNotice, joinNotices } from '@/mcp-server/tools/notices.js';
 import { SourceSchema, sourcesText } from '@/mcp-server/tools/record-sources.js';
-import {
-  countWithinBudget,
-  RESPONSE_BYTE_BUDGET,
-  recordCost,
-} from '@/mcp-server/tools/response-budget.js';
 import { singleLine } from '@/mcp-server/tools/third-party-text.js';
 import { orcidIdSchema } from '@/services/orcid/orcid-id.js';
-import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
+import {
+  getOrcidService,
+  normalizeOrcidId,
+  type RecordResult,
+} from '@/services/orcid/orcid-service.js';
 import type { PeerReview } from '@/services/orcid/types.js';
 
-/** Render one review identically for output and byte admission. */
+/** Most reviews one page returns; a larger `limit` is clamped to it with a notice. */
+const MAX_LIMIT = 1000;
+
+/** The Markdown `format()` renders for one review, trailing newline included. */
 function renderReview(
   r: z.infer<typeof orcidGetPeerReviews.output>['peerReviews'][number],
 ): string {
@@ -45,7 +49,7 @@ function renderReview(
   return `${lines.join('\n')}\n`;
 }
 
-/** Full page header, conservatively reserved with widest counters. */
+/** The page header `format()` renders. */
 function renderHeader(result: {
   orcidId: string;
   orcidUri: string;
@@ -84,10 +88,8 @@ export const orcidGetPeerReviews = tool('orcid_get_peer_reviews', {
       .int()
       .min(1)
       .max(10000)
-      .default(50)
-      .describe(
-        'Requested page size (default 50, accepted maximum 10,000, effective maximum 1,000). Each surface is bounded to 64,000 bytes, except an indivisible oversized review returned alone with a notice.',
-      ),
+      .default(25)
+      .describe('Reviews per page. Default 25; a larger value returns at most 1,000 and says so.'),
   }),
 
   output: z.object({
@@ -167,7 +169,7 @@ export const orcidGetPeerReviews = tool('orcid_get_peer_reviews', {
       .string()
       .optional()
       .describe(
-        'Empty-history guidance, requested/effective limit disclosure, or an explicit indivisible-review budget exception.',
+        'Deprecated-iD disclosure naming the primary iD, requested/effective limit disclosure, past-end guidance, or empty-history guidance.',
       ),
   },
 
@@ -185,9 +187,9 @@ export const orcidGetPeerReviews = tool('orcid_get_peer_reviews', {
     const service = getOrcidService();
     ctx.log.info('orcid_get_peer_reviews', { orcidId: input.orcid_id });
 
-    let reviews: PeerReview[];
+    let record: RecordResult<PeerReview[]>;
     try {
-      reviews = await service.getPeerReviews(input.orcid_id, ctx);
+      record = await service.getPeerReviews(input.orcid_id, ctx);
     } catch (err) {
       if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
         throw ctx.fail(
@@ -197,59 +199,30 @@ export const orcidGetPeerReviews = tool('orcid_get_peer_reviews', {
       }
       throw err;
     }
-    const bareId = normalizeOrcidId(input.orcid_id);
+    const { orcidId: bareId, data: reviews } = record;
     const orcidUri = `https://orcid.org/${bareId}`;
     const totalCount = reviews.length;
-    const limit = Math.min(input.limit, 1000);
-    const notices: string[] = [];
-    if (input.limit > limit)
-      notices.push(
-        `Requested limit ${input.limit}; effective cap ${limit} reviews before the response byte budget.`,
-      );
-    if (totalCount === 0)
-      notices.push(
-        'No peer review records found. Reviews reach ORCID from the researcher or from member organizations that import them, so coverage varies; absence does not mean no review activity.',
-      );
-    const notice = notices.join(' ');
-    const candidates = reviews.slice(input.offset, input.offset + limit);
-    const widest = {
-      orcidId: bareId,
-      orcidUri,
-      reviewCount: candidates.length,
-      totalCount,
-      offset: input.offset,
-      nextOffset: totalCount,
-      truncated: false,
-    };
-    const envelope = recordCost(
-      { ...widest, peerReviews: [], ...(notice && { notice }) },
-      `${renderHeader(widest).join('\n')}\n\n${notice ? `\n\n> ${notice}` : ''}`,
-    );
-    const peerReviews = candidates.slice(
-      0,
-      countWithinBudget(
-        candidates.values().map((r) => recordCost(r, renderReview(r))),
-        envelope,
-      ),
-    );
-    const firstReview = peerReviews[0];
-    if (
-      peerReviews.length === 1 &&
-      firstReview &&
-      recordCost(firstReview, renderReview(firstReview)) + envelope > RESPONSE_BYTE_BUDGET
-    )
-      notices.push(
-        'One indivisible peer review exceeds the 64,000-byte response budget and is returned alone; continuation advances past it.',
-      );
+    const limit = Math.min(input.limit, MAX_LIMIT);
+    const peerReviews = reviews.slice(input.offset, input.offset + limit);
     const endOffset = input.offset + peerReviews.length;
-    const truncated = peerReviews.length > 0 && endOffset < totalCount;
+    const truncated = endOffset < totalCount;
+
+    // One notice per call, in a fixed order: deprecation, clamp, then past-end or empty history.
+    const notice = joinNotices(
+      deprecatedIdNotice(normalizeOrcidId(input.orcid_id), bareId),
+      clampNotice('limit', input.limit, limit, 'reviews'),
+      totalCount === 0
+        ? 'No peer review records found. Reviews reach ORCID from the researcher or from member organizations that import them, so coverage varies; absence does not mean no review activity.'
+        : input.offset >= totalCount &&
+            `Offset ${input.offset} exceeds totalCount (${totalCount}). Reduce offset to page through the reviews.`,
+    );
 
     ctx.log.info('orcid_get_peer_reviews completed', {
       orcidId: bareId,
       reviewCount: reviews.length,
     });
 
-    if (notices.length) ctx.enrich.notice(notices.join(' '));
+    if (notice) ctx.enrich.notice(notice);
 
     return {
       orcidId: bareId,

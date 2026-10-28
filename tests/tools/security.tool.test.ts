@@ -58,20 +58,24 @@ it('selected funding renders description as a JSON scalar preserving untrusted l
   expect(text.split('\n')).not.toContain('## Forged');
 });
 
-vi.mock('@/services/orcid/orcid-service.js', () => ({
-  getOrcidService: () => ({
-    expandedSearch: mockExpandedSearch,
-    getPerson: mockGetPerson,
-    getWorks: mockGetWorks,
-    getWorkDetails: mockGetWorkDetails,
-    getAffiliations: mockGetAffiliations,
-    getFundings: mockGetFundings,
-    getFundingDetail: mockGetFundingDetail,
-    getPeerReviews: mockGetPeerReviews,
-    getResearchResources: mockGetResearchResources,
-  }),
-  normalizeOrcidId: (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim(),
-}));
+vi.mock('@/services/orcid/orcid-service.js', async () => {
+  const { served } = await import('../helpers/served-record.js');
+  const normalizeOrcidId = (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim();
+  return {
+    getOrcidService: () => ({
+      expandedSearch: mockExpandedSearch,
+      getPerson: served(mockGetPerson, normalizeOrcidId),
+      getWorks: served(mockGetWorks, normalizeOrcidId),
+      getWorkDetails: served(mockGetWorkDetails, normalizeOrcidId),
+      getAffiliations: served(mockGetAffiliations, normalizeOrcidId),
+      getFundings: served(mockGetFundings, normalizeOrcidId),
+      getFundingDetail: served(mockGetFundingDetail, normalizeOrcidId),
+      getPeerReviews: served(mockGetPeerReviews, normalizeOrcidId),
+      getResearchResources: served(mockGetResearchResources, normalizeOrcidId),
+    }),
+    normalizeOrcidId,
+  };
+});
 
 // An unrouted service call fails loudly; each test layers the responses it expects.
 beforeEach(() => {
@@ -360,6 +364,7 @@ describe('security: no secrets or env values appear in tool output or error mess
       orcidId: '0000-0002-1825-0097',
       orcidUri: 'https://orcid.org/0000-0002-1825-0097',
       workCount: 1,
+      matchedCount: 1,
       returnedCount: 1,
       offset: 0,
       truncated: false,

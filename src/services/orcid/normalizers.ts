@@ -4,7 +4,8 @@
  * Work, funding, and research-resource titles and work abstracts pass through the
  * `toPlainText` markup boundary; identifiers, URLs, and the deposited citation do not.
  * Every activity record carries `sources` — who asserted it — so the activity normalizers
- * take the requested ORCID iD to decide `selfAsserted`.
+ * take the record's ORCID iD — the primary iD when a deprecated one was requested — to
+ * decide `selfAsserted`.
  * @module services/orcid/normalizers
  */
 
@@ -105,7 +106,7 @@ function normalizeExternalIds(raw: RawWorkExternalId[] | undefined): ExternalIde
 }
 
 /**
- * Who asserted an item, and whether that party is the requested iD. The asserting party is
+ * Who asserted an item, and whether that party is the record's iD. The asserting party is
  * the assertion origin when one is recorded, otherwise the source. Only an `-orcid` reference
  * can be the researcher: a member client's path can share the iD format (Crossref's does).
  */
@@ -354,7 +355,7 @@ function normalizeWorkSummary(
 /**
  * One record per ORCID work group, built from `work-summary[0]` — ORCID sorts each group
  * so its preferred version comes first — carrying the identifiers and sources of the
- * whole group. `orcidId` is the requested iD, which `selfAsserted` compares against.
+ * whole group. `orcidId` is the record's iD, which `selfAsserted` compares against.
  */
 export function normalizeWorks(raw: RawWorksResponse, orcidId: string): Work[] {
   return (raw.group ?? []).flatMap((g: RawWorksGroup) => {
@@ -448,7 +449,7 @@ function fundingPeriods(summaries: RawFundingSummary[]): FundingPeriod[] | undef
 /**
  * One record per ORCID funding group, built from `funding-summary[0]` (ORCID's preferred
  * version) with the sources of every version, plus `periods` when the versions record
- * distinct award periods. `orcidId` is the requested iD, which `selfAsserted` compares against.
+ * distinct award periods. `orcidId` is the record's iD, which `selfAsserted` compares against.
  */
 export function normalizeFundings(raw: RawFundingsResponse, orcidId: string): FundingRecord[] {
   return (raw.group ?? []).flatMap((g: RawFundingGroup) => {

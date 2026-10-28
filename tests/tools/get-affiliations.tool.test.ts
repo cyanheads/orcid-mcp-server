@@ -10,10 +10,14 @@ import { orcidGetAffiliations } from '@/mcp-server/tools/definitions/get-affilia
 import { normalizeActivities } from '@/services/orcid/normalizers.js';
 
 const mockGetAffiliations = vi.fn();
-vi.mock('@/services/orcid/orcid-service.js', () => ({
-  getOrcidService: () => ({ getAffiliations: mockGetAffiliations }),
-  normalizeOrcidId: (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim(),
-}));
+vi.mock('@/services/orcid/orcid-service.js', async () => {
+  const { served } = await import('../helpers/served-record.js');
+  const normalizeOrcidId = (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim();
+  return {
+    getOrcidService: () => ({ getAffiliations: served(mockGetAffiliations, normalizeOrcidId) }),
+    normalizeOrcidId,
+  };
+});
 
 // An unrouted fetch fails loudly; each test layers the responses it expects.
 beforeEach(() => {

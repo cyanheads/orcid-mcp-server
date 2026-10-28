@@ -4,7 +4,11 @@
  */
 
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
-import { createFetchMock, runToolContract } from '@cyanheads/mcp-ts-core/testing';
+import {
+  createFetchMock,
+  createMockContext,
+  runToolContract,
+} from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { orcidGetResearchResources } from '@/mcp-server/tools/definitions/get-research-resources.tool.js';
 import type { RawResearchResourceDetail } from '@/services/orcid/types.js';
@@ -23,10 +27,19 @@ const http = createFetchMock([
       return Response.json(payload, { status });
     },
   },
+  // A missing allocation probes /person for a deprecated iD; this one is served as requested.
+  {
+    method: 'GET',
+    match: (r) => r.url.endsWith(`/${id}/person`),
+    respond: (request) => person(request),
+  },
 ]);
+const servedAsRequested = () => Response.json({ name: null });
+let person: (request: Request) => Response = servedAsRequested;
 beforeEach(() => {
   payload = captured;
   status = 200;
+  person = servedAsRequested;
   http.install();
   initOrcidServiceForTests();
 });
@@ -118,22 +131,35 @@ describe('allocation detail contract', () => {
   it('applies default and effective item caps and terminates empty pages', async () => {
     payload = {
       'put-code': 5724,
-      'resource-item': Array.from({ length: 101 }, (_, i) => ({ 'resource-name': `item ${i}` })),
+      'resource-item': Array.from({ length: 150 }, (_, i) => ({ 'resource-name': `item ${i}` })),
     };
     const normal = await call();
     expect(normal.structuredContent).toMatchObject({
       truncated: true,
-      resources: [{ returnedItemCount: 50, nextItemOffset: 50, itemsTruncated: true }],
+      resources: [{ returnedItemCount: 25, nextItemOffset: 25, itemsTruncated: true }],
     });
-    const capped = await call({ item_limit: 10_000 });
-    expect(capped.structuredContent).toMatchObject({
-      itemLimitNotice: expect.stringContaining('100 items per page'),
+    expect(normal.structuredContent).not.toHaveProperty('itemLimitNotice');
+    const full = await call({ item_limit: 100 });
+    expect(full.structuredContent).toMatchObject({
+      truncated: true,
+      resources: [{ returnedItemCount: 100, nextItemOffset: 100, itemCount: 150 }],
     });
-    expect(JSON.stringify(capped.content)).toContain('100 items per page');
-    expect(capped.structuredContent).toMatchObject({
-      resources: [{ returnedItemCount: 100, nextItemOffset: 100 }],
+    expect(full.structuredContent).not.toHaveProperty('itemLimitNotice');
+    for (const itemLimit of [101, 10_000]) {
+      const capped = await call({ item_limit: itemLimit });
+      const notice = `Requested item_limit ${itemLimit}; effective maximum is 100 items per page.`;
+      expect(capped.structuredContent).toMatchObject({
+        itemLimitNotice: notice,
+        resources: [{ returnedItemCount: 100, nextItemOffset: 100 }],
+      });
+      expect(JSON.stringify(capped.content)).toContain(notice);
+    }
+    const last = await call({ item_offset: 100, item_limit: 100 });
+    expect(last.structuredContent).toMatchObject({
+      truncated: false,
+      resources: [{ returnedItemCount: 50, itemOffset: 100, itemsTruncated: false }],
     });
-    for (const offset of [101, 102]) {
+    for (const offset of [150, 151]) {
       const result = await call({ item_offset: offset });
       expect(result.structuredContent).toMatchObject({
         truncated: false,
@@ -150,33 +176,35 @@ describe('allocation detail contract', () => {
     });
   });
 
-  it('budgets full surfaces, resumes at the first omitted item, and declares unavoidable overflows', async () => {
+  it('pages large items by count alone, repeating proposal metadata on every page', async () => {
+    const title = 'Metadata '.repeat(500);
     payload = {
       ...captured,
-      proposal: { ...captured.proposal, title: { title: { value: 'Metadata '.repeat(500) } } },
+      proposal: { ...captured.proposal, title: { title: { value: title } } },
       'resource-item': Array.from({ length: 30 }, (_, i) => ({
         ...captured['resource-item'][i % 14],
-        'resource-name': `item ${i} ${'é\\"'.repeat(900)}`,
+        'resource-name': `item ${i} ${'é\\"'.repeat(i === 3 ? 30_000 : 900)}`,
       })),
     };
     let offset = 0;
     const seen: string[] = [];
+    const pageSizes: number[] = [];
     while (offset < 30) {
-      const result = await call({ item_offset: offset, item_limit: 100 });
+      const result = await call({ item_offset: offset, item_limit: 12 });
       expect(result.isError).toBeFalsy();
-      expect(Buffer.byteLength(JSON.stringify(result.structuredContent))).toBeLessThanOrEqual(
-        64_000,
-      );
-      expect(Buffer.byteLength(JSON.stringify(result.content))).toBeLessThanOrEqual(64_000);
       const page = (
         result.structuredContent as {
-          resources: { items: { name: string }[]; nextItemOffset?: number }[];
+          resources: { title: string; items: { name: string }[]; nextItemOffset?: number }[];
         }
       ).resources[0]!;
+      expect(page.title).toBe(title);
+      const text = JSON.stringify(result.content);
+      for (const item of page.items) expect(text).toContain(JSON.stringify(item.name).slice(1, -1));
       seen.push(...page.items.map((x) => x.name));
-      expect(page.items.length).toBeGreaterThan(0);
+      pageSizes.push(page.items.length);
       offset = page.nextItemOffset ?? 30;
     }
+    expect(pageSizes).toEqual([12, 12, 6]);
     expect(seen).toEqual(payload['resource-item']!.map((x) => x['resource-name']));
     payload = {
       'put-code': 5724,
@@ -184,17 +212,10 @@ describe('allocation detail contract', () => {
     };
     const oversized = await call();
     expect(oversized.structuredContent).toMatchObject({
-      budgetOverflow: expect.stringContaining('returned alone'),
-      resources: [{ returnedItemCount: 1, nextItemOffset: 1 }],
+      resources: [{ returnedItemCount: 2, itemsTruncated: false }],
     });
-    expect(JSON.stringify(oversized.content)).toContain('Budget exception');
-    payload = { 'put-code': 5724, proposal: { title: { title: { value: 'm'.repeat(70_000) } } } };
-    const metadata = await call();
-    expect(metadata.structuredContent).toMatchObject({
-      budgetOverflow: expect.stringContaining('proposal metadata'),
-      resources: [{ itemsTruncated: false, returnedItemCount: 0 }],
-    });
-    expect(JSON.stringify(metadata.content)).not.toContain('Next item offset');
+    expect(oversized.structuredContent).not.toHaveProperty('budgetOverflow');
+    expect(JSON.stringify(oversized.content)).not.toContain('Budget exception');
   });
 
   it('reports paging-without-selector and missing detail with recovery on both surfaces', async () => {
@@ -212,7 +233,13 @@ describe('allocation detail contract', () => {
       expect(JSON.stringify(result.content)).toContain('put_code');
     }
     status = 404;
+    const before = http.calls.length;
     const result = await call();
+    // One /person probe finds the iD is not deprecated; nothing is re-fetched.
+    expect(http.calls.slice(before).map((c) => c.request.url.split(`/${id}/`)[1])).toEqual([
+      'research-resource/5724',
+      'person',
+    ]);
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({
       error: {
@@ -223,6 +250,48 @@ describe('allocation detail contract', () => {
       },
     });
     expect(JSON.stringify(result.content)).toContain('summary');
+  });
+
+  it.each([
+    ['a non-transient HTTP error', () => new Response('', { status: 400 })],
+    ['an incompatible body', () => Response.json([])],
+  ])('keeps resource_not_found when the /person probe fails with %s', async (_label, respond) => {
+    status = 404;
+    person = respond;
+    const before = http.calls.length;
+    const result = await call();
+    expect(http.calls.slice(before).map((c) => c.request.url.split(`/${id}/`)[1])).toEqual([
+      'research-resource/5724',
+      'person',
+    ]);
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        code: JsonRpcErrorCode.NotFound,
+        data: {
+          reason: 'resource_not_found',
+          recovery: { hint: expect.stringContaining('summary') },
+        },
+      },
+    });
+    expect(JSON.stringify(result.content)).toContain('resource_not_found');
+  });
+
+  it('rethrows caller cancellation that lands during the /person probe', async () => {
+    status = 404;
+    const controller = new AbortController();
+    person = (request) => {
+      controller.abort();
+      request.signal.throwIfAborted();
+      return servedAsRequested();
+    };
+    const ctx = createMockContext({
+      errors: orcidGetResearchResources.errors,
+      signal: controller.signal,
+    });
+    const input = orcidGetResearchResources.input.parse({ orcid_id: id, put_code: 5724 });
+    await expect(orcidGetResearchResources.handler(input, ctx)).rejects.toMatchObject({
+      name: 'AbortError',
+    });
   });
 
   it.each([
@@ -267,10 +336,6 @@ describe('allocation detail contract', () => {
         expect(text).toContain(item.name);
         for (const host of item.hosts) expect(text).toContain(host.name);
       }
-      expect(Buffer.byteLength(JSON.stringify(result.structuredContent))).toBeLessThanOrEqual(
-        64_000,
-      );
-      expect(Buffer.byteLength(JSON.stringify(result.content))).toBeLessThanOrEqual(64_000);
     }
     expect(names).toEqual(captured['resource-item'].map((x) => x['resource-name']));
   });

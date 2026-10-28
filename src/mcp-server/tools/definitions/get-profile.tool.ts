@@ -7,10 +7,16 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { deprecatedIdNotice } from '@/mcp-server/tools/deprecated-id-notice.js';
+import { joinNotices } from '@/mcp-server/tools/notices.js';
 import { blockquote, singleLine } from '@/mcp-server/tools/third-party-text.js';
 import type { NormalizedPerson } from '@/services/orcid/normalizers.js';
 import { orcidIdSchema } from '@/services/orcid/orcid-id.js';
-import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
+import {
+  getOrcidService,
+  normalizeOrcidId,
+  type RecordResult,
+} from '@/services/orcid/orcid-service.js';
 
 /** Joins the empty-section labels as an English "or" list: `a, b, or c`. */
 const orList = new Intl.ListFormat('en', { type: 'disjunction' });
@@ -89,7 +95,7 @@ export const orcidGetProfile = tool('orcid_get_profile', {
       .string()
       .optional()
       .describe(
-        'Names the profile sections with no public data — ORCID visibility is set per field, so an empty section may be private.',
+        'Names the profile sections with no public data — ORCID visibility is set per field, so an empty section may be private — and, for a deprecated iD, the primary iD it was merged into.',
       ),
   },
 
@@ -107,9 +113,9 @@ export const orcidGetProfile = tool('orcid_get_profile', {
     const service = getOrcidService();
     ctx.log.info('orcid_get_profile', { orcidId: input.orcid_id });
 
-    let person: NormalizedPerson;
+    let record: RecordResult<NormalizedPerson>;
     try {
-      person = await service.getPerson(input.orcid_id, ctx);
+      record = await service.getPerson(input.orcid_id, ctx);
     } catch (err) {
       if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
         throw ctx.fail(
@@ -119,7 +125,7 @@ export const orcidGetProfile = tool('orcid_get_profile', {
       }
       throw err;
     }
-    const bareId = normalizeOrcidId(input.orcid_id);
+    const { orcidId: bareId, data: person } = record;
 
     ctx.log.info('orcid_get_profile completed', {
       orcidId: bareId,
@@ -139,11 +145,12 @@ export const orcidGetProfile = tool('orcid_get_profile', {
       ['countries', person.countries.length === 0],
     ];
     const emptySections = sections.filter(([, isEmpty]) => isEmpty).map(([label]) => label);
-    if (emptySections.length) {
-      ctx.enrich.notice(
+    const notice = joinNotices(
+      deprecatedIdNotice(normalizeOrcidId(input.orcid_id), bareId),
+      emptySections.length > 0 &&
         `This profile has no public ${orList.format(emptySections)}. Researchers set ORCID visibility per field, so a section can be private rather than empty.`,
-      );
-    }
+    );
+    if (notice) ctx.enrich.notice(notice);
 
     return {
       orcidId: bareId,

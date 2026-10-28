@@ -6,10 +6,16 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { deprecatedIdNotice } from '@/mcp-server/tools/deprecated-id-notice.js';
+import { joinNotices } from '@/mcp-server/tools/notices.js';
 import { SourceSchema, sourcesText } from '@/mcp-server/tools/record-sources.js';
 import { singleLine } from '@/mcp-server/tools/third-party-text.js';
 import { orcidIdSchema } from '@/services/orcid/orcid-id.js';
-import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
+import {
+  getOrcidService,
+  normalizeOrcidId,
+  type RecordResult,
+} from '@/services/orcid/orcid-service.js';
 import type { Affiliation } from '@/services/orcid/types.js';
 
 const AFFILIATION_TYPES = [
@@ -113,7 +119,7 @@ export const orcidGetAffiliations = tool('orcid_get_affiliations', {
       .string()
       .optional()
       .describe(
-        'Note when no affiliations were found — they may be private, or neither the researcher nor a member organization added any.',
+        'Note when no affiliations were found — they may be private, or neither the researcher nor a member organization added any — or when a deprecated iD was served from its primary iD.',
       ),
   },
 
@@ -132,9 +138,9 @@ export const orcidGetAffiliations = tool('orcid_get_affiliations', {
     const requestedTypes = [...new Set(input.types)];
     ctx.log.info('orcid_get_affiliations', { orcidId: input.orcid_id, types: input.types });
 
-    let affiliations: Affiliation[];
+    let record: RecordResult<Affiliation[]>;
     try {
-      affiliations = await service.getAffiliations(input.orcid_id, requestedTypes, ctx);
+      record = await service.getAffiliations(input.orcid_id, requestedTypes, ctx);
     } catch (err) {
       if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
         throw ctx.fail(
@@ -144,18 +150,19 @@ export const orcidGetAffiliations = tool('orcid_get_affiliations', {
       }
       throw err;
     }
-    const bareId = normalizeOrcidId(input.orcid_id);
+    const { orcidId: bareId, data: affiliations } = record;
 
     ctx.log.info('orcid_get_affiliations completed', {
       orcidId: bareId,
       affiliationCount: affiliations.length,
     });
 
-    if (affiliations.length === 0) {
-      ctx.enrich.notice(
+    const notice = joinNotices(
+      deprecatedIdNotice(normalizeOrcidId(input.orcid_id), bareId),
+      affiliations.length === 0 &&
         `No affiliations found for the requested types (${requestedTypes.join(', ')}). They may be set to private, or neither the researcher nor a member organization added any; absence does not mean no affiliation.`,
-      );
-    }
+    );
+    if (notice) ctx.enrich.notice(notice);
 
     return {
       orcidId: bareId,
