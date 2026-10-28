@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.4.0](changelog/0.4.x/0.4.0.md) — 2026-10-28 · ⚠️ Breaking · 🛡️ Security
+
+Page sizes are bounded by count alone, orcid_get_works filters by work type and publication year, a deprecated ORCID iD is served as its primary record, and the server publishes an orcid-guide skill. Funding descriptions return whole.
+
 ## [0.3.4](changelog/0.3.x/0.3.4.md) — 2026-10-24
 
 Retrieve selected funding deposits and distinguish malformed ORCID responses from empty records.

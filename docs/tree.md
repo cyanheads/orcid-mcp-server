@@ -1,6 +1,6 @@
 # orcid-mcp-server - Directory Structure
 
-Generated on: 2026-10-28 08:16:59
+Generated on: 2026-10-28 08:47:57
 
 ```text
 orcid-mcp-server/
@@ -27,6 +27,7 @@ orcid-mcp-server/
 │   ├── 0.1.x/
 │   ├── 0.2.x/
 │   ├── 0.3.x/
+│   ├── 0.4.x/
 │   └── template.md
 ├── docs/
 │   ├── design.md
@@ -202,6 +203,8 @@ orcid-mcp-server/
 │   │   ├── researcher-profile.resource.test.ts
 │   │   ├── researcher-works.resource.test.ts
 │   │   └── resources-extended.test.ts
+│   ├── scripts/
+│   │   └── bundle-agent-docs.test.ts
 │   ├── services/
 │   │   └── orcid/
 │   │       ├── affiliation-selectors.test.ts
