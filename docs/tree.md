@@ -1,6 +1,6 @@
 # orcid-mcp-server - Directory Structure
 
-Generated on: 2026-10-24 21:06:51
+Generated on: 2026-10-28 08:16:59
 
 ```text
 orcid-mcp-server/
@@ -39,6 +39,8 @@ orcid-mcp-server/
 │   ├── add-resource/
 │   │   └── SKILL.md
 │   ├── add-service/
+│   │   └── SKILL.md
+│   ├── add-skill/
 │   │   └── SKILL.md
 │   ├── add-test/
 │   │   └── SKILL.md
@@ -136,6 +138,9 @@ orcid-mcp-server/
 │   ├── prune-musl-packages.ts
 │   ├── release-github.ts
 │   └── tree.ts
+├── skills/
+│   └── orcid-guide/
+│       └── SKILL.md
 ├── src/
 │   ├── config/
 │   │   └── server-config.ts
@@ -158,8 +163,9 @@ orcid-mcp-server/
 │   │       │   ├── index.ts
 │   │       │   ├── resolve-researcher.tool.ts
 │   │       │   └── search-researchers.tool.ts
+│   │       ├── deprecated-id-notice.ts
+│   │       ├── notices.ts
 │   │       ├── record-sources.ts
-│   │       ├── response-budget.ts
 │   │       └── third-party-text.ts
 │   ├── services/
 │   │   └── orcid/
@@ -176,10 +182,14 @@ orcid-mcp-server/
 │   ├── fuzz/
 │   │   ├── resources.fuzz.test.ts
 │   │   └── tools.fuzz.test.ts
+│   ├── helpers/
+│   │   └── served-record.ts
 │   ├── integration/
 │   │   ├── fixtures/
+│   │   │   ├── deprecated-id.json
 │   │   │   └── research-resource-detail.json
 │   │   ├── activity-contracts.int.test.ts
+│   │   ├── deprecated-id.int.test.ts
 │   │   ├── funding-award.fixture.json
 │   │   ├── funding-detail.int.test.ts
 │   │   ├── markup-text.int.test.ts
@@ -210,6 +220,7 @@ orcid-mcp-server/
 │   │   └── definitions.smoke.test.ts
 │   └── tools/
 │       ├── annotations.tool.test.ts
+│       ├── deprecated-id-notice.test.ts
 │       ├── get-affiliations.tool.test.ts
 │       ├── get-funding.tool.test.ts
 │       ├── get-peer-reviews.tool.test.ts
@@ -223,7 +234,6 @@ orcid-mcp-server/
 │       ├── resolve-researcher-extended.tool.test.ts
 │       ├── resolve-researcher-name-forms.tool.test.ts
 │       ├── resolve-researcher.tool.test.ts
-│       ├── response-budget.test.ts
 │       ├── search-researchers-extended.tool.test.ts
 │       ├── search-researchers.tool.test.ts
 │       ├── security.tool.test.ts
@@ -244,7 +254,9 @@ orcid-mcp-server/
 ├── Dockerfile
 ├── LICENSE
 ├── manifest.json
+├── mcp.json
 ├── package.json
+├── plugin.json
 ├── README.md
 ├── server.json
 ├── tsconfig.build.json
