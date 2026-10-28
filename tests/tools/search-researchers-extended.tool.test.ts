@@ -611,7 +611,8 @@ describe('orcidSearchResearchers — initials-only given_name (#53)', () => {
       '0000-0001-9161-999X',
       '0000-0003-0697-2030',
     ]);
-    expect(text).toContain('**Effective Query:** given-names:J\\* AND family-name:"Doudna"');
+    // Trailer strings render as code spans, which CommonMark reads back verbatim.
+    expect(text).toContain('**Effective Query:** `given-names:J* AND family-name:"Doudna"`');
   });
 
   it('counts an initials-only given_name as a non-blank search field', () => {

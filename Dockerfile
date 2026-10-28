@@ -29,6 +29,11 @@ RUN --mount=type=cache,target=/root/.bun/install/cache \
 # Copy the rest of the source code
 COPY . .
 
+# The skills a server publishes (`createApp({ skills: 'skills' })`) are read at
+# runtime from the application root. Created when the project has none, so the
+# production stage's copy below holds with or without one.
+RUN mkdir -p skills
+
 # Build the application
 RUN bun run build
 
@@ -38,10 +43,10 @@ RUN bun run build
 #
 # Installs the production dependency tree for the target platform. Every step
 # here can run JavaScript — bunfig.toml's security scanner runs as a Bun
-# program, and so does the OTel script — so the stage runs on $BUILDPLATFORM
-# and cross-installs with `--os`/`--cpu`, which pick each platform-specific
-# optional dependency (native bindings such as DuckDB's) for the target. Only
-# `node_modules` leaves this stage.
+# program, and so do the OTel and musl-prune scripts — so the stage runs on
+# $BUILDPLATFORM and cross-installs with `--os`/`--cpu`, which pick each
+# platform-specific optional dependency (native bindings such as DuckDB's) for
+# the target. Only `node_modules` leaves this stage.
 #
 # A clean image rather than `FROM build`: the build stage's node_modules holds
 # devDependencies.
@@ -93,6 +98,12 @@ RUN --mount=type=cache,target=/root/.bun/install/cache \
       bun scripts/install-otel.ts --os="$TARGETOS" --cpu="$(cat .bun-cpu)"; \
     fi
 
+# `--os`/`--cpu` have no libc counterpart, so a native dependency published in
+# glibc and musl variants (DuckDB's bindings, for one) installs both. The
+# runtime image is Debian (glibc) and never loads the musl copy; the script
+# deletes every package whose own `libc` admits only musl. It follows every
+# install, since a later `bun install` restores what it removes. A server on a
+# musl (Alpine) runtime image drops these two lines.
 COPY scripts/prune-musl-packages.ts ./scripts/
 RUN bun scripts/prune-musl-packages.ts
 
@@ -130,6 +141,7 @@ COPY --from=deps /usr/src/app/node_modules ./node_modules
 
 # Copy the compiled application code from the build stage
 COPY --from=build /usr/src/app/dist ./dist
+COPY --from=build /usr/src/app/skills ./skills
 
 # The 'oven/bun' image already provides a non-root user named 'bun'.
 # We will use this existing user for enhanced security.

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "orcid-mcp-server",
+  "version": "0.3.4",
+  "description": "Search and retrieve researcher profiles, works, affiliations, funding, and peer review records from the ORCID registry via MCP. STDIO or Streamable HTTP.",
+  "author": {
+    "name": "Casey Hand",
+    "email": "casey@caseyjhand.com",
+    "url": "https://caseyjhand.com"
+  },
+  "homepage": "https://github.com/cyanheads/orcid-mcp-server#readme",
+  "repository": "https://github.com/cyanheads/orcid-mcp-server",
+  "license": "Apache-2.0",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "typescript",
+    "bun",
+    "stdio",
+    "streamable-http",
+    "orcid",
+    "researcher-identity",
+    "scholarly",
+    "academic",
+    "author-disambiguation",
+    "research-profiles",
+    "scientific-publishing",
+    "affiliations"
+  ]
+}
