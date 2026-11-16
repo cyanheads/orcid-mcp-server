@@ -4,7 +4,7 @@ description: Gates, identifier chains, and Solr query syntax for the orcid_* too
 license: Apache-2.0
 metadata:
   author: cyanheads
-  version: "1.0"
+  version: "1.1"
 ---
 
 ## Scope
@@ -30,16 +30,17 @@ Put-codes belong to one record. A work put-code sent with another researcher's i
 
 ## Gates
 
-- **Carry the returned `orcidId`, not the one you sent.** A deprecated (merged) iD is served from its primary record: the response reports the primary iD as `orcidId` and the notice names both. Use the primary in every later call, and treat the two as the same person when matching bylines or other sources.
-- **Confirm identity before attributing anything.** `nameMatchType: exact` means only that the names fold equal, and common names have many exact matches. Confirm with a DOI or PMID anchor (`anchorType` other than `none`), `institutionOverlap`, or overlap between the candidate's works and the ones you hold. When `totalFound` exceeds the candidates returned, the person may not be in the list: add `affiliation` or an anchor, or page `orcid_search_researchers`.
+- **Carry the returned `orcidId`, not the one you sent.** A deprecated (merged) iD is served from its primary record: the response reports the primary iD as `orcidId` and the notice names both. Use the primary in every later call, and treat the two as the same person when matching bylines or other sources. For a merged iD, ORCID answers bulk work detail, research resources, and allocation detail empty or not-found rather than redirecting, so those tools run a merge check; an answer whose notice says the check could not run is unconfirmed, so call again before relying on its empty or not-found result.
+- **Confirm identity before attributing anything.** `nameMatchType: exact` means only that the names fold equal, and common names have many exact matches. Confirm with a DOI or PMID anchor (`anchorType` other than `none`), `institutionOverlap`, or overlap between the candidate's works and the ones you hold. When `totalFound` exceeds the candidates returned, the person may not be in the list: add `affiliation` or an anchor, or page `orcid_search_researchers`. The resolver's notice says when its ranking covers only part of `totalFound` and how to rank more or list the rest; rows paged through the search tool carry no match signals, so confirm them by the means above.
+- **Read the record's trust signals with `include_history`.** `orcid_get_profile` with `include_history: true` adds `creationMethod`, `claimed`, `verifiedEmail` (private addresses included), and the created and last-modified dates. A record a member organization created through the API (`creationMethod: API`) stays `claimed: false` until the researcher takes control of it, so its contents are that organization's assertions. It reads the whole record upstream, which can exceed 10 MB for a heavy publisher, and the first call for such a record can time out while ORCID builds it; call again after a timeout, and set it only when the signal is needed. A public email's `verified` flag reads true in practice, since ORCID shows only verified addresses.
 - **Absence is not evidence.** An empty or short works, funding, affiliation, or peer-review list means nothing public was added. Never report "no publications", "no grants", or "never worked at X" from ORCID, and a name with no ORCID record may still be a real, published researcher.
 - **Weigh who asserted it.** On every item, a source with `selfAsserted: true` is the researcher's own claim (a search-and-link tool acting for them included); `false` means a member organization (or another ORCID user) asserted it. To check a disputed affiliation or authorship, an item the organization concerned asserted is evidence from outside the researcher; a self-asserted one is their word alone.
 - **Institutions span past and present.** The `affiliation` search field and the `institutionNames` on search and resolver rows include former institutions. For current or former only, use the raw fields in the query table below. An affiliation without `endDate` is open-ended as deposited, not proof of a current post.
-- **Confirm a grant-number hit.** `grant_number` matches the number's parts as a phrase, not as an exact identifier. Read each hit's `orcid_get_funding` summary and check `grantNumbers` holds the exact number. Several people (PI and co-investigators) can list one award.
+- **Confirm a grant-number hit.** `grant_number` matches the number's parts as a phrase, not as an exact identifier. Read each hit's `orcid_get_funding` summary and check `grantNumbers` holds the exact number. Several people (PI and co-investigators) can list one award; a deposit's detail-view `contributors` can say who led it (`lead`, `co-lead`) and who was `supported-by`, but is often empty.
 - **Take the DOI with `relationship: self`.** A work's `externalIds` can also carry `part-of` identifiers that name its container, such as the journal's ISSN or the book's ISBN.
 - **Work detail is one version.** The put-code `orcid_get_works` returns is the group's preferred version, so `orcid_get_work_detail` shows that source's record: its `externalIds` and `sources` can be fewer than the work list shows (keep the list's), and `abstract` and `contributors` appear only when that source deposited them. Empty `contributors` does not mean a sole author. Missing abstract or byline: take the DOI or PMID to Crossref or PubMed.
 - **Ask for the put-codes you need.** Large-collaboration records are big, so a full batch of 100 can run past a megabyte; send the subset the task uses.
-- **Amounts are deposited text.** Funding detail returns `amount.value` and `currency` exactly as deposited. Don't convert, round, or sum across currencies.
+- **Amounts are deposited text.** Funding detail returns `amount.value` and `currency` exactly as deposited. Don't convert, round, or sum across currencies. Detail also carries `organizationDefinedType`, the depositor's free-text funding subtype (not a fixed vocabulary), and `contributors` with their `role` (lead, co-lead, supported-by, other-contribution) in upstream order. Empty `contributors` means none was deposited, not that the researcher had no role. An entry carries `orcidId` only when the depositor supplied one, so find the researcher's own entry by iD when present and by name otherwise.
 
 ## Workflows
 
@@ -61,7 +62,7 @@ Put-codes belong to one record. A work put-code sent with another researcher's i
 
 1. `orcid_get_work_detail` with the iD the put-code came from.
 2. A contributor with `orcidId` goes straight to `orcid_get_profile`.
-3. A contributor without one: `orcid_resolve_researcher` with their name and this work's DOI as `doi`. A hit with `anchorType: doi` is a record that linked this exact work.
+3. A contributor without one: `orcid_resolve_researcher` with their name and this work's DOI as `doi`. A hit with `anchorType: doi` is a record that linked this exact work. A notice saying no record matched the name with that DOI and the candidates were found by the DOI alone means none of them is confirmed as this contributor: the name did not match any record that linked the work.
 4. A list over 100 contributors keeps the first 100 plus the record owner's own entries; `contributorCount` gives the full byline length.
 
 ### Raw Solr queries

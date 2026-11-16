@@ -1,6 +1,6 @@
 # orcid-mcp-server - Directory Structure
 
-Generated on: 2026-10-28 08:47:57
+Generated on: 2026-11-16 14:59:51
 
 ```text
 orcid-mcp-server/
@@ -184,6 +184,7 @@ orcid-mcp-server/
 │   │   ├── resources.fuzz.test.ts
 │   │   └── tools.fuzz.test.ts
 │   ├── helpers/
+│   │   ├── cpu-growth.ts
 │   │   └── served-record.ts
 │   ├── integration/
 │   │   ├── fixtures/
@@ -192,10 +193,12 @@ orcid-mcp-server/
 │   │   ├── activity-contracts.int.test.ts
 │   │   ├── deprecated-id.int.test.ts
 │   │   ├── funding-award.fixture.json
+│   │   ├── funding-contributors.fixture.json
 │   │   ├── funding-detail.int.test.ts
 │   │   ├── markup-text.int.test.ts
 │   │   ├── orcid-api-fixtures.ts
 │   │   ├── orcid-id-forms.int.test.ts
+│   │   ├── profile-record.fixture.json
 │   │   ├── record-contracts.int.test.ts
 │   │   ├── research-resource-detail.int.test.ts
 │   │   └── search-contracts.int.test.ts
@@ -236,6 +239,7 @@ orcid-mcp-server/
 │       ├── resolve-researcher-caps.tool.test.ts
 │       ├── resolve-researcher-extended.tool.test.ts
 │       ├── resolve-researcher-name-forms.tool.test.ts
+│       ├── resolve-researcher-notices.tool.test.ts
 │       ├── resolve-researcher.tool.test.ts
 │       ├── search-researchers-extended.tool.test.ts
 │       ├── search-researchers.tool.test.ts

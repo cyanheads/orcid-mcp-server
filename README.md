@@ -36,14 +36,14 @@ Researcher identity data from the ORCID registry. Search and disambiguate author
 | Tool | Description |
 |:-----|:------------|
 | `orcid_search_researchers` | Search the ORCID registry using structured field params (name, affiliation, keyword, ROR ID, DOI, PMID, grant number) |
-| `orcid_get_profile` | Fetch a researcher's public profile — name, other names, biography, keywords, researcher URLs, external identifiers |
+| `orcid_get_profile` | Fetch a researcher's public profile — name, other names, biography, keywords, researcher URLs, external identifiers, public emails with verified flags, countries, and on request the record's history |
 | `orcid_get_works` | Retrieve works (publications, datasets, software, preprints) for a researcher, filtered by work type and publication year, paginated |
 | `orcid_get_work_detail` | Accept up to 1,000 put-codes, fetch the first 100 distinct works, and return deferred codes for continuation |
 | `orcid_get_affiliations` | Fetch affiliation records: employment, education, memberships, and more |
-| `orcid_get_funding` | List grouped funding summaries or select one award's deposited description, amount, and source |
+| `orcid_get_funding` | List grouped funding summaries or select one award's deposited description, amount, funding subtype, contributors, and source |
 | `orcid_get_peer_reviews` | Fetch peer review activity: convening organizations, reviewer role, review type |
 | `orcid_get_research_resources` | List research resources — compute allocations, equipment access, lab facilities |
-| `orcid_resolve_researcher` | Disambiguate an ambiguous author name to a ranked list of verified ORCID iD candidates |
+| `orcid_resolve_researcher` | Disambiguate an ambiguous author name to a ranked list of verified ORCID iD candidates, each with its other names; a notice flags a partial ranking or an anchor-only answer |
 
 ### Resources
 
@@ -63,7 +63,7 @@ The server also publishes an agent skill, `orcid-guide` (`skill://orcid-guide/SK
 - Structured params — `given_name`, `family_name`, `affiliation`, `keyword`, `ror_id`, `doi`, `pmid`, `grant_number` — AND together automatically; `query` adds raw Solr syntax — sent as written when it is the only field, otherwise ANDed as one parenthesized group so a top-level `OR` keeps its alternatives (an exclusion-only query such as `-keyword:x` is ANDed ungrouped, since ORCID matches nothing for a group of only exclusions)
 - At least one param must be non-blank — an empty or whitespace-only search is rejected rather than run against the whole registry
 - `given_name` phrase-matches, except that a value of only initials (`J.`, `J. A.`) matches given names starting with each letter
-- `doi` and `pmid` map to `doi-self` / `pmid-self` field queries — finds researchers who linked that specific work to their ORCID record. URL and label forms (`https://doi.org/…`, `doi:…`, `https://pubmed.ncbi.nlm.nih.gov/…/`, `PMID:…`) are accepted and reduced to the bare identifier, preserving its case. Nonblank values must contain a complete DOI (`10.` followed by digits, `/`, and a non-whitespace suffix) or numeric PMID; malformed and prefix-only values fail before a request. Omitted or genuinely blank fields remain unset
+- `doi` and `pmid` map to `doi-self` / `pmid-self` field queries — finds researchers who linked that specific work to their ORCID record. URL and label forms (`https://doi.org/…`, `doi:…`, `https://pubmed.ncbi.nlm.nih.gov/…/`, `PMID:…`) are accepted and reduced to the bare identifier. A DOI anchors as one `doi-self` regex term that matches it in any ASCII letter case, bare or behind `http(s)://`, `dx.`, `doi.org/`, or `doi:` in any case, whichever form the record holds; it stays self-only and exact (no part-of links, no version suffixes). Nonblank values must contain a complete DOI (`10.` followed by digits, `/`, and a non-whitespace suffix) or numeric PMID; malformed and prefix-only values fail before a request. Omitted or genuinely blank fields remain unset
 - `ror_id` takes a ROR ID bare (`00f54p054`) or as a `ror.org` URL (`https://ror.org/…`, `ror.org/…`, a `www.` host, a trailing slash), in either letter case, and is reduced to the `https://ror.org/<lowercase id>` form ORCID indexes; a value that is not a ROR ID, or whose check digits do not match, is rejected before any search runs
 - `grant_number` phrase-matches the grant numbers on researchers' funding items, case-insensitively, over the parts between separators such as hyphens and slashes — `5F31MH010500` also matches `5F31MH010500-03`, but a number cut mid-part matches nothing — pair with `orcid_get_funding` to inspect each match
 - `rows`: results per page, default 20; a larger value (up to 10,000) is clamped to 1,000, the most ORCID serves per request, and a notice names both sizes on both surfaces. `start`: 0–10,000 offset pagination (the ORCID Public API's ceiling for unauthenticated requests)
@@ -76,8 +76,10 @@ The server also publishes an agent skill, `orcid-guide` (`skill://orcid-guide/SK
 ### `orcid_get_profile` <sub>tool</sub>
 
 - Accepts a bare ORCID iD (`0000-0001-2345-6789`) or an orcid.org URI (`https://orcid.org/…`, `orcid.org/…`, a `www.` host, a trailing slash); a lowercase `x` check digit is canonicalized to `X`. Every tool that takes `orcid_id` accepts the same forms; the `orcid://researcher/{orcid_id}/…` resources take the bare iD
-- A deprecated iD — one ORCID merged into another account — resolves to the primary record on every record tool and both resources, and `orcidId`/`orcidUri` report the primary iD; on the tools, `selfAsserted` is judged against it and a `notice` names both iDs
+- A deprecated iD — one ORCID merged into another account — resolves to the primary record on every record tool and both resources, and `orcidId`/`orcidUri` report the primary iD; on the tools, `selfAsserted` is judged against it and a `notice` names both iDs. The three endpoints ORCID does not redirect are resolved through a `/person` merge check; when that check cannot run, the answer says its result is unconfirmed and to call again
 - Returns name, other names (former names, transliterations, initialed forms), biography, keywords, researcher URLs, external identifiers (Scopus Author ID, ResearcherID, Loop, etc.), emails, and country codes — all in one response
+- Each email carries `verified` as ORCID publishes it (shown in the text as `(verified)` / `(unverified)`); ORCID exposes only verified addresses publicly, so it reads true in practice
+- `include_history` (default `false`) reads the full `/record` in place of `/person`, still one request, and adds `history`: `createdDate`, `creationMethod` (`API`, `DIRECT`, `MEMBER_REFERRED`, `WEBSITE`), `claimed`, `verifiedEmail` (private addresses included), `verifiedPrimaryEmail`, and `lastModifiedDate`, each only when ORCID published it. These are the record's trust signals. The upstream response can exceed 10 MB for a heavy publisher, and the first call for such a record can time out while ORCID builds it (call again); the activities summary is never parsed and the tool output stays small
 - Only publicly visible fields are returned; researchers control per-field visibility. A `notice` names every section with no public data (e.g. "no public email addresses or countries"), since an empty section can be private rather than empty
 - Entry point for building a researcher dossier before fetching works or affiliations
 
@@ -121,7 +123,8 @@ The server also publishes an agent skill, `orcid-guide` (`skill://orcid-guide/SK
 - Without `put_code`, returns the complete grouped funding list in one request with `view: summary`; each preferred summary exposes its optional `putCode`
 - Returns funding type (grant, contract, award, salary-award), funder name and disambiguated ID (Crossref Funder ID/ROR), grant numbers, and funding period
 - One record per ORCID funding group, from its preferred version — a grant deposited twice counts once in `fundingCount`; when the group's versions record distinct award periods, such as renewals under one grant number, `periods` lists each
-- Supply a summary `putCode` as `put_code` for `view: detail`: fetches only that deposit, with its own source and optional description, URL, and `amount: { value?, currency? }`. Decimal text is preserved exactly; missing amounts and currencies stay absent
+- Supply a summary `putCode` as `put_code` for `view: detail`: fetches only that deposit, with its own source and optional description, URL, `amount: { value?, currency? }`, `organizationDefinedType` (the deposit's funding subtype, free text, present only when deposited), and `contributors` (`name?`, `orcidId?`, `role?`: lead, co-lead, supported-by, or other-contribution). Decimal text is preserved exactly; missing amounts and currencies stay absent
+- `contributors` is always present in detail (`[]` when none was deposited, which is not evidence the researcher had no role), in upstream order and whole, and never in summary
 - The deposited description arrives whole (ORCID caps it at 5,000 characters); the text surface represents it as a JSON string so original CRLF line endings survive
 - An unavailable selected deposit returns `funding_not_found` and denied public access returns `funding_inaccessible`; each error explains how to recover
 - Funding comes from the researcher or from member organizations (funders, institutions, search-and-link tools), and each record's `sources` names which; most researchers with real grants have no entries here, and absence does not imply no funding
@@ -153,8 +156,9 @@ The server also publishes an agent skill, `orcid-guide` (`skill://orcid-guide/SK
 
 ### `orcid_resolve_researcher` <sub>tool</sub>
 
-- Returns ranked candidates (`rows` default 5; a larger value, up to 10,000, returns at most 20 at every search stage) with transparent disambiguation signals: name match type (`exact`/`partial`/`other-name`/`none`), institution overlap flag, and anchor type (`doi`/`pmid`/`none`). A notice reports requested and effective sizes when capped, alongside empty-result guidance
-- Name and institution comparisons are case- and accent-insensitive — `José Baselga` and `Jose Baselga` classify the same candidate identically
+- Returns ranked candidates (`rows` default 5; a larger value, up to 10,000, returns at most 20 at every search stage) with transparent disambiguation signals: name match type (`exact`/`partial`/`other-name`/`none`), institution overlap flag, and anchor type (`doi`/`pmid`/`none`). Each candidate carries `otherNames`, the other names on its ORCID record, verbatim
+- One `notice` joins, in order: the requested and effective sizes when capped; that the candidates were found by the DOI or PMID alone because no record matched the name with the anchors supplied (it names every anchor you gave); and, when `totalFound` exceeds the candidates ranked, `The ranking covers N of T records matching queryUsed`, with the `rows` value to call again with (up to 20) and, past 20, how to list the rest: `orcid_search_researchers` with `query` set to `queryUsed` and `start` set to N, which returns them in ORCID's relevance order without match signals. With no candidates it carries the empty-result guidance instead. The notice is plain text in `structuredContent` and escaped only in `content[]`
+- Name and institution comparisons are case- and accent-insensitive — `José Baselga` and `Jose Baselga` classify the same candidate identically — and compare a dash both ways, dropped and as a space: `Min-Jun` matches `Minjun`, `Jean-Pierre` matches `Jean Pierre`, and a dashed record word also offers its parts, so `Wei` matches in `Qian-Wei`
 - When `doi` or `pmid` is provided (bare or as a URL), uses `doi-self` or `pmid-self` as an anchor — researchers who have linked that work to their ORCID record are near-deterministic matches
 - Accepts a full name (`Jennifer Doudna`), a byline with initials (`J. Doudna`, `Jennifer A. Doudna`), or `Family, Given` (`Doudna, Jennifer`, read as `Jennifer Doudna`); an initial counts toward a `partial` match when the candidate's first given name starts with it
 - Searches the exact name phrase first, so a name that matches as written sends one query. Each later stage runs only when every earlier one found nothing: the byline form of any initials with the affiliation, then the phrase and the byline without it, then the other names listed on ORCID records, then each supplied anchor alone
@@ -196,7 +200,7 @@ Agent-friendly output:
 - Provenance — `orcid_resolve_researcher` returns raw disambiguation signals (name match type, institution overlap, anchor type) instead of a synthetic confidence score
 - Who asserted each item — every record from the six activity tools carries `sources`: the person or member organization that added it (a university system, funder, Crossref, Web of Science) and whether the researcher asserted it (`selfAsserted`); grouped works and funding list every source in the group
 - Truncation awareness — pages are sized by count alone and a request over a tool's cap returns the cap with a notice; `orcid_search_researchers` reports `numFound` and a `truncated` flag against the ORCID Public API's 10,000-offset ceiling, with `nextStart` to continue; `orcid_get_works` reports `workCount`, `matchedCount`, and `truncated` against the requested page, and `orcid_get_peer_reviews` `totalCount` and `truncated`, each with `nextOffset` to continue; `orcid_get_research_resources` detail reports `truncated` with `nextItemOffset`
-- Merged accounts — a deprecated ORCID iD is served from the primary record it was merged into, reported under the primary iD with a notice naming both, including on the three endpoints ORCID does not redirect (bulk work detail, research resources, allocation detail)
+- Merged accounts — a deprecated ORCID iD is served from the primary record it was merged into, reported under the primary iD with a notice naming both, including on the three endpoints ORCID does not redirect (bulk work detail, research resources, allocation detail), where a `/person` merge check finds the primary iD; if that check cannot run, the answer opens with a notice that its empty or not-found result is unconfirmed and to call again
 - Partial failure isolation — `orcid_get_work_detail` returns per-put-code errors alongside successfully resolved works instead of failing the whole batch, and names any put-codes past the 100-code fetch cap or missing from ORCID's answer
 - Empty-result guidance — `orcid_get_works`, `orcid_get_affiliations`, `orcid_get_funding`, `orcid_get_peer_reviews`, and `orcid_get_research_resources` return a notice when a result is empty, explaining that this may mean neither the researcher nor a member organization added entries, or that visibility settings hide them, rather than confirmed absence; `orcid_get_profile` names each section with no public data
 - Record text marked as data — in the text output, biographies and abstracts render as blockquotes, names, titles, and organization names are kept to one line, and a deposited citation sits in a code fence it cannot close, so text a researcher or depositing system wrote never reads as the server's own headings or labels; `structuredContent` carries every value verbatim
@@ -255,7 +259,7 @@ See [`.env.example`](./.env.example) for the full list of optional overrides.
 
 ### Local development
 
-Requires [Bun v1.4.0](https://bun.sh/) or higher (or Node.js v24+).
+Requires [Bun v1.4.4](https://bun.sh/) or higher (or Node.js v24+).
 
 - **Clone and install:**
 
