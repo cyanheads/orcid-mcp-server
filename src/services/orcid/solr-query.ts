@@ -4,7 +4,8 @@
  * values (names, affiliations, DOIs, PMIDs, ROR IDs, grant numbers) into Solr field
  * clauses. Unescaped reserved characters break phrase scoping or produce a malformed
  * upstream request (ORCID 500), and an identifier in a form ORCID does not index matches
- * nothing: DOIs and PMIDs are indexed bare, ROR IDs only as `https://ror.org/<lowercase>`.
+ * nothing: PMIDs are indexed bare, ROR IDs only as `https://ror.org/<lowercase>`, and a DOI
+ * as each record deposited it, so its clause matches every letter case and URL form.
  * Both builders also read byline initials out of name values ("J. Doudna"). This is the
  * single place that handles all three, mirroring the one-small-file-per-shared-concern
  * pattern of `orcid-id.ts`.
@@ -66,11 +67,11 @@ export const PMID_INPUT_PATTERN = new RegExp(
 );
 
 /**
- * Reduce a DOI or PMID to the bare identifier ORCID indexes: trim, strip one leading URL,
- * `doi:`, or `PMID:` prefix (matched case-insensitively), and for a PMID drop a URL query
- * string or fragment and one trailing slash. The identifier body keeps its case —
- * `doi-self` matching can be case-sensitive. Validate nonblank caller inputs against the
- * corresponding input pattern before stripping, so a prefix-only value is rejected.
+ * Reduce a DOI or PMID to the bare identifier: trim, strip one leading URL, `doi:`, or
+ * `PMID:` prefix (matched case-insensitively), and for a PMID drop a URL query string or
+ * fragment and one trailing slash. The identifier body keeps its case; {@link doiSelfClause}
+ * matches a DOI in every case. Validate nonblank caller inputs against the corresponding input
+ * pattern before stripping, so a prefix-only value is rejected.
  *
  * @param kind - Which identifier's prefixes to strip.
  * @param value - The raw `doi` or `pmid` input.
@@ -83,6 +84,42 @@ export function stripIdentifierPrefix(kind: 'doi' | 'pmid', value: string): stri
   const tail = bare.search(/[?#]/);
   const path = tail === -1 ? bare : bare.slice(0, tail);
   return (path.endsWith('/') ? path.slice(0, -1) : path).trim();
+}
+
+/**
+ * The prefixes {@link stripIdentifierPrefix} strips from a DOI, as an optional Lucene regex
+ * group matching them in any letter case: the JSON Schema form, with plain groups (Lucene has
+ * no `(?:`) and its colons escaped.
+ */
+const DOI_SELF_PREFIX = `${advertisedPrefix(IDENTIFIER_PREFIXES.doi).replaceAll('(?:', '(').replaceAll(':', '\\:')}?`;
+
+const ASCII_LETTER = /[A-Za-z]/;
+const ASCII_DIGIT = /[0-9]/;
+
+/**
+ * The `doi-self` clause for a bare DOI: one Lucene regex term matching the DOI in any ASCII
+ * letter case, bare or behind any prefix {@link stripIdentifierPrefix} strips. `doi-self`
+ * holds each record's DOI string as deposited, letter case and any `doi.org` or `doi:` wrapper
+ * included, while DOI names are case-insensitive in their ASCII letters.
+ *
+ * Each ASCII letter becomes a two-case class and each digit stays as it is; every other
+ * character is a literal. A backslash becomes the class `[\\]`, so the term never ends in a
+ * backslash that the query parser would read, with the closing `/`, as an escaped slash; any
+ * other character is backslash-escaped, which Lucene's regex syntax reads as that character.
+ * Each DOI character is one position holding one character or one disjoint class, so the
+ * automaton grows linearly with the DOI.
+ *
+ * @param doi - A bare DOI, as {@link stripIdentifierPrefix} returns it.
+ */
+export function doiSelfClause(doi: string): string {
+  let body = '';
+  for (const char of doi) {
+    if (ASCII_LETTER.test(char)) body += `[${char.toLowerCase()}${char.toUpperCase()}]`;
+    else if (ASCII_DIGIT.test(char)) body += char;
+    else if (char === '\\') body += '[\\\\]';
+    else body += `\\${char}`;
+  }
+  return `doi-self:/${DOI_SELF_PREFIX}${body}/`;
 }
 
 /**

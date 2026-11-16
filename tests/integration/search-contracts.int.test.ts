@@ -84,15 +84,26 @@ toolContractSuite(orcidResolveResearcher, {
       input: { name: 'Jennifer Doudna', affiliation: 'University of California, Berkeley' },
       assert: (result) => {
         const structured = result.structuredContent as {
-          candidates: { orcidId: string; nameMatchType: string; institutionOverlap: boolean }[];
+          candidates: {
+            orcidId: string;
+            nameMatchType: string;
+            institutionOverlap: boolean;
+            otherNames: string[];
+          }[];
           primaryTotalFound: number;
         };
         expect(structured.candidates[0]).toMatchObject({
           orcidId: RESEARCHER_ID,
           nameMatchType: 'exact',
           institutionOverlap: true,
+          otherNames: ['J. A. Doudna'],
         });
+        expect(structured.candidates[1]).toMatchObject({ otherNames: [] });
         expect(structured.primaryTotalFound).toBe(2);
+        const text = result.content.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
+        expect(text).toContain(
+          '**Credit Name:** Jennifer A. Doudna\n**Other Names:** J. A. Doudna\n',
+        );
       },
     },
   ],

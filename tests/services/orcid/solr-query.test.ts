@@ -1,12 +1,14 @@
 /**
  * @fileoverview Tests for the shared Solr/Lucene query-value escaper (#18), the DOI/PMID
- * URL-prefix stripper (#44), the ROR ID grammar, normalizer, and check digits (#55), and the
- * name-word splitter and initial test (#53).
+ * URL-prefix stripper (#44), the `doi-self` regex clause (#84), the ROR ID grammar,
+ * normalizer, and check digits (#55), and the name-word splitter and initial test (#53).
  * @module tests/services/orcid/solr-query.test
  */
 
 import { describe, expect, it } from 'vitest';
 import {
+  DOI_INPUT_PATTERN,
+  doiSelfClause,
   escapeSolrValue,
   isExclusionOnlyQuery,
   isInitial,
@@ -16,6 +18,7 @@ import {
   splitNameWords,
   stripIdentifierPrefix,
 } from '@/services/orcid/solr-query.js';
+import { expectLinearCpu } from '../../helpers/cpu-growth.js';
 
 describe('escapeSolrValue', () => {
   it('escapes an embedded double quote', () => {
@@ -174,6 +177,187 @@ describe('stripIdentifierPrefix', () => {
       // timer noise on the small case from inflating the ratio.
       expect(t80! / Math.max(t5!, 1)).toBeLessThan(64);
       expect(t80!).toBeLessThan(500);
+    });
+  });
+});
+
+describe('doiSelfClause (#84)', () => {
+  /** The prefix group: every form `stripIdentifierPrefix` strips, in any letter case, or none. */
+  const PREFIX = String.raw`(([hH][tT][tT][pP][sS]?\:\/\/)?([dD][xX]\.)?[dD][oO][iI]\.[oO][rR][gG]\/|[dD][oO][iI]\:)?`;
+
+  /** The Lucene regex between the slashes of a `doi-self:/…/` clause. */
+  function regexBody(clause: string): string {
+    const match = /^doi-self:\/(.*)\/$/s.exec(clause);
+    if (!match) throw new Error(`not a doi-self regex clause: ${clause}`);
+    return match[1]!;
+  }
+
+  /**
+   * Whether the clause matches a `doi-self` value as Lucene matches it: against the whole
+   * value, and with the only constructs the clause uses — a backslash before a character other
+   * than a letter or digit, `[xX]` classes, and `( | )?` groups — meaning what they mean in a
+   * JS regex without the `u` flag.
+   */
+  const matches = (clause: string, deposit: string) =>
+    new RegExp(`^(?:${regexBody(clause)})$`).test(deposit);
+
+  /**
+   * Whether `token`, from its opening `/` through a closing one, is one regex term under the
+   * query grammar (`"/" (~["*","/"] | "\\/") (~["/"] | "\\/")* "/"`): a first character other
+   * than `*`, and every `/` inside it written as `\/`.
+   */
+  function isRegexTerm(token: string): boolean {
+    const inner = token.slice(1, -1);
+    if (token.length < 3 || !token.endsWith('/') || inner.startsWith('*')) return false;
+    for (let i = 0; i < inner.length; i++) {
+      if (inner[i] === '/' && inner[i - 1] !== '\\') return false;
+    }
+    return true;
+  }
+
+  /**
+   * Where the regex term opening at `start` ends: the query parser's tokenizer takes the
+   * longest token, so the last `/` that still closes a well-formed term.
+   */
+  function regexTermEnd(query: string, start: number): number {
+    let end = -1;
+    for (let i = query.indexOf('/', start + 1); i !== -1; i = query.indexOf('/', i + 1)) {
+      if (isRegexTerm(query.slice(start, i + 1))) end = i + 1;
+    }
+    return end;
+  }
+
+  it('compiles the DOI to one regex: two-case letters, escaped punctuation, optional prefix', () => {
+    expect(doiSelfClause('10.1088/1361-648X/aab193')).toBe(
+      String.raw`doi-self:/${PREFIX}10\.1088\/1361\-648[xX]\/[aA][aA][bB]193/`,
+    );
+  });
+
+  it.each(['10.1088/1361-648x/aab193', '10.1088/1361-648X/AAB193'])(
+    'compiles %s to the same clause as the registered case',
+    (doi) => {
+      expect(doiSelfClause(doi)).toBe(doiSelfClause('10.1088/1361-648X/aab193'));
+    },
+  );
+
+  it.each([
+    '10.1088/1361-648X/aab193',
+    '10.1088/1361-648x/aab193',
+    '10.1088/1361-648X/AAB193',
+    'https://doi.org/10.1088/1361-648X/aab193',
+    'http://dx.doi.org/10.1088/1361-648x/aab193',
+    'HTTPS://DX.DOI.ORG/10.1088/1361-648X/AAB193',
+    'doi.org/10.1088/1361-648X/aab193',
+    'dx.doi.org/10.1088/1361-648X/aab193',
+    'doi:10.1088/1361-648X/aab193',
+    'DOI:10.1088/1361-648x/aab193',
+  ])('matches the deposit %s', (deposit) => {
+    expect(matches(doiSelfClause('10.1088/1361-648x/aab193'), deposit)).toBe(true);
+  });
+
+  it.each([
+    // A longer DOI that starts with this one: a version, or a work this one is part of.
+    '10.1088/1361-648X/aab193.v1',
+    '10.1088/1361-648X/aab1934',
+    '10.1088/1361-648X/aab19',
+    '10.1088/1361-648Y/aab193',
+    // Wrappers outside the prefixes the input strips.
+    'www.doi.org/10.1088/1361-648X/aab193',
+    'ftp://doi.org/10.1088/1361-648X/aab193',
+    'doi: 10.1088/1361-648X/aab193',
+    '{10.1088/1361-648X/aab193}',
+    'https://doi.org/doi:10.1088/1361-648X/aab193',
+  ])('does not match %s', (deposit) => {
+    expect(matches(doiSelfClause('10.1088/1361-648X/aab193'), deposit)).toBe(false);
+  });
+
+  it('reaches a mixed-case-only deposit from the lowercase DOI Crossref returns (#44)', () => {
+    const clause = doiSelfClause('10.1371/journal.pmed.0020124');
+    expect(matches(clause, '10.1371/journal.PMED.0020124')).toBe(true);
+    expect(matches(clause, '10.1371/JOURNAL.PMED.0020124')).toBe(true);
+    expect(clause).toBe(doiSelfClause('10.1371/journal.PMED.0020124'));
+  });
+
+  it('accepts exactly the prefixes stripIdentifierPrefix strips', () => {
+    const bare = '10.5555/12345680';
+    for (const prefix of [
+      'https://doi.org/',
+      'http://doi.org/',
+      'https://dx.doi.org/',
+      'HTTP://DX.DOI.ORG/',
+      'doi.org/',
+      'dx.doi.org/',
+      'doi:',
+      'DoI:',
+      'https://',
+      'www.doi.org/',
+      'dx.',
+      'doi',
+      'https://doi.org',
+      'pmid:',
+    ]) {
+      expect(matches(doiSelfClause(bare), `${prefix}${bare}`), prefix).toBe(
+        stripIdentifierPrefix('doi', `${prefix}${bare}`) === bare,
+      );
+    }
+  });
+
+  /** DOIs the input pattern admits whose characters are syntax somewhere in the query. */
+  const HOSTILE = [
+    '10.1002/(SICI)1099-0844(199912)17:4<290::AID-CBF849>3.0.CO;2-P',
+    '10.1000/x"OR*:*',
+    '10.1000/a\\b',
+    '10.1000/x\\',
+    '10.1000/x\\/',
+    '10.1000/x\\\\',
+    '10.1000/x/',
+    '10.1000/a/b//c',
+    '10.1000/#@&~<1-9>{2}|.+?^$[a]',
+    '10.1000/*',
+    '10.1021/ja010958+',
+    '10.1000/café-ŁÓDŹ',
+    '10.1000/𝐀𝐁',
+    '10.1000/漢字',
+    '10.9999999/0123456789',
+  ];
+
+  it.each(HOSTILE)('keeps %s one regex term, matching only itself', (doi) => {
+    expect(DOI_INPUT_PATTERN.test(doi)).toBe(true);
+    const clause = doiSelfClause(doi);
+    // A later clause holding an escaped slash is where a mis-closed term would run on to.
+    const query = `${clause} AND grant-numbers:"a\\/b" AND (keyword:x/y)`;
+    expect(regexTermEnd(query, clause.indexOf('/'))).toBe(clause.length);
+    expect(matches(clause, doi)).toBe(true);
+    expect(
+      matches(
+        clause,
+        doi.replace(/[a-z]/g, (letter) => letter.toUpperCase()),
+      ),
+    ).toBe(true);
+    expect(matches(clause, `${doi}x`)).toBe(false);
+    expect(matches(clause, doi.slice(0, -1))).toBe(false);
+  });
+
+  it('writes a backslash as a class, so the term never ends in a backslash', () => {
+    expect(doiSelfClause('10.1000/x\\')).toBe(String.raw`doi-self:/${PREFIX}10\.1000\/[xX][\\]/`);
+  });
+
+  it('escapes non-ASCII characters and leaves their case alone', () => {
+    expect(doiSelfClause('10.1000/é')).toBe(String.raw`doi-self:/${PREFIX}10\.1000\/\é/`);
+    expect(matches(doiSelfClause('10.1000/é'), '10.1000/É')).toBe(false);
+  });
+
+  describe('build cost', () => {
+    it.each([
+      ['a long digit run', (n: number) => `10.1/${'1'.repeat(n)}`, 320_000],
+      ['a long letter run', (n: number) => `10.1/${'aB'.repeat(n / 2)}`, 320_000],
+      ['a punctuation run', (n: number) => `10.1/${'(<"*\\/'.repeat(n / 6)}`, 320_000],
+      ['repeated prefix openers', (n: number) => `${'doi:'.repeat(n / 4)}10.1/x`, 320_000],
+      ['non-ASCII text', (n: number) => `10.1/${'é𝐀漢'.repeat(n / 4)}`, 320_000],
+      ['one long line ending in a break', (n: number) => `${'§1 x'.repeat(n / 4)}\ny`, 320_000],
+      ['breaks throughout', (n: number) => '  \r\n'.repeat(n / 4), 320_000],
+    ])('grows linearly on %s', { timeout: 0 }, (_label, build, maxSize) => {
+      expectLinearCpu(doiSelfClause, build, { maxSize, microsPerChar: 1 });
     });
   });
 });

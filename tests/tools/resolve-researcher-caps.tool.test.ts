@@ -42,7 +42,8 @@ describe('resolver candidate bounds', () => {
       rows: 10000,
     });
     expect(result.isError).not.toBe(true);
-    const anchors = 'doi-self:"10.0000\\/wrong" AND pmid-self:"22745249"';
+    const doiClause = String.raw`doi-self:/(([hH][tT][tT][pP][sS]?\:\/\/)?([dD][xX]\.)?[dD][oO][iI]\.[oO][rR][gG]\/|[dD][oO][iI]\:)?10\.0000\/[wW][rR][oO][nN][gG]/`;
+    const anchors = `${doiClause} AND pmid-self:"22745249"`;
     const phrase = 'given-and-family-names:"J. Doudna"';
     const byline = 'given-and-family-names:("Doudna" AND J*)';
     expect(expandedSearch.mock.calls.map(([request]) => request)).toEqual([
@@ -51,7 +52,7 @@ describe('resolver candidate bounds', () => {
       { q: `${phrase} AND ${anchors}`, rows: 20 },
       { q: `${byline} AND ${anchors}`, rows: 20 },
       { q: `other-names:"J. Doudna" AND ${anchors}`, rows: 20 },
-      { q: 'doi-self:"10.0000\\/wrong"', rows: 20 },
+      { q: doiClause, rows: 20 },
       { q: 'pmid-self:"22745249"', rows: 20 },
     ]);
     expect(result.structuredContent).toMatchObject({
@@ -118,7 +119,7 @@ describe('resolver candidate bounds', () => {
     expect(result.structuredContent).toMatchObject({
       totalFound: 37,
       primaryTotalFound: 37,
-      notice: `Requested rows ${rows}; using the maximum of 20 candidates per search stage.`,
+      notice: `Requested rows ${rows}; using the maximum of 20 candidates per search stage. The ranking covers 20 of 37 records matching queryUsed. To list the records not ranked here, call orcid_search_researchers with query set to queryUsed and start: 20; it returns them in ORCID's relevance order, without match signals.`,
     });
     expect((result.structuredContent as { candidates: unknown[] }).candidates).toHaveLength(20);
     expect(JSON.stringify(result.content)).toContain(`Requested rows ${rows}`);
@@ -135,7 +136,10 @@ describe('resolver candidate bounds', () => {
       rows: rows ?? 5,
     });
     expect(result.structuredContent).toMatchObject({ totalFound: 37, primaryTotalFound: 37 });
-    expect(result.structuredContent).not.toHaveProperty('notice');
+    // No clamp is disclosed; the one candidate returned ranks 1 of the 37 matches (#85).
+    const notice = (result.structuredContent as { notice: string }).notice;
+    expect(notice).not.toContain('Requested rows');
+    expect(notice).toMatch(/^The ranking covers 1 of 37 records matching queryUsed\. /);
     expect(JSON.stringify(result.content)).toContain('0000-0001-9522-8779');
   });
 });

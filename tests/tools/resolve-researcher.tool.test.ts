@@ -20,6 +20,11 @@ beforeEach(() => {
   mockExpandedSearch.mockRejectedValue(new Error('unmocked fetch'));
 });
 
+/** The group a `doi-self` clause opens with: its URL and label prefixes, in any letter case. */
+const DOI_PREFIX = String.raw`(([hH][tT][tT][pP][sS]?\:\/\/)?([dD][xX]\.)?[dD][oO][iI]\.[oO][rR][gG]\/|[dD][oO][iI]\:)?`;
+/** The `doi-self` regex clause for 10.1126/science.1225829, in any letter case (#84). */
+const SCIENCE_DOI = String.raw`doi-self:/${DOI_PREFIX}10\.1126\/[sS][cC][iI][eE][nN][cC][eE]\.1225829/`;
+
 const doudnaResult = {
   orcidId: '0000-0001-9522-8779',
   givenNames: 'Jennifer',
@@ -88,8 +93,9 @@ describe('orcidResolveResearcher', () => {
     const enrichment = getEnrichment(ctx);
 
     expect(result.candidates[0]!.anchorType).toBe('doi');
-    // DOI slash is Solr-reserved, so the executed clause carries the escaped form.
-    expect(enrichment.queryUsed).toContain('doi-self:"10.1126\\/science.1225829"');
+    expect(enrichment.queryUsed).toBe(
+      `given-and-family-names:"Jennifer Doudna" AND ${SCIENCE_DOI}`,
+    );
   });
 
   it('falls back to relaxed query when primary returns nothing and affiliation provided', async () => {
@@ -126,7 +132,7 @@ describe('orcidResolveResearcher', () => {
     await orcidResolveResearcher.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
 
-    expect(enrichment.relaxedQuery).toBe('doi-self:"10.1126\\/science.1225829"');
+    expect(enrichment.relaxedQuery).toBe(SCIENCE_DOI);
   });
 
   it('adds notice enrichment when no candidates found and returns empty list', async () => {
@@ -143,8 +149,7 @@ describe('orcidResolveResearcher', () => {
   });
 
   it('sorts candidates: exact before partial', async () => {
-    // "Jennifer Doudna-Smith" — tokens ['jennifer', 'doudnasmith'] — 1 overlap with 'Jennifer Doudna'
-    // Use a name that shares 2 tokens to trigger partial: "Jennifer Doudna Lopez" → tokens overlap with "Jennifer Doudna"
+    // "Jennifer Doudna Lopez" shares two words with "Jennifer Doudna": partial, not exact.
     const partialMatch = {
       orcidId: '0000-0002-1111-2222',
       givenNames: 'Jennifer Doudna',
@@ -217,6 +222,7 @@ describe('orcidResolveResearcher', () => {
           orcidUri: 'https://orcid.org/0000-0001-9522-8779',
           givenNames: 'Jennifer',
           familyNames: 'Doudna',
+          otherNames: [],
           institutionNames: ['UC Berkeley'],
           nameMatchType: 'exact',
           institutionOverlap: true,
@@ -314,20 +320,20 @@ describe('orcidResolveResearcher — count/query pairing (#15)', () => {
 
     // Four upstream calls: primary, drop-affiliation, other names, anchor-only.
     expect(mockExpandedSearch.mock.calls.map(([params]) => params.q)).toEqual([
-      'given-and-family-names:"Jennifer Doudna" AND doi-self:"10.1126\\/science.1225829" AND affiliation-org-name:"University of California Berkeley"',
-      'given-and-family-names:"Jennifer Doudna" AND doi-self:"10.1126\\/science.1225829"',
-      'other-names:"Jennifer Doudna" AND doi-self:"10.1126\\/science.1225829"',
-      'doi-self:"10.1126\\/science.1225829"',
+      `given-and-family-names:"Jennifer Doudna" AND ${SCIENCE_DOI} AND affiliation-org-name:"University of California Berkeley"`,
+      `given-and-family-names:"Jennifer Doudna" AND ${SCIENCE_DOI}`,
+      `other-names:"Jennifer Doudna" AND ${SCIENCE_DOI}`,
+      SCIENCE_DOI,
     ]);
 
-    // Effective query is the anchor-only stage that finally matched (DOI slash escaped).
-    expect(enrichment.queryUsed).toBe('doi-self:"10.1126\\/science.1225829"');
+    // Effective query is the anchor-only stage that finally matched.
+    expect(enrichment.queryUsed).toBe(SCIENCE_DOI);
     expect(enrichment.queryUsed).toBe(enrichment.relaxedQuery);
     expect(enrichment.totalFound).toBe(4); // from the anchor-only response
 
     // primaryQuery still describes the fully-constrained first attempt.
     expect(enrichment.primaryQuery).toContain('affiliation-org-name:');
-    expect(enrichment.primaryQuery).toContain('doi-self:"10.1126\\/science.1225829"');
+    expect(enrichment.primaryQuery).toContain(SCIENCE_DOI);
     expect(enrichment.primaryTotalFound).toBe(0);
   });
 });
@@ -387,7 +393,31 @@ describe('orcidResolveResearcher — dual DOI+PMID anchor fallback (#19)', () =>
 
     expect(mockExpandedSearch).toHaveBeenCalledTimes(3); // combined, other names, DOI-only (PMID skipped)
     expect(result.candidates[0]!.anchorType).toBe('doi');
-    expect(enrichment.relaxedQuery).toBe('doi-self:"10.1126\\/science.1225829"');
+    expect(enrichment.relaxedQuery).toBe(SCIENCE_DOI);
+  });
+
+  it('names the DOI in the empty-result notice when neither anchor finds anything', async () => {
+    // Every stage is empty, the PMID-only one last: no anchor answered, so the notice keeps
+    // the highest-precedence anchor rather than the last one tried.
+    mockExpandedSearch.mockResolvedValue({ numFound: 0, results: [] });
+    const notice =
+      'No ORCID records found matching "Jennifer Doudna" with the provided DOI anchor. Verify the DOI is correct or try without the anchor using orcid_search_researchers.';
+
+    const result = await runToolContract(orcidResolveResearcher, {
+      name: 'Jennifer Doudna',
+      doi: '10.0000/not-real',
+      pmid: '00000000',
+    });
+    const text = result.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('\n');
+
+    // Combined primary, other names, DOI-only, PMID-only.
+    expect(mockExpandedSearch).toHaveBeenCalledTimes(4);
+    expect(result.structuredContent).toMatchObject({
+      candidates: [],
+      relaxedQuery: 'pmid-self:"00000000"',
+      notice,
+    });
+    expect(text.split('\n').filter((line) => line.startsWith('> '))).toEqual([`> ${notice}`]);
   });
 });
 
@@ -419,7 +449,7 @@ describe('orcidResolveResearcher — blank name is rejected at the schema (#34)'
   });
 });
 
-describe('orcidResolveResearcher — DOI/PMID URL anchors (#44)', () => {
+describe('orcidResolveResearcher — DOI/PMID URL anchors (#44, #84)', () => {
   async function primaryQuery(raw: Record<string, unknown>): Promise<string> {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 1, results: [doudnaResult] });
     const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
@@ -432,10 +462,41 @@ describe('orcidResolveResearcher — DOI/PMID URL anchors (#44)', () => {
     'https://dx.doi.org/10.1126/science.1225829',
     'doi:10.1126/science.1225829',
     'Doi:10.1126/science.1225829',
+    '10.1126/SCIENCE.1225829',
   ])('anchors %s exactly like the bare DOI', async (doi) => {
     expect(await primaryQuery({ name: 'Jennifer Doudna', doi })).toBe(
-      'given-and-family-names:"Jennifer Doudna" AND doi-self:"10.1126\\/science.1225829"',
+      `given-and-family-names:"Jennifer Doudna" AND ${SCIENCE_DOI}`,
     );
+  });
+
+  it('resolves the named researcher from the primary query whatever case the DOI is given in', async () => {
+    const jamesBeilstenEdmands = {
+      ...doudnaResult,
+      orcidId: '0000-0003-1565-5328',
+      givenNames: 'James',
+      familyNames: 'Beilsten-Edmands',
+      institutionNames: [],
+    };
+    const primary = String.raw`given-and-family-names:"James Beilsten\-Edmands" AND doi-self:/${DOI_PREFIX}10\.1088\/1361\-648[xX]\/[aA][aA][bB]193/`;
+    mockExpandedSearch.mockImplementation(async ({ q }: { q: string }) => {
+      if (q !== primary) throw new Error(`unmocked query: ${q}`);
+      return { numFound: 1, results: [jamesBeilstenEdmands] };
+    });
+
+    for (const doi of ['10.1088/1361-648X/aab193', '10.1088/1361-648x/aab193']) {
+      mockExpandedSearch.mockClear();
+      const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
+      const result = await orcidResolveResearcher.handler(
+        orcidResolveResearcher.input.parse({ name: 'James Beilsten-Edmands', doi }),
+        ctx,
+      );
+
+      expect(mockExpandedSearch).toHaveBeenCalledTimes(1);
+      expect(result.candidates.map((c) => [c.orcidId, c.nameMatchType, c.anchorType])).toEqual([
+        ['0000-0003-1565-5328', 'exact', 'doi'],
+      ]);
+      expect(getEnrichment(ctx).queryUsed).toBe(primary);
+    }
   });
 
   it.each([

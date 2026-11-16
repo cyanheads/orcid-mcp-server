@@ -71,6 +71,7 @@ describe('orcid-mcp-server definition smoke test', () => {
     expect(result).toEqual(expect.schemaMatching(orcidResolveResearcher.output));
     expect(result.candidates[0]).toMatchObject({
       orcidId: RESEARCHER_ID,
+      otherNames: ['J. A. Doudna'],
       nameMatchType: 'exact',
       institutionOverlap: true,
       anchorType: 'none',
@@ -136,7 +137,9 @@ describe('orcid-mcp-server definition smoke test', () => {
 
     expect(result).toEqual(expect.schemaMatching(orcidGetFunding.output));
     expect(result.funding[0]?.grantNumbers).toEqual(['R01GM000000']);
-    expect(renderedText(orcidGetFunding.format!(result))).toContain(
+    // The handler's return is typed by the output schema's input side, where `view`'s
+    // `.default()` makes it optional; format() receives the parsed value.
+    expect(renderedText(orcidGetFunding.format!(orcidGetFunding.output.parse(result)))).toContain(
       'National Institutes of Health',
     );
   });

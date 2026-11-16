@@ -22,6 +22,9 @@ beforeEach(() => {
   mockExpandedSearch.mockRejectedValue(new Error('unmocked fetch'));
 });
 
+/** The `doi-self` regex clause for 10.1126/science.1225829, in any letter case (#84). */
+const SCIENCE_DOI = String.raw`doi-self:/(([hH][tT][tT][pP][sS]?\:\/\/)?([dD][xX]\.)?[dD][oO][iI]\.[oO][rR][gG]\/|[dD][oO][iI]\:)?10\.1126\/[sS][cC][iI][eE][nN][cC][eE]\.1225829/`;
+
 const baseCandidate = {
   orcidId: '0000-0001-9522-8779',
   givenNames: 'Jennifer',
@@ -99,7 +102,7 @@ describe('orcidResolveResearcher — name match types', () => {
     const candidateWithOtherName = {
       ...baseCandidate,
       givenNames: 'Jennifer Anne',
-      familyNames: 'Doudna-Chen',
+      familyNames: 'Chen',
       otherNames: ['Jennifer Doudna'],
     };
     mockExpandedSearch.mockResolvedValueOnce({
@@ -109,6 +112,23 @@ describe('orcidResolveResearcher — name match types', () => {
 
     const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
     const input = orcidResolveResearcher.input.parse({ name: 'Jennifer Doudna' });
+    const result = await orcidResolveResearcher.handler(input, ctx);
+
+    expect(result.candidates[0]!.nameMatchType).toBe('other-name');
+  });
+
+  it('detects other-name match on an equal other name that word overlap misses', async () => {
+    // The input's initial counts only when a name's first word starts with it, and this other
+    // name starts with "Doudna", so word overlap finds one word: only equality reaches other-name.
+    mockExpandedSearch.mockResolvedValueOnce({
+      numFound: 1,
+      results: [
+        { ...baseCandidate, givenNames: 'Someone', familyNames: 'Else', otherNames: ['Doudna J.'] },
+      ],
+    });
+
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
+    const input = orcidResolveResearcher.input.parse({ name: 'Doudna J.' });
     const result = await orcidResolveResearcher.handler(input, ctx);
 
     expect(result.candidates[0]!.nameMatchType).toBe('other-name');
@@ -324,7 +344,7 @@ describe('orcidResolveResearcher — Solr value escaping (#18)', () => {
     expect(callParams.q).toContain('affiliation-org-name:"Foo \\& Bar \\(Institute\\)"');
   });
 
-  it('escapes the slash in a DOI anchor clause', async () => {
+  it('anchors the DOI as one regex term with its punctuation escaped (#84)', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 1, results: [baseCandidate] });
 
     const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
@@ -336,7 +356,7 @@ describe('orcidResolveResearcher — Solr value escaping (#18)', () => {
 
     expect(mockExpandedSearch).toHaveBeenCalled();
     const [callParams] = mockExpandedSearch.mock.calls[0]!;
-    expect(callParams.q).toContain('doi-self:"10.1126\\/science.1225829"');
+    expect(callParams.q).toBe(`given-and-family-names:"Jennifer Doudna" AND ${SCIENCE_DOI}`);
   });
 });
 
@@ -424,6 +444,7 @@ describe('orcidResolveResearcher — format edge cases', () => {
           givenNames: 'Jennifer',
           familyNames: 'Doudna',
           creditName: 'Jennifer A. Doudna',
+          otherNames: [],
           institutionNames: ['UC Berkeley'],
           nameMatchType: 'exact',
           institutionOverlap: true,
@@ -444,6 +465,7 @@ describe('orcidResolveResearcher — format edge cases', () => {
         {
           orcidId: '0000-0001-9522-8779',
           orcidUri: 'https://orcid.org/0000-0001-9522-8779',
+          otherNames: [],
           institutionNames: [],
           nameMatchType: 'exact',
           institutionOverlap: false,
@@ -463,6 +485,7 @@ describe('orcidResolveResearcher — format edge cases', () => {
         {
           orcidId: '0000-0001-9522-8779',
           orcidUri: 'https://orcid.org/0000-0001-9522-8779',
+          otherNames: [],
           institutionNames: [],
           nameMatchType: 'exact',
           institutionOverlap: false,
@@ -474,6 +497,64 @@ describe('orcidResolveResearcher — format edge cases', () => {
     const blocks = orcidResolveResearcher.format!(output);
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('Candidates (1)');
+  });
+
+  it('lists other names after the credit name, each on the one line (#85)', () => {
+    const output = orcidResolveResearcher.output.parse({
+      candidates: [
+        {
+          orcidId: '0000-0002-1825-0097',
+          orcidUri: 'https://orcid.org/0000-0002-1825-0097',
+          givenNames: 'Josiah',
+          familyNames: 'Carberry',
+          creditName: 'J. S. Carberry',
+          otherNames: ['Josiah Stinkney Carberry', 'J.\r\nCarberry'],
+          institutionNames: [],
+          nameMatchType: 'partial',
+          institutionOverlap: false,
+          anchorType: 'none',
+        },
+      ],
+    });
+
+    const text = (orcidResolveResearcher.format!(output)[0] as { text: string }).text;
+    expect(text).toContain(
+      '**Credit Name:** J. S. Carberry\n**Other Names:** Josiah Stinkney Carberry, J. Carberry\n**Name Match:** partial\n',
+    );
+  });
+});
+
+describe('orcidResolveResearcher — candidate other names (#85)', () => {
+  it('relays an empty other-names list as [] and renders no Other Names line', async () => {
+    mockExpandedSearch.mockResolvedValueOnce({ numFound: 1, results: [baseCandidate] });
+
+    const result = await runToolContract(orcidResolveResearcher, { name: 'Jennifer Doudna' });
+    const text = result.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('\n');
+
+    expect(result.structuredContent).toMatchObject({ candidates: [{ otherNames: [] }] });
+    expect(text).toContain('**Family Names:** Doudna\n**Name Match:** exact\n');
+    expect(text).not.toContain('Other Names');
+  });
+
+  it('relays every other name verbatim, in record order', async () => {
+    // Neither sorted nor reverse-sorted, and the expected list is its own literal, so a sort,
+    // a reversal, or an in-place change to the record's array each fails the assertion.
+    mockExpandedSearch.mockResolvedValueOnce({
+      numFound: 1,
+      results: [
+        { ...baseCandidate, otherNames: ['Jennifer Anne Doudna', 'Дудна', 'J. A. Doudna'] },
+      ],
+    });
+
+    const result = await runToolContract(orcidResolveResearcher, { name: 'Jennifer Doudna' });
+    const text = result.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('\n');
+
+    expect(result.structuredContent).toMatchObject({
+      candidates: [
+        { nameMatchType: 'exact', otherNames: ['Jennifer Anne Doudna', 'Дудна', 'J. A. Doudna'] },
+      ],
+    });
+    expect(text).toContain('**Other Names:** Jennifer Anne Doudna, Дудна, J. A. Doudna\n');
   });
 });
 
@@ -601,9 +682,7 @@ describe('orcidResolveResearcher — query_failed contract (#31)', () => {
 
     expect(mockExpandedSearch).toHaveBeenCalledTimes(4);
     expect(err.data?.reason).toBe('query_failed');
-    expect(err.message).toBe(
-      'ORCID could not complete the search for query: doi-self:"10.1126\\/science.1225829"',
-    );
+    expect(err.message).toBe(`ORCID could not complete the search for query: ${SCIENCE_DOI}`);
   });
 
   it('rethrows a transient upstream failure unchanged so the retryable signal survives', async () => {
@@ -647,6 +726,61 @@ describe('orcidResolveResearcher — query_failed contract (#31)', () => {
 
     expect(err).toBe(upstream);
     expect(mockExpandedSearch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('orcidResolveResearcher — a dash in a name both joins and separates words', () => {
+  async function matchTypeFor(
+    name: string,
+    candidate: Partial<ExpandedSearchResult>,
+  ): Promise<string> {
+    mockExpandedSearch.mockResolvedValueOnce({
+      numFound: 1,
+      results: [{ ...baseCandidate, otherNames: [], ...candidate }],
+    });
+    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
+    const result = await orcidResolveResearcher.handler(
+      orcidResolveResearcher.input.parse({ name }),
+      ctx,
+    );
+    return result.candidates[0]!.nameMatchType;
+  }
+
+  it.each([
+    // A dash reads as a space, on either side and in any dash character.
+    ['Jean Pierre Martin', { givenNames: 'Jean-Pierre', familyNames: 'Martin' }, 'exact'],
+    ['Jean Pierre Martin', { givenNames: 'Jean–Pierre', familyNames: 'Martin' }, 'exact'],
+    ['Jean-Pierre Martin', { givenNames: 'Jean Pierre', familyNames: 'Martin' }, 'exact'],
+    // A dash still joins: a concatenated spelling stays an exact match.
+    ['Minjun Kim', { givenNames: 'Min-Jun', familyNames: 'Kim' }, 'exact'],
+    ['Min-Jun Kim', { givenNames: 'Minjun', familyNames: 'Kim' }, 'exact'],
+    // Each part of a dashed record word counts toward a partial match.
+    ['Wei Wang', { givenNames: 'Qian-Wei', familyNames: 'Wang' }, 'partial'],
+    ['Jennifer Doudna', { givenNames: 'Jennifer Anne', familyNames: 'Doudna-Chen' }, 'partial'],
+    // Each part of a dashed input word counts too, as the spaced input's words do.
+    ['Jean-Luc Martin', { givenNames: 'Jean Luc', familyNames: 'Martin Carruitero' }, 'partial'],
+    ['Jean Luc Martin', { givenNames: 'Jean Luc', familyNames: 'Martin Carruitero' }, 'partial'],
+    ['Jean-Luc Martin', { givenNames: 'Paul', familyNames: 'Martin' }, 'none'],
+    // Other names read a dash the same way.
+    [
+      'Jean Pierre Martin',
+      { givenNames: 'J.', familyNames: 'Martin', otherNames: ['Jean-Pierre Martin'] },
+      'other-name',
+    ],
+    [
+      'Wei Wang',
+      { givenNames: 'Qian', familyNames: 'Li', otherNames: ['Qian-Wei Wang'] },
+      'other-name',
+    ],
+    [
+      'Jean-Luc Martin',
+      { givenNames: 'J.', familyNames: 'Dupont', otherNames: ['Jean Luc Martin Carruitero'] },
+      'other-name',
+    ],
+    // One shared word is still not enough.
+    ['Wei Wang', { givenNames: 'Qian-Wei', familyNames: 'Li' }, 'none'],
+  ])('"%s" against %o is %s', async (name, candidate, expected) => {
+    expect(await matchTypeFor(name, candidate)).toBe(expected);
   });
 });
 

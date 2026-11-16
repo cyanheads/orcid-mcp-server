@@ -32,6 +32,15 @@ async function compiledQuery(raw: Record<string, unknown>): Promise<string> {
   return callParams.q;
 }
 
+/** The group a `doi-self` clause opens with: its URL and label prefixes, in any letter case. */
+const DOI_PREFIX = String.raw`(([hH][tT][tT][pP][sS]?\:\/\/)?([dD][xX]\.)?[dD][oO][iI]\.[oO][rR][gG]\/|[dD][oO][iI]\:)?`;
+/** The `doi-self` regex clause for 10.1126/science.1225829, in any letter case (#84). */
+const SCIENCE_DOI = String.raw`doi-self:/${DOI_PREFIX}10\.1126\/[sS][cC][iI][eE][nN][cC][eE]\.1225829/`;
+
+/** Whether a compiled `doi-self:/…/` clause matches a deposited DOI string, as Lucene matches a whole term. */
+const matchesDeposit = (clause: string, deposit: string) =>
+  new RegExp(`^(?:${clause.slice('doi-self:/'.length, -1)})$`).test(deposit);
+
 describe('orcidSearchResearchers — Solr clause building', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -63,8 +72,8 @@ describe('orcidSearchResearchers — Solr clause building', () => {
 
     expect(mockExpandedSearch).toHaveBeenCalled();
     const [callParams] = mockExpandedSearch.mock.calls[0]!;
-    // DOI slash is Solr-reserved — escaped so the value stays a literal, not a regex.
-    expect(callParams.q).toBe('doi-self:"10.1126\\/science.1225829"');
+    // One regex term: each letter in either case, every other character a literal (#84).
+    expect(callParams.q).toBe(SCIENCE_DOI);
   });
 
   it('builds pmid-self clause for pmid param', async () => {
@@ -147,7 +156,7 @@ describe('orcidSearchResearchers — Solr clause building', () => {
 
     const [callParams] = mockExpandedSearch.mock.calls[0]!;
     expect(callParams.q).toBe(
-      'given-names:"Jennifer" AND family-name:"Doudna" AND affiliation-org-name:"UC Berkeley" AND keyword:"CRISPR" AND ror-org-id:"https\\:\\/\\/ror.org\\/01an7q238" AND doi-self:"10.1126\\/science.1225829" AND pmid-self:"22745249" AND (email:*berkeley.edu)',
+      `given-names:"Jennifer" AND family-name:"Doudna" AND affiliation-org-name:"UC Berkeley" AND keyword:"CRISPR" AND ror-org-id:"https\\:\\/\\/ror.org\\/01an7q238" AND ${SCIENCE_DOI} AND pmid-self:"22745249" AND (email:*berkeley.edu)`,
     );
   });
 
@@ -169,15 +178,12 @@ describe('orcidSearchResearchers — Solr clause building', () => {
     expect(callParams.q).toBe('family-name:"Doudna"');
   });
 
-  it('forwards a DOI with its case intact', async () => {
-    mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
+  it('reaches a mixed-case deposit from the DOI in any letter case (#44, #84)', async () => {
+    const q = await compiledQuery({ doi: '10.1371/journal.pmed.0020124' });
 
-    const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
-    const input = orcidSearchResearchers.input.parse({ doi: '10.1371/journal.PMED.0020124' });
-    await orcidSearchResearchers.handler(input, ctx);
-
-    const [callParams] = mockExpandedSearch.mock.calls[0]!;
-    expect(callParams.q).toBe('doi-self:"10.1371\\/journal.PMED.0020124"');
+    expect(matchesDeposit(q, '10.1371/journal.PMED.0020124')).toBe(true);
+    expect(matchesDeposit(q, '10.1371/journal.pmed.0020124')).toBe(true);
+    expect(await compiledQuery({ doi: '10.1371/journal.PMED.0020124' })).toBe(q);
   });
 
   it('passes rows and start to the service call', async () => {
@@ -357,7 +363,7 @@ describe('orcidSearchResearchers — grant_number filter (#42)', () => {
   });
 });
 
-describe('orcidSearchResearchers — DOI/PMID URL forms (#44)', () => {
+describe('orcidSearchResearchers — DOI/PMID URL forms (#44, #84)', () => {
   it.each([
     'https://doi.org/10.5555/12345680',
     'http://doi.org/10.5555/12345680',
@@ -372,10 +378,32 @@ describe('orcidSearchResearchers — DOI/PMID URL forms (#44)', () => {
     expect(await compiledQuery({ doi })).toBe(await compiledQuery({ doi: '10.5555/12345680' }));
   });
 
-  it('keeps the case of the DOI body when stripping an uppercase prefix', async () => {
-    expect(await compiledQuery({ doi: 'HTTPS://DOI.ORG/10.1371/journal.PMED.0020124' })).toBe(
-      'doi-self:"10.1371\\/journal.PMED.0020124"',
-    );
+  it('reaches the mixed-case deposit after stripping an uppercase prefix', async () => {
+    const q = await compiledQuery({ doi: 'HTTPS://DOI.ORG/10.1371/journal.PMED.0020124' });
+
+    expect(q).toBe(await compiledQuery({ doi: '10.1371/journal.PMED.0020124' }));
+    expect(matchesDeposit(q, '10.1371/journal.PMED.0020124')).toBe(true);
+  });
+
+  it('compiles every letter case and URL form of a DOI to one clause', async () => {
+    const forms = [
+      '10.1088/1361-648X/aab193',
+      '10.1088/1361-648x/aab193',
+      '10.1088/1361-648X/AAB193',
+      'https://doi.org/10.1088/1361-648x/aab193',
+    ];
+    const clause = String.raw`doi-self:/${DOI_PREFIX}10\.1088\/1361\-648[xX]\/[aA][aA][bB]193/`;
+
+    for (const doi of forms) expect(await compiledQuery({ doi }), doi).toBe(clause);
+    for (const deposit of [...forms, 'doi:10.1088/1361-648X/aab193']) {
+      expect(matchesDeposit(clause, deposit), deposit).toBe(true);
+    }
+  });
+
+  it('sends a raw query carrying the clause exactly as written', async () => {
+    const clause = await compiledQuery({ doi: '10.1088/1361-648X/aab193' });
+    expect(await compiledQuery({ query: clause })).toBe(clause);
+    expect(await compiledQuery({ query: `  ${clause} ` })).toBe(clause);
   });
 
   it.each([
@@ -401,9 +429,9 @@ describe('orcidSearchResearchers — DOI/PMID URL forms (#44)', () => {
     );
   });
 
-  it('keeps valid DOI and PMID identifiers inside their own escaped phrase clauses (#47)', async () => {
+  it('keeps a hostile DOI inside one regex term and a PMID inside its phrase clause (#47)', async () => {
     expect(await compiledQuery({ doi: '10.1000/x"OR*:*', family_name: 'Carberry' })).toBe(
-      'family-name:"Carberry" AND doi-self:"10.1000\\/x\\"OR\\*\\:\\*"',
+      String.raw`family-name:"Carberry" AND doi-self:/${DOI_PREFIX}10\.1000\/[xX]\"[oO][rR]\*\:\*/`,
     );
     expect(await compiledQuery({ pmid: '22745249' })).toBe('pmid-self:"22745249"');
   });
@@ -649,7 +677,7 @@ describe('orcidSearchResearchers — Solr value escaping (#18)', () => {
     expect(callParams.q).toBe('keyword:"a\\\\b"');
   });
 
-  it('escapes punctuation-heavy DOI reserved chars, leaving non-reserved chars intact', async () => {
+  it('escapes every punctuation character of a punctuation-heavy DOI', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
     const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
@@ -660,9 +688,9 @@ describe('orcidSearchResearchers — Solr value escaping (#18)', () => {
 
     expect(mockExpandedSearch).toHaveBeenCalled();
     const [callParams] = mockExpandedSearch.mock.calls[0]!;
-    // Reserved chars (/ ( ) - :) escaped; non-reserved (< > ;) left literal.
+    // Inside a regex, < > . and ; are syntax or may be, so every punctuation character is escaped.
     expect(callParams.q).toBe(
-      'doi-self:"10.1002\\/\\(SICI\\)1099\\-0844\\(199912\\)17\\:4<290\\:\\:AID\\-CBF849>3.0.CO;2\\-P"',
+      String.raw`doi-self:/${DOI_PREFIX}10\.1002\/\([sS][iI][cC][iI]\)1099\-0844\(199912\)17\:4\<290\:\:[aA][iI][dD]\-[cC][bB][fF]849\>3\.0\.[cC][oO]\;2\-[pP]/`,
     );
   });
 

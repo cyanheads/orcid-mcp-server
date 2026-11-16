@@ -8,17 +8,19 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { escapeMarkdownInline } from '@cyanheads/mcp-ts-core/utils';
-import { singleLine } from '@/mcp-server/tools/third-party-text.js';
+import { joinNotices } from '@/mcp-server/tools/notices.js';
+import { blockquote, singleLine } from '@/mcp-server/tools/third-party-text.js';
 import { getOrcidService } from '@/services/orcid/orcid-service.js';
 import {
   DOI_INPUT_PATTERN,
+  doiSelfClause,
   escapeSolrValue,
   isInitial,
   PMID_INPUT_PATTERN,
   splitNameWords,
   stripIdentifierPrefix,
 } from '@/services/orcid/solr-query.js';
-import { foldForMatching } from '@/services/orcid/text-folding.js';
+import { foldForMatching, foldNameForMatching } from '@/services/orcid/text-folding.js';
 import type { ExpandedSearchResult } from '@/services/orcid/types.js';
 
 /**
@@ -128,8 +130,41 @@ const ORG_STOPWORDS = new Set([
 const BLANK_NAME_MESSAGE =
   'Provide a non-blank author name to disambiguate, such as "Jennifer Doudna" or "J. Doudna".';
 
+/** The most candidates one search stage requests, and so the most the ranking can cover. */
+const MAX_CANDIDATES = 20;
+
 /** Name match type based on how well the result name matches input. */
 type NameMatchType = 'exact' | 'partial' | 'other-name' | 'none';
+
+/** A supplied DOI or PMID: its bare value and the clause every stage carries it as. */
+type Anchor = { type: 'doi' | 'pmid'; value: string; clause: string };
+
+/**
+ * Notice part for candidates an anchor-only stage found (#85): no name stage matched a record
+ * with every anchor supplied, and these were found by `answered` alone. With both anchors
+ * supplied they may still hold the named person, so they are not called other people.
+ */
+function anchorOnlyNotice(name: string, anchors: Anchor[], answered: Anchor): string {
+  const supplied = anchors.map((a) => `${a.type.toUpperCase()} ${a.value}`).join(' and ');
+  return `No record matched "${name}" with ${supplied}; these candidates were found by the ${answered.type.toUpperCase()} alone.`;
+}
+
+/**
+ * Notice part when the ranking covers `ranked` of `total` matches (#85), `''` when it covers
+ * them all: a larger `rows` while `rows` is below what one stage can rank, and the search
+ * tool's paging step once the matches outnumber the candidate cap.
+ */
+function rankingNotice(ranked: number, total: number, rows: number): string {
+  if (total <= ranked) return '';
+  const rankable = Math.min(total, MAX_CANDIDATES);
+  return joinNotices(
+    `The ranking covers ${ranked} of ${total.toLocaleString('en-US')} records matching queryUsed.`,
+    rows < rankable &&
+      `Call again with rows: ${rankable} to rank ${rankable === total ? 'all of them' : `the first ${rankable}`}.`,
+    total > MAX_CANDIDATES &&
+      `To list the records not ranked here, call orcid_search_researchers with query set to queryUsed and start: ${ranked}; it returns them in ORCID's relevance order, without match signals.`,
+  );
+}
 
 /**
  * Read a "Family, Given" name — exactly one comma, both sides non-blank — as "Given Family",
@@ -164,26 +199,34 @@ function bylineClause(name: string): string | undefined {
     : `given-and-family-names:("${phrase}" AND ${firstInitial.normalize('NFC')}*)`;
 }
 
-/** Folded words of a name for token comparison; periods separate words ("J.A." → j, a). */
-function matchTokens(name: string): string[] {
-  return foldForMatching(name.replace(/\./g, ' ')).split(/\s+/).filter(Boolean);
+/**
+ * Folded words of a name for token comparison; periods separate words ("J.A." → j, a). A dash
+ * joins the words beside it ("Min-Jun" → minjun) unless `fold` reads it as a space.
+ */
+function matchTokens(name: string, fold = foldForMatching): string[] {
+  return fold(name.replace(/\./g, ' ')).split(/\s+/).filter(Boolean);
 }
 
 function computeNameMatch(candidate: ExpandedSearchResult, inputName: string): NameMatchType {
   // Accent-insensitive on both sides (#35): a record often carries the ASCII rendering of an
-  // accented name, and the input may be either form.
-  const normalize = (s: string) => foldForMatching(s).trim();
+  // accented name, and the input may be either form. A dash is compared both ways — dropped
+  // ("Min-Jun" = "Minjun") and read as a space ("Jean-Pierre" = "Jean Pierre") — since a name
+  // is written in both spellings.
+  const joined = (s: string) => foldForMatching(s).trim();
+  const spaced = (s: string) => foldNameForMatching(s).trim();
 
-  const normalizedInput = normalize(inputName);
+  const inputJoined = joined(inputName);
   // A name with no letters or digits left has nothing to compare — and would otherwise
   // equal the empty string of a candidate with no credit name.
-  if (!normalizedInput) return 'none';
+  if (!inputJoined) return 'none';
+  const inputSpaced = spaced(inputName);
+  const isInputName = (s: string) => joined(s) === inputJoined || spaced(s) === inputSpaced;
 
   // Build full names from candidate
   const fullName = [candidate.givenNames, candidate.familyNames].filter(Boolean).join(' ');
   const creditName = candidate.creditName ?? '';
 
-  if (normalize(fullName) === normalizedInput || normalize(creditName) === normalizedInput) {
+  if (isInputName(fullName) || isInputName(creditName)) {
     return 'exact';
   }
 
@@ -191,27 +234,39 @@ function computeNameMatch(candidate: ExpandedSearchResult, inputName: string): N
   // "John"), never a middle initial elsewhere ("J. Smith" is not "Carolyn J Smith"), so it can
   // reach partial or other-name but never exact (#53). Every other input word needs the same
   // folded word in the name.
-  const inputTokens = matchTokens(inputName);
   const firstInitial = splitNameWords(inputName).find(isInitial);
   const initial = firstInitial ? foldForMatching(firstInitial) : '';
-  const initialAt = initial ? inputTokens.indexOf(initial) : -1;
-  const wordTokens = inputTokens.filter((_, i) => i !== initialAt);
-  const needed = Math.min(2, inputTokens.length);
-  const covers = (nameTokens: string[], firstWord: string | undefined) => {
-    const words = new Set(nameTokens);
-    const initialHit = initialAt !== -1 && firstWord?.startsWith(initial) ? 1 : 0;
-    return wordTokens.filter((t) => words.has(t)).length + initialHit >= needed;
+  // The input's words joined at a dash and split at it ("Jean-Luc" → jeanluc; jean, luc), so a
+  // dashed input word offers its parts as a dashed record word does.
+  const inputForms = [matchTokens(inputName), matchTokens(inputName, foldNameForMatching)].map(
+    (tokens) => {
+      const initialAt = initial ? tokens.indexOf(initial) : -1;
+      return {
+        initialAt,
+        needed: Math.min(2, tokens.length),
+        wordTokens: tokens.filter((_, i) => i !== initialAt),
+      };
+    },
+  );
+  const covers = (name: string, firstWord: string | undefined) => {
+    // A dashed record word offers its whole and its parts, so "Wei" matches in "Qian-Wei".
+    const words = new Set([...matchTokens(name), ...matchTokens(name, foldNameForMatching)]);
+    const initialHit = firstWord?.startsWith(initial) ? 1 : 0;
+    return inputForms.some(
+      ({ initialAt, needed, wordTokens }) =>
+        wordTokens.filter((t) => words.has(t)).length + (initialAt !== -1 ? initialHit : 0) >=
+        needed,
+    );
   };
 
-  if (covers(matchTokens(fullName), matchTokens(candidate.givenNames ?? '')[0])) {
+  if (covers(fullName, matchTokens(candidate.givenNames ?? '')[0])) {
     return 'partial';
   }
 
   // Check other-names
   for (const otherName of candidate.otherNames) {
-    if (normalize(otherName) === normalizedInput) return 'other-name';
-    const otherTokens = matchTokens(otherName);
-    if (covers(otherTokens, otherTokens[0])) return 'other-name';
+    if (isInputName(otherName)) return 'other-name';
+    if (covers(otherName, matchTokens(otherName)[0])) return 'other-name';
   }
 
   return 'none';
@@ -277,7 +332,7 @@ function computeInstitutionOverlap(
 export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
   title: 'Resolve ORCID Researcher',
   description:
-    'Disambiguate an author name to a verified ORCID iD. Returns ranked candidates (5 by default, at most 20 per search stage) with transparent disambiguation signals: name match type (exact/partial/other-name/none), institution overlap flag, and whether a DOI or PMID anchor was used in the query. The name is searched as an exact phrase first; when that finds nothing, byline initials (J. Doudna, Jennifer A. Doudna) and then the other names listed on ORCID records are tried. A DOI or PMID anchor is near-deterministic — it filters to researchers who have linked that specific work to their ORCID record. Use this tool (not orcid_search_researchers) when the input is an ambiguous name that needs ranked disambiguation. No synthetic scores are used — raw signals only.',
+    'Disambiguate an author name to a verified ORCID iD. Returns ranked candidates (5 by default, at most 20 per search stage) with transparent disambiguation signals — name match type (exact/partial/other-name/none), institution overlap flag, and whether a DOI or PMID anchor was used in the query — plus the other names listed on each record. The name is searched as an exact phrase first; when that finds nothing, byline initials (J. Doudna, Jennifer A. Doudna) and then the other names listed on ORCID records are tried. A DOI or PMID anchor is near-deterministic — it filters to researchers who have linked that specific work to their ORCID record; when no name query finds a record with it, each anchor is tried alone and the notice says the candidates were found by the anchor alone. The ranking covers only the candidates returned: when totalFound is larger, the notice gives the rows value that ranks more and the orcid_search_researchers call that lists the rest, without match signals. Use this tool (not orcid_search_researchers) when the input is an ambiguous name that needs ranked disambiguation. No synthetic scores are used — raw signals only.',
   annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
@@ -302,7 +357,7 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
       )
       .optional()
       .describe(
-        'Complete DOI of a work authored by this researcher, bare (10.1126/science.1225829) or as a https://doi.org/, https://dx.doi.org/, or doi: form. Requires 10., digits, a slash, and a non-whitespace suffix; blank means unset. Acts as a near-deterministic anchor — filters to researchers who linked this DOI to their ORCID record.',
+        'Complete DOI of a work authored by this researcher, bare (10.1126/science.1225829) or as a https://doi.org/, https://dx.doi.org/, or doi: form. Requires 10., digits, a slash, and a non-whitespace suffix; blank means unset. Acts as a near-deterministic anchor — filters to researchers who linked this DOI to their ORCID record, matched in any letter case and whether the record holds it bare or as one of those forms.',
       ),
     pmid: z
       .string()
@@ -335,6 +390,9 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
             givenNames: z.string().optional().describe('Given names from the ORCID record.'),
             familyNames: z.string().optional().describe('Family name from the ORCID record.'),
             creditName: z.string().optional().describe('Published credit name, if set.'),
+            otherNames: z
+              .array(z.string().describe('Alternative name.'))
+              .describe('Other names listed on the ORCID record.'),
             institutionNames: z
               .array(z.string().describe('Institution name.'))
               .describe('Affiliated institutions from the ORCID record.'),
@@ -356,7 +414,9 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
           })
           .describe('Disambiguation candidate with transparency signals.'),
       )
-      .describe('Ranked candidates, ordered by name match quality then institution overlap.'),
+      .describe(
+        'Ranked candidates, ordered by name match quality then institution overlap. The ranking covers only these: totalFound counts every record matching queryUsed, and when it is larger the notice says how to reach the rest.',
+      ),
   }),
 
   errors: [
@@ -369,7 +429,8 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
     },
   ],
 
-  // Agent-facing context: the queries used, total match count, and empty-result guidance.
+  // Agent-facing context: the queries used, total match count, and the notice (candidate cap,
+  // anchor-only answer, ranking coverage, or empty-result guidance).
   // Reaches both structuredContent and content[] without a format() entry.
   enrichment: {
     queryUsed: z
@@ -402,7 +463,7 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
       .string()
       .optional()
       .describe(
-        'Requested/effective candidate cap notice, composed with recovery guidance when no candidates are found or the anchor query failed to match.',
+        'One string joining, in order: the requested/effective candidate cap; that the candidates were found by a DOI or PMID anchor alone, no record matching the name with the anchors supplied; and, when totalFound exceeds the candidates returned, how many the ranking covers, the rows value that ranks more, and the orcid_search_researchers call that lists the rest. With no candidates, the cap and recovery guidance instead.',
       ),
   },
 
@@ -412,11 +473,14 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
     totalFound: { label: 'Total Found' },
     primaryQuery: { label: 'Primary Query' },
     primaryTotalFound: { label: 'Primary Total Found' },
+    // The notice quotes the caller's name and anchors as written, so structuredContent carries
+    // them raw; only this rendering escapes the whole notice, which is plain text throughout.
+    notice: { render: (notice) => blockquote(escapeMarkdownInline(String(notice))) },
   },
 
   async handler(input, ctx) {
     const service = getOrcidService();
-    const effectiveRows = Math.min(input.rows, 20);
+    const effectiveRows = Math.min(input.rows, MAX_CANDIDATES);
     ctx.log.info('orcid_resolve_researcher', {
       name: input.name,
       hasAffiliation: !!input.affiliation,
@@ -449,26 +513,25 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
       }
     };
 
-    // Model every supplied anchor as its own escaped, phrase-quoted clause, highest
-    // precedence first (DOI before PMID). The quotes and escaping keep DOI punctuation
-    // literal inside one clause (#47). The anchor-only fallback retries each
-    // independently so a valid anchor is never discarded when a wrong one zeroes out the
-    // combined query. A URL-form identifier is reduced to the bare one ORCID indexes; one
-    // that is genuinely blank anchors nothing; malformed nonblank inputs fail validation.
-    const anchorClauses: { type: 'doi' | 'pmid'; clause: string }[] = [];
+    // Model every supplied anchor as its own clause, highest precedence first (DOI before
+    // PMID): the DOI as one regex term matching every letter case and URL form it may be
+    // deposited in (#84), the PMID escaped and phrase-quoted (#47). The anchor-only fallback
+    // retries each independently so a valid anchor is never discarded when a wrong one zeroes
+    // out the combined query. A URL-form identifier is reduced to the bare one; one that is
+    // genuinely blank anchors nothing; malformed nonblank inputs fail validation.
+    const anchorClauses: Anchor[] = [];
     const doi = input.doi && stripIdentifierPrefix('doi', input.doi);
     if (doi) {
-      anchorClauses.push({ type: 'doi', clause: `doi-self:"${escapeSolrValue(doi)}"` });
+      anchorClauses.push({ type: 'doi', value: doi, clause: doiSelfClause(doi) });
     }
     const pmid = input.pmid && stripIdentifierPrefix('pmid', input.pmid);
     if (pmid) {
-      anchorClauses.push({ type: 'pmid', clause: `pmid-self:"${escapeSolrValue(pmid)}"` });
+      anchorClauses.push({
+        type: 'pmid',
+        value: pmid,
+        clause: `pmid-self:"${escapeSolrValue(pmid)}"`,
+      });
     }
-
-    // Describes the anchor that produced the returned candidates. Starts at the highest-
-    // precedence supplied anchor (the one the combined query leads with) and is reassigned
-    // if a lower-precedence anchor-only fallback is what actually matched.
-    let anchorType: 'doi' | 'pmid' | 'none' = anchorClauses[0]?.type ?? 'none';
 
     // A "Family, Given" name is read as "Given Family" before any clause is built or compared.
     const name = reorderCommaName(input.name);
@@ -514,16 +577,22 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
 
     // Anchor-only fallback: if every name stage still found nothing, retry each supplied
     // anchor on its own — DOI first, then PMID — and report the anchor that actually matched.
+    let answeredAlone: Anchor | undefined;
     if (finalResponse.numFound === 0 && anchorClauses.length > 0) {
       for (const anchor of anchorClauses) {
         relaxedQuery = anchor.clause;
         finalResponse = await search(anchor.clause);
         if (finalResponse.numFound > 0) {
-          anchorType = anchor.type;
+          answeredAlone = anchor;
           break;
         }
       }
     }
+
+    // The anchor that produced the candidates: the one an anchor-only stage matched, else the
+    // highest-precedence supplied anchor, which every name stage leads its anchors with.
+    const anchorType: Anchor['type'] | 'none' =
+      answeredAlone?.type ?? anchorClauses[0]?.type ?? 'none';
 
     ctx.log.info('orcid_resolve_researcher completed', {
       primaryFound: primaryResponse.numFound,
@@ -555,6 +624,7 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
       ...(candidate.givenNames && { givenNames: candidate.givenNames }),
       ...(candidate.familyNames && { familyNames: candidate.familyNames }),
       ...(candidate.creditName && { creditName: candidate.creditName }),
+      otherNames: candidate.otherNames,
       institutionNames: candidate.institutionNames,
       nameMatchType: nameMatch,
       institutionOverlap: instOverlap,
@@ -573,26 +643,20 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
     });
     if (relaxedQuery) ctx.enrich({ relaxedQuery });
 
-    const notices: string[] = [];
-    if (input.rows > effectiveRows) {
-      notices.push(
-        `Requested rows ${input.rows}; using the maximum of ${effectiveRows} candidates per search stage.`,
-      );
-    }
-    if (candidates.length === 0) {
-      // A notice is authored Markdown, so the caller's name inside it is escaped.
-      const quotedName = escapeMarkdownInline(input.name);
-      if (anchorType !== 'none') {
-        notices.push(
-          `No ORCID records found matching "${quotedName}" with the provided ${anchorType.toUpperCase()} anchor. Verify the ${anchorType.toUpperCase()} is correct or try without the anchor using orcid_search_researchers.`,
-        );
-      } else {
-        notices.push(
-          `No ORCID records found matching "${quotedName}". Try a different spelling or use orcid_search_researchers with a broader query.`,
-        );
-      }
-    }
-    if (notices.length > 0) ctx.enrich.notice(notices.join(' '));
+    const capNotice =
+      input.rows > effectiveRows &&
+      `Requested rows ${input.rows}; using the maximum of ${effectiveRows} candidates per search stage.`;
+    const resultNotice =
+      candidates.length > 0
+        ? joinNotices(
+            answeredAlone && anchorOnlyNotice(input.name, anchorClauses, answeredAlone),
+            rankingNotice(candidates.length, finalResponse.numFound, effectiveRows),
+          )
+        : anchorType !== 'none'
+          ? `No ORCID records found matching "${input.name}" with the provided ${anchorType.toUpperCase()} anchor. Verify the ${anchorType.toUpperCase()} is correct or try without the anchor using orcid_search_researchers.`
+          : `No ORCID records found matching "${input.name}". Try a different spelling or use orcid_search_researchers with a broader query.`;
+    const notice = joinNotices(capNotice, resultNotice);
+    if (notice) ctx.enrich.notice(notice);
 
     return { candidates };
   },
@@ -616,6 +680,9 @@ export const orcidResolveResearcher = tool('orcid_resolve_researcher', {
       if (c.givenNames) lines.push(`**Given Names:** ${singleLine(c.givenNames)}`);
       if (c.familyNames) lines.push(`**Family Names:** ${singleLine(c.familyNames)}`);
       if (c.creditName) lines.push(`**Credit Name:** ${singleLine(c.creditName)}`);
+      if (c.otherNames.length) {
+        lines.push(`**Other Names:** ${c.otherNames.map(singleLine).join(', ')}`);
+      }
       lines.push(`**Name Match:** ${c.nameMatchType}`);
       lines.push(`**Institution Overlap:** ${c.institutionOverlap ? 'Yes' : 'No'}`);
       lines.push(`**Anchor Type:** ${c.anchorType}`);

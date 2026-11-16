@@ -19,6 +19,9 @@ vi.mock('@/services/orcid/orcid-service.js', () => ({
 type Response = { numFound: number; results: ExpandedSearchResult[] };
 
 const NONE: Response = { numFound: 0, results: [] };
+
+/** The `doi-self` regex clause for the DOI 10.1/x, in any letter case (#84). */
+const DOI_CLAUSE = String.raw`doi-self:/(([hH][tT][tT][pP][sS]?\:\/\/)?([dD][xX]\.)?[dD][oO][iI]\.[oO][rR][gG]\/|[dD][oO][iI]\:)?10\.1\/[xX]/`;
 const found = (...results: ExpandedSearchResult[]): Response => ({
   numFound: results.length,
   results,
@@ -327,17 +330,16 @@ describe('orcidResolveResearcher — "Family, Given" names (#53)', () => {
     );
   });
 
-  it('escapes Markdown in the name the empty-result notice quotes', async () => {
+  it('quotes the name raw in structuredContent and escapes it only in the content[] notice', async () => {
     mockExpandedSearch.mockResolvedValue(NONE);
 
-    const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
-    await orcidResolveResearcher.handler(
-      orcidResolveResearcher.input.parse({ name: 'Jennifer *Doudna*' }),
-      ctx,
-    );
+    const result = await runToolContract(orcidResolveResearcher, { name: 'Jennifer *Doudna*' });
 
-    expect(getEnrichment(ctx).notice).toBe(
-      'No ORCID records found matching "Jennifer \\*Doudna\\*". Try a different spelling or use orcid_search_researchers with a broader query.',
+    expect((result.structuredContent as { notice: string }).notice).toBe(
+      'No ORCID records found matching "Jennifer *Doudna*". Try a different spelling or use orcid_search_researchers with a broader query.',
+    );
+    expect(contentText(result)).toContain(
+      '\n> No ORCID records found matching "Jennifer \\*Doudna\\*". Try a different spelling or use orcid_search_researchers with a broader query.',
     );
   });
 });
@@ -351,23 +353,31 @@ describe('orcidResolveResearcher — other-names aliases (#53)', () => {
       name: 'Josiah Stinkney Carberry',
     });
     const structured = result.structuredContent as {
-      candidates: { orcidId: string; nameMatchType: string }[];
+      candidates: { orcidId: string; nameMatchType: string; otherNames: string[] }[];
       queryUsed: string;
       relaxedQuery?: string;
       totalFound: number;
     };
 
     expect(queriesSent()).toEqual(['given-and-family-names:"Josiah Stinkney Carberry"', alias]);
-    // Given and family names overlap two input words, so the tier is partial, not other-name.
-    expect(structured.candidates.map((c) => [c.orcidId, c.nameMatchType])).toEqual([
-      ['0000-0002-1825-0097', 'partial'],
+    // Given and family names overlap two input words, so the tier is partial, not other-name;
+    // the other names that matched are relayed beside it (#85).
+    expect(structured.candidates.map((c) => [c.orcidId, c.nameMatchType, c.otherNames])).toEqual([
+      [
+        '0000-0002-1825-0097',
+        'partial',
+        ['Josiah Stinkney Carberry', 'J. Carberry', 'J. S. Carberry'],
+      ],
     ]);
     expect(structured).toMatchObject({ queryUsed: alias, relaxedQuery: alias, totalFound: 1 });
+    expect(contentText(result)).toContain(
+      '**Family Names:** Carberry\n**Other Names:** Josiah Stinkney Carberry, J. Carberry, J. S. Carberry\n**Name Match:** partial\n',
+    );
     expect(contentText(result)).toContain(`**Query Used:** \`${alias}\``);
   });
 
   it('keeps every anchor on the other-names stage but no affiliation', async () => {
-    const anchors = 'doi-self:"10.1\\/x" AND pmid-self:"123"';
+    const anchors = `${DOI_CLAUSE} AND pmid-self:"123"`;
     const affiliation = 'affiliation-org-name:"Wesleyan University"';
     route({
       [`given-and-family-names:"Josiah Stinkney Carberry" AND ${anchors} AND ${affiliation}`]: NONE,
@@ -412,7 +422,7 @@ describe('orcidResolveResearcher — other-names aliases (#53)', () => {
 
 describe('orcidResolveResearcher — the full stage chain (#53)', () => {
   it('runs every stage in order, each only after the earlier ones found nothing', async () => {
-    const anchors = 'doi-self:"10.1\\/x" AND pmid-self:"123"';
+    const anchors = `${DOI_CLAUSE} AND pmid-self:"123"`;
     const affiliation = 'affiliation-org-name:"MIT"';
     const stages = [
       `given-and-family-names:"J. Smith" AND ${anchors} AND ${affiliation}`,
@@ -420,7 +430,7 @@ describe('orcidResolveResearcher — the full stage chain (#53)', () => {
       `given-and-family-names:"J. Smith" AND ${anchors}`,
       `given-and-family-names:("Smith" AND J*) AND ${anchors}`,
       `other-names:"J. Smith" AND ${anchors}`,
-      'doi-self:"10.1\\/x"',
+      DOI_CLAUSE,
       'pmid-self:"123"',
     ];
     const smith = researcher('0000-0002-0000-0004', 'Jane', 'Smith');

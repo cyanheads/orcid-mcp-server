@@ -1,11 +1,12 @@
 /**
- * @fileoverview Tests for the accent-insensitive text fold behind name and institution
- * matching (#35).
+ * @fileoverview Tests for the accent-insensitive text folds behind name and institution
+ * matching (#35), including the name fold that reads a dash as a space.
  * @module tests/services/orcid/text-folding.test
  */
 
 import { describe, expect, it } from 'vitest';
-import { foldForMatching } from '@/services/orcid/text-folding.js';
+import { foldForMatching, foldNameForMatching } from '@/services/orcid/text-folding.js';
+import { expectLinearCpu } from '../../helpers/cpu-growth.js';
 
 describe('foldForMatching', () => {
   it.each([
@@ -42,36 +43,57 @@ describe('foldForMatching', () => {
   it('folds a string with no letters or digits to nothing but whitespace', () => {
     expect(foldForMatching('— … !?').trim()).toBe('');
   });
+});
 
-  describe('cost stays linear in input length', () => {
-    /** Best-of-three wall-clock for folding `value`. */
-    function timeFor(value: string): number {
-      let best = Number.POSITIVE_INFINITY;
-      for (let i = 0; i < 3; i++) {
-        const start = performance.now();
-        foldForMatching(value);
-        best = Math.min(best, performance.now() - start);
-      }
-      return best;
-    }
+describe('foldNameForMatching', () => {
+  it.each([
+    ['Jean-Pierre', 'jean pierre'],
+    ['Jean‐Pierre', 'jean pierre'],
+    ['Jean–Pierre', 'jean pierre'],
+    ['Jean—Pierre', 'jean pierre'],
+    ['José-María Baselga', 'jose maria baselga'],
+    ["O'Brien-Walsh", 'obrien walsh'],
+    ['Qian-Wei Wang', 'qian wei wang'],
+  ])('reads every dash in %j as a space: %j', (input, expected) => {
+    expect(foldNameForMatching(input)).toBe(expected);
+  });
 
-    /** Worst-case shapes: dense combining marks, punctuation runs, whitespace runs, CJK. */
-    const shapes: [string, (size: number) => string][] = [
-      ['dense combining marks', (n) => `e${'\u0301\u0308'.repeat(n / 2)}`],
-      ['precomposed accents', (n) => 'éüñøå'.repeat(n / 5)],
-      ['punctuation runs', (n) => `a${'-.,;!'.repeat(n / 5)}b`],
-      ['whitespace runs', (n) => `a${' \t'.repeat(n / 2)}b`],
-      ['non-Latin text', (n) => '山中伸弥김철수'.repeat(n / 7)],
-    ];
+  it('drops the other punctuation the way foldForMatching does', () => {
+    expect(foldNameForMatching('J. A. Doudna')).toBe('j a doudna');
+    expect(foldNameForMatching('Smith, Jr.')).toBe('smith jr');
+    // U+2212 is a math sign, not a dash.
+    expect(foldNameForMatching('a−b')).toBe('ab');
+  });
 
-    it.each(shapes)('%s: 5k and 80k characters', (_, build) => {
-      const [t5, t80] = [5_000, 80_000].map((size) => timeFor(build(size)));
+  it.each([['José Baselga'], ['山中 伸弥'], ['J. A. Doudna']])(
+    'folds the dash-free %j exactly as foldForMatching does',
+    (input) => {
+      expect(foldNameForMatching(input)).toBe(foldForMatching(input));
+    },
+  );
+});
 
-      // 16x the input may cost ~16x the time; quadratic growth would be ~256x, so a 64x bound
-      // leaves room for load noise while still failing a quadratic fold. The 1 ms floor keeps
-      // timer noise on the small case from inflating the ratio.
-      expect(t80! / Math.max(t5!, 1)).toBeLessThan(64);
-      expect(t80!).toBeLessThan(500);
-    });
+describe('folding cost stays linear in input length', () => {
+  /**
+   * Worst-case shapes: a long line ending in a break, breaks throughout, dash runs, dense
+   * combining marks, precomposed accents, punctuation runs, CJK.
+   */
+  const shapes: [string, (size: number) => string][] = [
+    ['one long line ending in a break', (n) => `${'§1 x'.repeat(n / 4)}\ny`],
+    ['breaks throughout', (n) => '  \r\n'.repeat(n / 4)],
+    ['dash runs', (n) => `a${'-‐–—'.repeat(n / 4)}b`],
+    ['dense combining marks', (n) => `e${'\u0301\u0308'.repeat(n / 2)}`],
+    ['precomposed accents', (n) => 'éüñøå'.repeat(n / 5)],
+    ['punctuation runs', (n) => `a${'-.,;!'.repeat(n / 5)}b`],
+    ['whitespace runs', (n) => `a${' \t'.repeat(n / 2)}b`],
+    ['non-Latin text', (n) => '山中伸弥김철수'.repeat(n / 7)],
+  ];
+
+  it.each(shapes)('foldForMatching grows linearly on %s', { timeout: 0 }, (_, build) => {
+    expectLinearCpu(foldForMatching, build, { microsPerChar: 1 });
+  });
+
+  it.each(shapes)('foldNameForMatching grows linearly on %s', { timeout: 0 }, (_, build) => {
+    expectLinearCpu(foldNameForMatching, build, { microsPerChar: 1 });
   });
 });

@@ -96,6 +96,9 @@ beforeEach(() => {
 });
 
 describe('security: injection attempts are forwarded as query strings, not executed', () => {
+  /** The `doi-self` regex clause for the DOI 10.1000/x"OR*:* (#84). */
+  const HOSTILE_DOI_CLAUSE = String.raw`doi-self:/(([hH][tT][tT][pP][sS]?\:\/\/)?([dD][xX]\.)?[dD][oO][iI]\.[oO][rR][gG]\/|[dD][oO][iI]\:)?10\.1000\/[xX]\"[oO][rR]\*\:\*/`;
+
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -217,7 +220,7 @@ describe('security: injection attempts are forwarded as query strings, not execu
     expect(callParams.q).toBe('grant-numbers:"R01\\" OR \\*\\:\\* \\(x\\)"');
   });
 
-  it('search_researchers: valid hostile DOI punctuation stays one escaped phrase clause (#47)', async () => {
+  it('search_researchers: valid hostile DOI punctuation stays one escaped regex term (#47, #84)', async () => {
     mockExpandedSearch.mockResolvedValueOnce({ numFound: 0, results: [] });
 
     const ctx = createMockContext({ errors: orcidSearchResearchers.errors });
@@ -227,7 +230,8 @@ describe('security: injection attempts are forwarded as query strings, not execu
     await orcidSearchResearchers.handler(input, ctx);
 
     const [callParams] = mockExpandedSearch.mock.calls[0]!;
-    expect(callParams.q).toBe('doi-self:"10.1000\\/x\\"OR\\*\\:\\*"');
+    // The quote, `*`, and `:` are escaped literals inside the regex, never a phrase or operator.
+    expect(callParams.q).toBe(HOSTILE_DOI_CLAUSE);
   });
 
   it('search_researchers: a numeric PMID stays one phrase clause (#47)', async () => {
@@ -255,7 +259,7 @@ describe('security: injection attempts are forwarded as query strings, not execu
     expect(callParams.q).toBe('given-and-family-names:"Jane Roe" AND pmid-self:"123"');
   });
 
-  it('resolve_researcher: valid hostile DOI punctuation stays escaped at every fallback (#47)', async () => {
+  it('resolve_researcher: valid hostile DOI punctuation stays escaped at every fallback (#47, #84)', async () => {
     mockExpandedSearch.mockResolvedValue({ numFound: 0, results: [] });
 
     const ctx = createMockContext({ errors: orcidResolveResearcher.errors });
@@ -266,9 +270,9 @@ describe('security: injection attempts are forwarded as query strings, not execu
     await orcidResolveResearcher.handler(input, ctx);
 
     expect(mockExpandedSearch.mock.calls.map(([params]) => params.q)).toEqual([
-      'given-and-family-names:"Jane Roe" AND doi-self:"10.1000\\/x\\"OR\\*\\:\\*"',
-      'other-names:"Jane Roe" AND doi-self:"10.1000\\/x\\"OR\\*\\:\\*"',
-      'doi-self:"10.1000\\/x\\"OR\\*\\:\\*"',
+      `given-and-family-names:"Jane Roe" AND ${HOSTILE_DOI_CLAUSE}`,
+      `other-names:"Jane Roe" AND ${HOSTILE_DOI_CLAUSE}`,
+      HOSTILE_DOI_CLAUSE,
     ]);
   });
 });
@@ -914,15 +918,16 @@ describe('security: third-party text cannot forge structure in content[] (#63)',
     expect(verbatimCount(result.structuredContent)).toBe(5);
   });
 
-  it('orcid_resolve_researcher flattens the heading, names, and institutions', async () => {
+  it('orcid_resolve_researcher flattens the heading, names, other names, and institutions', async () => {
     mockExpandedSearch.mockResolvedValueOnce(forgedSearch());
 
     const result = await runToolContract(orcidResolveResearcher, { name: 'Josiah Carberry' });
     const text = textOf(result);
 
-    // credit name twice (heading and its own line), given, family, institution
-    expectContained(text, { inline: 5, quoted: 0 });
+    // credit name twice (heading and its own line), given, family, other name, institution
+    expectContained(text, { inline: 6, quoted: 0 });
     expect(text).toContain('### 1. J. S. Carberry ## Forged\n');
-    expect(verbatimCount(result.structuredContent)).toBe(4);
+    expect(text).toContain('**Other Names:** Josiah Stinkney Carberry ## Forged\n');
+    expect(verbatimCount(result.structuredContent)).toBe(5);
   });
 });

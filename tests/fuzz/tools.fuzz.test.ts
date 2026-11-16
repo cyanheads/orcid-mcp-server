@@ -351,7 +351,7 @@ describe('orcid_search_researchers input contract', () => {
   /**
    * Field → the clause its non-blank value compiles to. A given name of only initials (the
    * generator emits single letters) compiles to `given-names:J*` terms instead of a phrase
-   * (#53); a raw query's `given-names:Jo*` matches neither form.
+   * (#53), and a DOI to a regex term (#84); a raw query's `given-names:Jo*` matches neither form.
    */
   const CLAUSE: Record<keyof typeof fields, RegExp | undefined> = {
     given_name: /given-names:(?:"|\p{L}\p{M}*\*)/u,
@@ -359,7 +359,7 @@ describe('orcid_search_researchers input contract', () => {
     affiliation: /affiliation-org-name:"/,
     keyword: /keyword:"/,
     ror_id: /ror-org-id:"/,
-    doi: /doi-self:"/,
+    doi: /doi-self:\//,
     pmid: /pmid-self:"/,
     grant_number: /grant-numbers:"/,
     query: undefined,

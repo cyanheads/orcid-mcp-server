@@ -11,6 +11,7 @@ import { singleLine } from '@/mcp-server/tools/third-party-text.js';
 import { getOrcidService } from '@/services/orcid/orcid-service.js';
 import {
   DOI_INPUT_PATTERN,
+  doiSelfClause,
   escapeSolrValue,
   isExclusionOnlyQuery,
   isInitial,
@@ -97,9 +98,10 @@ function buildSolrQuery(input: {
   const doi = input.doi && stripIdentifierPrefix('doi', input.doi);
   const pmid = input.pmid && stripIdentifierPrefix('pmid', input.pmid);
 
-  // Every structured value is escaped and phrase-quoted so reserved characters (quotes, DOI
-  // punctuation, ROR colons/slashes) stay literal and whitespace cannot split a value into
-  // extra query terms (#47). The raw `query` passthrough below is deliberately left unescaped.
+  // Every structured value is escaped and phrase-quoted so reserved characters (quotes, ROR
+  // colons/slashes) stay literal and whitespace cannot split a value into extra query terms
+  // (#47); a DOI is one regex term whose characters are all literals (#84). The raw `query`
+  // passthrough below is deliberately left unescaped.
   const givenName = input.given_name?.trim();
   if (givenName) {
     // A given name of only initials ("J.", "J. A.") becomes one prefix term per initial, since
@@ -124,7 +126,7 @@ function buildSolrQuery(input: {
     clauses.push(`ror-org-id:"${escapeSolrValue(normalizeRorId(input.ror_id))}"`);
   }
   if (doi) {
-    clauses.push(`doi-self:"${escapeSolrValue(doi)}"`);
+    clauses.push(doiSelfClause(doi));
   }
   if (pmid) {
     clauses.push(`pmid-self:"${escapeSolrValue(pmid)}"`);
@@ -190,7 +192,7 @@ export const orcidSearchResearchers = tool('orcid_search_researchers', {
         )
         .optional()
         .describe(
-          'Complete DOI to anchor the search, bare (10.1126/science.1225829) or as a https://doi.org/, https://dx.doi.org/, or doi: form. Requires 10., digits, a slash, and a non-whitespace suffix; blank means unset. Returns researchers who have linked this DOI to their ORCID record.',
+          'Complete DOI to anchor the search, bare (10.1126/science.1225829) or as a https://doi.org/, https://dx.doi.org/, or doi: form. Requires 10., digits, a slash, and a non-whitespace suffix; blank means unset. Returns researchers who have linked this DOI to their ORCID record, matched in any letter case and whether the record holds it bare or as one of those forms.',
         ),
       pmid: z
         .string()
