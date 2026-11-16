@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.4.1](changelog/0.4.x/0.4.1.md) — 2026-11-16
+
+DOI anchors match in any letter case and URL form, resolver candidates carry their other names and dashed names match, orcid_get_profile adds email verification and record history, orcid_get_funding detail adds contributors, and a failed merge check is disclosed.
+
 ## [0.4.0](changelog/0.4.x/0.4.0.md) — 2026-10-28 · ⚠️ Breaking · 🛡️ Security
 
 Page sizes are bounded by count alone, orcid_get_works filters by work type and publication year, a deprecated ORCID iD is served as its primary record, and the server publishes an orcid-guide skill. Funding descriptions return whole.
