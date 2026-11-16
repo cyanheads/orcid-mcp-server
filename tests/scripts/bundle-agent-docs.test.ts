@@ -5,11 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { filterAgentDocEntries } from '../../scripts/clean-mcpb.js';
-
-// Load the consumer copy without typechecking its framework-only fallback import.
-const { checkBundleEntries } = await import(
-  new URL('../../scripts/lint-packaging.ts', import.meta.url).href
-);
+import { checkBundleEntries } from '../../scripts/lint-packaging.js';
 
 describe('bundle agent documentation boundaries', () => {
   it.each([
@@ -18,6 +14,7 @@ describe('bundle agent documentation boundaries', () => {
     'node_modules/outer/node_modules/@modelcontextprotocol/server/dist/ext/skills/index.mjs',
     'node_modules/runtime/dist/skills/index.js',
     'node_modules/@scope/skills/index.js',
+    'node_modules/package/docs/AGENTS.md',
     'skills/orcid-guide/SKILL.md',
   ])('preserves runtime or published entry %s', (entry) => {
     expect(filterAgentDocEntries([entry])).toEqual([]);
@@ -31,6 +28,8 @@ describe('bundle agent documentation boundaries', () => {
     'node_modules/outer/node_modules/package/.claude/settings.json',
     'node_modules/package/.agents/guide.md',
     'node_modules/package/docs/SKILL.md',
+    'node_modules/package/AGENTS.md',
+    'node_modules/outer/node_modules/@scope/package/CLAUDE.md',
   ])('removes dependency agent documentation %s', (entry) => {
     expect(filterAgentDocEntries([entry])).toEqual([entry]);
     expect(checkBundleEntries([entry], 'fixture.mcpb')).toHaveLength(1);
