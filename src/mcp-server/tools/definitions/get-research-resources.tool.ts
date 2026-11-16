@@ -6,16 +6,16 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { deprecatedIdNotice } from '@/mcp-server/tools/deprecated-id-notice.js';
+import {
+  checkMerge,
+  deprecatedIdNotice,
+  mergeCheckFailedNotice,
+} from '@/mcp-server/tools/deprecated-id-notice.js';
 import { joinNotices } from '@/mcp-server/tools/notices.js';
 import { SourceSchema, sourcesText } from '@/mcp-server/tools/record-sources.js';
 import { singleLine } from '@/mcp-server/tools/third-party-text.js';
 import { orcidIdSchema } from '@/services/orcid/orcid-id.js';
-import {
-  getOrcidService,
-  normalizeOrcidId,
-  type RecordResult,
-} from '@/services/orcid/orcid-service.js';
+import { getOrcidService, normalizeOrcidId } from '@/services/orcid/orcid-service.js';
 import type {
   ExternalIdentifier,
   Organization,
@@ -171,7 +171,7 @@ export const orcidGetResearchResources = tool('orcid_get_research_resources', {
       .string()
       .optional()
       .describe(
-        'Note when no research resources are found — this section is sparsely populated across ORCID profiles — or when a deprecated iD was served from its primary iD.',
+        'Notes on this answer, in order: that the iD could not be checked for a merge into another iD (an empty result is then unconfirmed; call again), that a deprecated iD was served from its primary iD, and that no research resources were found — this section is sparsely populated across ORCID profiles.',
       ),
   },
 
@@ -220,23 +220,18 @@ export const orcidGetResearchResources = tool('orcid_get_research_resources', {
       };
       // ORCID answers allocation detail for a deprecated iD with 404 instead of redirecting it.
       // On a 404, /person (which does redirect) names the primary iD; a differing one gets the
-      // request again. The probe is best-effort: a /person 404 (the iD itself is unknown) or any
-      // other failure but caller cancellation leaves the answer at resource_not_found.
+      // request again. A /person 404 (the iD itself is unknown) leaves the answer at
+      // resource_not_found; a check that could not run keeps that answer and says so.
       let record = await fetchDetail(input.orcid_id);
       if (!record) {
-        const primaryId = await service.getPerson(input.orcid_id, ctx).then(
-          (person) => person.orcidId,
-          (error: unknown) => {
-            if (ctx.signal.aborted) throw error;
-            if (!(error instanceof McpError && error.code === JsonRpcErrorCode.NotFound))
-              ctx.log.warning('Deprecated-iD probe failed; reporting the allocation as missing.', {
-                orcidId: requestedId,
-              });
-            return;
-          },
-        );
-        if (primaryId !== undefined && primaryId !== requestedId)
-          record = await fetchDetail(primaryId);
+        const check = await checkMerge(service, requestedId, ctx);
+        if (check.status === 'failed')
+          throw ctx.fail(
+            'resource_not_found',
+            `Allocation ${putCode} was not found. ${mergeCheckFailedNotice(requestedId, 'missing-allocation')}`,
+          );
+        if (check.status === 'answered' && check.orcidId !== requestedId)
+          record = await fetchDetail(check.orcidId);
       }
       if (!record) throw ctx.fail('resource_not_found');
       const { orcidId: bareId, data: detail } = record;
@@ -272,37 +267,33 @@ export const orcidGetResearchResources = tool('orcid_get_research_resources', {
       };
     }
 
-    let record: RecordResult<ResearchResource[]>;
-    try {
-      record = await service.getResearchResources(input.orcid_id, ctx);
-      // The /research-resources endpoint is unique among ORCID sections: it returns
-      // HTTP 200 {"group":[]} for non-existent and deprecated iDs alike instead of a 404 or
-      // a redirect, so an empty result is ambiguous (genuinely empty, no such record, or a
-      // merged record). Disambiguate by fetching /person, which 404s for a non-existent iD
-      // and redirects a deprecated one to its primary, whose resources are then fetched.
-      // Only on the empty path — a populated result already proves the record exists, so
-      // no extra round-trip there. A /person 404 is the answer (profile_not_found); any other
-      // probe failure but caller cancellation leaves the empty summary as served.
-      if (record.data.length === 0) {
-        const primaryId = await service.getPerson(input.orcid_id, ctx).then(
-          (person) => person.orcidId,
-          (error: unknown) => {
-            if (ctx.signal.aborted) throw error;
-            if (error instanceof McpError && error.code === JsonRpcErrorCode.NotFound) throw error;
-            ctx.log.warning('Deprecated-iD probe failed; returning the empty summary as served.', {
-              orcidId: requestedId,
-            });
-            return;
-          },
-        );
-        if (primaryId !== undefined && primaryId !== record.orcidId)
-          record = await service.getResearchResources(primaryId, ctx);
+    const profileNotFound = () =>
+      ctx.fail('profile_not_found', `ORCID iD ${requestedId} not found`);
+    const fetchSummary = async (orcidId: string) => {
+      try {
+        return await service.getResearchResources(orcidId, ctx);
+      } catch (error) {
+        if (error instanceof McpError && error.code === JsonRpcErrorCode.NotFound)
+          throw profileNotFound();
+        throw error;
       }
-    } catch (err) {
-      if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
-        throw ctx.fail('profile_not_found', `ORCID iD ${requestedId} not found`);
-      }
-      throw err;
+    };
+    // The /research-resources endpoint is unique among ORCID sections: it returns
+    // HTTP 200 {"group":[]} for non-existent and deprecated iDs alike instead of a 404 or
+    // a redirect, so an empty result is ambiguous (genuinely empty, no such record, or a
+    // merged record). Disambiguate by fetching /person, which 404s for a non-existent iD
+    // and redirects a deprecated one to its primary, whose resources are then fetched.
+    // Only on the empty path — a populated result already proves the record exists, so
+    // no extra round-trip there. A /person 404 is the answer (profile_not_found); a check
+    // that could not run keeps the empty summary and says so.
+    let record = await fetchSummary(input.orcid_id);
+    let mergeUnchecked = false;
+    if (record.data.length === 0) {
+      const check = await checkMerge(service, requestedId, ctx);
+      if (check.status === 'not_found') throw profileNotFound();
+      mergeUnchecked = check.status === 'failed';
+      if (check.status === 'answered' && check.orcidId !== record.orcidId)
+        record = await fetchSummary(check.orcidId);
     }
 
     const { orcidId: bareId, data: resources } = record;
@@ -312,6 +303,7 @@ export const orcidGetResearchResources = tool('orcid_get_research_resources', {
     });
 
     const notice = joinNotices(
+      mergeUnchecked && mergeCheckFailedNotice(requestedId, 'empty-summary'),
       deprecatedIdNotice(requestedId, bareId),
       resources.length === 0 &&
         'No research resources found. This ORCID section is sparsely populated — most researchers have no entries. Resources are typically deposited by allocation systems (e.g. ACCESS, XSEDE) rather than self-reported.',

@@ -139,6 +139,7 @@ describe('selected funding detail', () => {
       title: 'Award',
       description,
       amount: { value: '0.0000000000000000001', currency: 'USD' },
+      contributors: [],
       grantNumbers: [],
       sources: [],
     });
@@ -211,6 +212,43 @@ describe('selected funding detail', () => {
     },
   );
 
+  it('keeps contributors and subtype out of summary view', async () => {
+    // The summary carries both fields here, so a summary view that read either would show it.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          group: [
+            {
+              'funding-summary': [
+                {
+                  'put-code': 10,
+                  title: { title: { value: 'Grant' } },
+                  'organization-defined-type': { value: 'BRIDGE Grant Program' },
+                  contributors: {
+                    contributor: [
+                      {
+                        'credit-name': { value: 'Sophia D. Espanola' },
+                        'contributor-attributes': { 'contributor-role': 'supported-by' },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+    const result = await runToolContract(orcidGetFunding, { orcid_id: id });
+    expect(result.isError).toBeFalsy();
+    const record = (result.structuredContent as { funding: Record<string, unknown>[] }).funding[0];
+    expect(record).not.toHaveProperty('contributors');
+    expect(record).not.toHaveProperty('organizationDefinedType');
+    expect(text(result)).not.toContain('**Contributors:**');
+    expect(text(result)).not.toContain('**Funding subtype:**');
+  });
+
   it.each([
     { description_offset: 0, put_code: 1 },
     { description_offset: 0 },
@@ -229,5 +267,155 @@ describe('selected funding detail', () => {
       error: { code: JsonRpcErrorCode.InvalidParams, data: { reason: 'invalid_arguments' } },
     });
     if ('description_offset' in args) expect(text(result)).toContain('description_offset');
+  });
+});
+
+describe('selected funding detail: contributors and funding subtype (#86)', () => {
+  /** Live deposits keyed `<iD>/<put-code>`, as ORCID served them. */
+  const deposits: Record<string, unknown> = JSON.parse(
+    readFileSync(new URL('./funding-contributors.fixture.json', import.meta.url), 'utf8'),
+  );
+  /** Select one deposit through the real service, with `body` as ORCID's answer. */
+  async function select(orcidId: string, putCode: number, body: unknown) {
+    const fetchMock = vi.fn(async (_url: unknown) => Response.json(body));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await runToolContract(orcidGetFunding, { orcid_id: orcidId, put_code: putCode });
+    expect(result.isError).toBeFalsy();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(`/${orcidId}/funding/${putCode}`);
+    const record = (result.structuredContent as { funding: Record<string, unknown>[] }).funding[0];
+    return { record, text: text(result) };
+  }
+
+  it('returns a named, role-carrying contributor and the subtype on both surfaces', async () => {
+    const { record, text } = await select(
+      '0000-0001-9540-6625',
+      173219,
+      deposits['0000-0001-9540-6625/173219'],
+    );
+    expect(record).toMatchObject({
+      putCode: 173219,
+      contributors: [{ name: 'Sophia D. Espanola', role: 'supported-by' }],
+      organizationDefinedType: 'BRIDGE Grant Program',
+    });
+    expect(record?.contributors).toStrictEqual([
+      { name: 'Sophia D. Espanola', role: 'supported-by' },
+    ]);
+    expect(text).toContain('**Contributors:**\n- Sophia D. Espanola — supported-by\n');
+    expect(text).toContain('**Type:** award\n**Funding subtype:** BRIDGE Grant Program\n');
+  });
+
+  it('renders a role-only entry as unnamed and leaves an unset subtype out', async () => {
+    const { record, text } = await select(
+      '0000-0002-4087-2589',
+      216581,
+      deposits['0000-0002-4087-2589/216581'],
+    );
+    expect(record?.contributors).toStrictEqual([{ role: 'lead' }]);
+    expect(record).not.toHaveProperty('organizationDefinedType');
+    expect(text).toContain('**Contributors:**\n- (unnamed) — lead\n');
+    expect(text).not.toContain('**Funding subtype:**');
+  });
+
+  it('keeps every name-only entry, in upstream order, with no role', async () => {
+    const { record, text } = await select(
+      '0000-0002-4997-5031',
+      866540,
+      deposits['0000-0002-4997-5031/866540'],
+    );
+    expect(record?.contributors).toStrictEqual([
+      { name: 'Anabela Pereira' },
+      { name: 'Vitor Duque' },
+    ]);
+    expect(text).toContain('**Contributors:**\n- Anabela Pereira\n- Vitor Duque\n');
+  });
+
+  it('returns a deposited contributor iD and keeps an entry that carries nothing', async () => {
+    const { record, text } = await select('0000-0001-9540-6625', 1, {
+      'put-code': 1,
+      contributors: {
+        contributor: [
+          {
+            'contributor-orcid': {
+              uri: 'https://orcid.org/0000-0002-1825-0097',
+              path: '0000-0002-1825-0097',
+              host: 'orcid.org',
+            },
+            'credit-name': { value: 'Josiah Carberry' },
+            'contributor-email': null,
+            'contributor-attributes': { 'contributor-role': 'co-lead' },
+          },
+          {
+            'contributor-orcid': null,
+            'credit-name': null,
+            'contributor-email': null,
+            'contributor-attributes': null,
+          },
+        ],
+      },
+    });
+    expect(record?.contributors).toStrictEqual([
+      { name: 'Josiah Carberry', orcidId: '0000-0002-1825-0097', role: 'co-lead' },
+      {},
+    ]);
+    expect(text).toContain(
+      '**Contributors:**\n- Josiah Carberry — co-lead [0000-0002-1825-0097]\n- (unnamed)\n',
+    );
+  });
+
+  it('returns no contributors and the subtype when the deposit lists none', async () => {
+    const { record, text } = await select(
+      '0000-0001-7113-5488',
+      550335,
+      deposits['0000-0001-7113-5488/550335'],
+    );
+    expect(record?.contributors).toStrictEqual([]);
+    expect(record?.organizationDefinedType).toBe('F31 - Predoctoral Fellowship');
+    expect(text).toContain('**Funding subtype:** F31 - Predoctoral Fellowship\n');
+    expect(text).not.toContain('**Contributors:**');
+  });
+
+  it.each([
+    [
+      'null contributors and subtype',
+      { 'put-code': 1, contributors: null, 'organization-defined-type': null },
+    ],
+    ['absent contributors and subtype', { 'put-code': 1 }],
+    [
+      'an empty contributor list and a null subtype value',
+      {
+        'put-code': 1,
+        contributors: { contributor: [] },
+        'organization-defined-type': { value: null },
+      },
+    ],
+  ])('gives an empty list, no subtype key, and neither line for %s', async (_, body) => {
+    const { record, text } = await select(id, 1, body);
+    expect(record?.contributors).toStrictEqual([]);
+    expect(record).not.toHaveProperty('organizationDefinedType');
+    expect(text).not.toContain('**Contributors:**');
+    expect(text).not.toContain('**Funding subtype:**');
+  });
+
+  it('folds a line break in a contributor name or the subtype in text only', async () => {
+    const name = 'Anabela\r\nPereira';
+    const subtype = 'BRIDGE\r\nGrant\nProgram';
+    const { record, text } = await select(id, 1, {
+      'put-code': 1,
+      contributors: {
+        contributor: [
+          {
+            'credit-name': { value: name },
+            'contributor-attributes': { 'contributor-role': 'lead' },
+          },
+        ],
+      },
+      'organization-defined-type': { value: subtype },
+    });
+    expect(record?.contributors).toStrictEqual([{ name, role: 'lead' }]);
+    expect(record?.organizationDefinedType).toBe(subtype);
+    expect(text).toContain('- Anabela Pereira — lead\n');
+    expect(text).toContain('**Funding subtype:** BRIDGE Grant Program\n');
+    expect(text).not.toMatch(/^(Pereira|Grant|Program)/m);
   });
 });

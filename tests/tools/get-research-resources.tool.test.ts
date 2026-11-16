@@ -31,6 +31,14 @@ const existingPerson = {
   countries: [],
 };
 
+/** The empty-section notice an empty summary carries. */
+const EMPTY_NOTICE =
+  'No research resources found. This ORCID section is sparsely populated — most researchers have no entries. Resources are typically deposited by allocation systems (e.g. ACCESS, XSEDE) rather than self-reported.';
+
+/** The sentence an empty summary opens with when its /person merge check could not run. */
+const UNCHECKED_NOTICE =
+  'ORCID iD 0000-0002-1825-0097 could not be checked for a merge into another iD, so its existence and this empty result are unconfirmed; call again before relying on this answer.';
+
 const sampleResources = [
   {
     putCode: 8093,
@@ -132,9 +140,8 @@ describe('orcidGetResearchResources', () => {
     expect(result.resourceCount).toBe(0);
     expect(result.resources).toEqual([]);
     expect(mockGetPerson).toHaveBeenCalledTimes(1);
-    const enrichment = getEnrichment(ctx);
-    expect(enrichment.notice).toBeDefined();
-    expect(enrichment.notice).toContain('No research resources found');
+    // A merge check that ran adds no disclosure.
+    expect(getEnrichment(ctx).notice).toBe(EMPTY_NOTICE);
   });
 
   it('throws profile_not_found for a non-existent iD (empty 200 disambiguated via getPerson 404)', async () => {
@@ -167,9 +174,17 @@ describe('orcidGetResearchResources', () => {
         retryable: true,
       }),
     ],
+    [
+      'past its wait bound',
+      new McpError(
+        JsonRpcErrorCode.Timeout,
+        'ORCID request exceeded its 10000ms retry deadline after 1 attempt.',
+        { reason: 'retry_deadline_exceeded' },
+      ),
+    ],
     ['an unexpected error', new Error('socket hang up')],
   ])(
-    'returns the empty summary and its notice when the /person probe is %s',
+    'returns the empty summary opening its notice with the unchecked-merge disclosure when the /person probe is %s',
     async (_label, failure) => {
       mockGetResearchResources.mockResolvedValueOnce([]);
       mockGetPerson.mockRejectedValueOnce(failure);
@@ -179,16 +194,22 @@ describe('orcidGetResearchResources', () => {
       });
 
       expect(result.isError).toBeFalsy();
-      expect(result.structuredContent).toMatchObject({
+      // One composed notice: the disclosure, then the empty-section notice.
+      expect(result.structuredContent).toEqual({
         view: 'summary',
         orcidId: '0000-0002-1825-0097',
+        orcidUri: 'https://orcid.org/0000-0002-1825-0097',
         resourceCount: 0,
         resources: [],
-        notice: expect.stringMatching(/^No research resources found\./),
+        notice: `${UNCHECKED_NOTICE} ${EMPTY_NOTICE}`,
       });
       const text = result.content.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
-      expect(text).toContain('> No research resources found.');
+      expect(text).toContain(`> ${UNCHECKED_NOTICE} ${EMPTY_NOTICE}`);
+      // The probe's own failure is never the call's answer.
+      expect(JSON.stringify(result)).not.toContain(failure.message);
       expect(mockGetResearchResources).toHaveBeenCalledTimes(1);
+      expect(mockGetPerson).toHaveBeenCalledTimes(1);
+      expect(mockGetPerson.mock.calls[0]?.[2]).toEqual({ maxWaitMs: 10_000 });
     },
   );
 

@@ -1,0 +1,323 @@
+{
+  "0000-0001-9540-6625/173219": {
+    "created-date": {
+      "value": 1461086572263
+    },
+    "last-modified-date": {
+      "value": 1461086572263
+    },
+    "source": {
+      "source-orcid": {
+        "uri": "https://orcid.org/0000-0001-9540-6625",
+        "path": "0000-0001-9540-6625",
+        "host": "orcid.org"
+      },
+      "source-client-id": null,
+      "source-name": {
+        "value": "Sophia D. Espanola"
+      },
+      "assertion-origin-orcid": null,
+      "assertion-origin-client-id": null,
+      "assertion-origin-name": null
+    },
+    "put-code": 173219,
+    "path": "/0000-0001-9540-6625/funding/173219",
+    "type": "award",
+    "organization-defined-type": {
+      "value": "BRIDGE Grant Program"
+    },
+    "title": {
+      "title": {
+        "value": "BioCollaborative Life Science Immersion Program"
+      },
+      "translated-title": null
+    },
+    "short-description": null,
+    "amount": null,
+    "url": null,
+    "start-date": {
+      "year": {
+        "value": "2013"
+      },
+      "month": {
+        "value": "07"
+      },
+      "day": null
+    },
+    "end-date": {
+      "year": {
+        "value": "2014"
+      },
+      "month": {
+        "value": "07"
+      },
+      "day": null
+    },
+    "external-ids": null,
+    "contributors": {
+      "contributor": [
+        {
+          "contributor-orcid": null,
+          "credit-name": {
+            "value": "Sophia D. Espanola"
+          },
+          "contributor-email": null,
+          "contributor-attributes": {
+            "contributor-role": "supported-by"
+          }
+        }
+      ]
+    },
+    "organization": {
+      "name": "BIOCOM",
+      "address": {
+        "city": "San Diego",
+        "region": "CA",
+        "country": "US"
+      },
+      "disambiguated-organization": null
+    },
+    "visibility": "public"
+  },
+  "0000-0002-4087-2589/216581": {
+    "created-date": {
+      "value": 1474763987827
+    },
+    "last-modified-date": {
+      "value": 1474763987827
+    },
+    "source": {
+      "source-orcid": {
+        "uri": "https://orcid.org/0000-0002-4087-2589",
+        "path": "0000-0002-4087-2589",
+        "host": "orcid.org"
+      },
+      "source-client-id": null,
+      "source-name": {
+        "value": "Ivan Major"
+      },
+      "assertion-origin-orcid": null,
+      "assertion-origin-client-id": null,
+      "assertion-origin-name": null
+    },
+    "put-code": 216581,
+    "path": "/0000-0002-4087-2589/funding/216581",
+    "type": "grant",
+    "organization-defined-type": null,
+    "title": {
+      "title": {
+        "value": "Privatization in Central and eastern Europe - Lessons to Be Learnt from Western Europe"
+      },
+      "translated-title": null
+    },
+    "short-description": null,
+    "amount": {
+      "value": "34000000",
+      "currency-code": "HUF"
+    },
+    "url": null,
+    "start-date": {
+      "year": {
+        "value": "1993"
+      },
+      "month": {
+        "value": "01"
+      },
+      "day": null
+    },
+    "end-date": {
+      "year": {
+        "value": "1997"
+      },
+      "month": {
+        "value": "12"
+      },
+      "day": null
+    },
+    "external-ids": null,
+    "contributors": {
+      "contributor": [
+        {
+          "contributor-orcid": null,
+          "credit-name": null,
+          "contributor-email": null,
+          "contributor-attributes": {
+            "contributor-role": "lead"
+          }
+        }
+      ]
+    },
+    "organization": {
+      "name": "EU Phare",
+      "address": {
+        "city": "Bruxelles",
+        "region": null,
+        "country": "BE"
+      },
+      "disambiguated-organization": null
+    },
+    "visibility": "public"
+  },
+  "0000-0002-4997-5031/866540": {
+    "created-date": {
+      "value": 1587723660132
+    },
+    "last-modified-date": {
+      "value": 1587743172549
+    },
+    "source": {
+      "source-orcid": null,
+      "source-client-id": {
+        "uri": "https://orcid.org/client/APP-CO5OJTH11SC6AXRX",
+        "path": "APP-CO5OJTH11SC6AXRX",
+        "host": "orcid.org"
+      },
+      "source-name": {
+        "value": "CIÊNCIAVITAE"
+      },
+      "assertion-origin-orcid": null,
+      "assertion-origin-client-id": null,
+      "assertion-origin-name": null
+    },
+    "put-code": 866540,
+    "path": "/0000-0002-4997-5031/funding/866540",
+    "type": "contract",
+    "organization-defined-type": null,
+    "title": {
+      "title": {
+        "value": "Coping and Wining Over Health Staff Distress (CoWining) Lidar e Vencer o Distress nos Profissionais de Saúde"
+      },
+      "translated-title": null
+    },
+    "short-description": "Recentemente envolvi-me no projeto de investigação \"Ansiedade e medos na pandemia do COVID-19\" o qual levou à candidatura do projeto “Coping and Wining Over Health Staff Distress (CoWining) Lidar e Vencer o Distress nos Profissionais de Saúde” (Projeto FCT/Nº 596708602) coordenado por Anabela Pereira da Universidade de Aveiro (PI) e por Vitor Duque (CO-PI) da Faculdade de Medicina de Coimbra/ Doenças Infecciosas do Centro Hospitalar da Universidade de Coimbra.  ",
+    "amount": null,
+    "url": null,
+    "start-date": {
+      "year": {
+        "value": "2020"
+      },
+      "month": {
+        "value": "03"
+      },
+      "day": null
+    },
+    "end-date": null,
+    "external-ids": {
+      "external-id": [
+        {
+          "external-id-type": "grant_number",
+          "external-id-value": "https://www.ua.pt/stresslab/",
+          "external-id-normalized": null,
+          "external-id-normalized-error": null,
+          "external-id-url": {
+            "value": "https://www.ua.pt/stresslab/"
+          },
+          "external-id-relationship": "self"
+        }
+      ]
+    },
+    "contributors": {
+      "contributor": [
+        {
+          "contributor-orcid": null,
+          "credit-name": {
+            "value": "Anabela Pereira"
+          },
+          "contributor-email": null,
+          "contributor-attributes": null
+        },
+        {
+          "contributor-orcid": null,
+          "credit-name": {
+            "value": "Vitor Duque"
+          },
+          "contributor-email": null,
+          "contributor-attributes": null
+        }
+      ]
+    },
+    "organization": {
+      "name": "Fundação para a Ciência e a Tecnologia",
+      "address": {
+        "city": "Lisboa",
+        "region": null,
+        "country": "PT"
+      },
+      "disambiguated-organization": {
+        "disambiguated-organization-identifier": "http://dx.doi.org/10.13039/501100001871",
+        "disambiguation-source": "FUNDREF"
+      }
+    },
+    "visibility": "public"
+  },
+  "0000-0001-7113-5488/550335": {
+    "created-date": {
+      "value": 1541018596544
+    },
+    "last-modified-date": {
+      "value": 1541018596544
+    },
+    "source": {
+      "source-orcid": {
+        "uri": "https://orcid.org/0000-0001-7113-5488",
+        "path": "0000-0001-7113-5488",
+        "host": "orcid.org"
+      },
+      "source-client-id": null,
+      "source-name": {
+        "value": "Roxsan Manshouri"
+      },
+      "assertion-origin-orcid": null,
+      "assertion-origin-client-id": null,
+      "assertion-origin-name": null
+    },
+    "put-code": 550335,
+    "path": "/0000-0001-7113-5488/funding/550335",
+    "type": "grant",
+    "organization-defined-type": {
+      "value": "F31 - Predoctoral Fellowship"
+    },
+    "title": {
+      "title": {
+        "value": "The NuRD Complex Regulates ZEB1 Dimerization and NSCLC Metastasis"
+      },
+      "translated-title": null
+    },
+    "short-description": null,
+    "amount": null,
+    "url": null,
+    "start-date": {
+      "year": {
+        "value": "2018"
+      },
+      "month": {
+        "value": "09"
+      },
+      "day": null
+    },
+    "end-date": {
+      "year": {
+        "value": "2023"
+      },
+      "month": {
+        "value": "08"
+      },
+      "day": null
+    },
+    "external-ids": null,
+    "contributors": null,
+    "organization": {
+      "name": "National Institutes of Health",
+      "address": {
+        "city": "MD",
+        "region": "MD",
+        "country": "US"
+      },
+      "disambiguated-organization": {
+        "disambiguated-organization-identifier": "http://dx.doi.org/10.13039/100000002",
+        "disambiguation-source": "FUNDREF"
+      }
+    },
+    "visibility": "public"
+  }
+}

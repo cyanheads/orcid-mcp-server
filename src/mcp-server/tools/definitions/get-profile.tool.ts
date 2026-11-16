@@ -1,7 +1,8 @@
 /**
  * @fileoverview Fetch a researcher's public profile from ORCID: name, other names,
- * biography, keywords, researcher URLs, and external identifiers (Scopus ID,
- * ResearcherID, etc.).
+ * biography, keywords, researcher URLs, external identifiers (Scopus ID, ResearcherID,
+ * etc.), public email addresses with their verified flags, and countries; on request, the
+ * record's history (created when and how, claimed, verified-email flags) from `/record`.
  * @module mcp-server/tools/definitions/get-profile.tool
  */
 
@@ -10,7 +11,7 @@ import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { deprecatedIdNotice } from '@/mcp-server/tools/deprecated-id-notice.js';
 import { joinNotices } from '@/mcp-server/tools/notices.js';
 import { blockquote, singleLine } from '@/mcp-server/tools/third-party-text.js';
-import type { NormalizedPerson } from '@/services/orcid/normalizers.js';
+import type { NormalizedRecord } from '@/services/orcid/normalizers.js';
 import { orcidIdSchema } from '@/services/orcid/orcid-id.js';
 import {
   getOrcidService,
@@ -24,11 +25,17 @@ const orList = new Intl.ListFormat('en', { type: 'disjunction' });
 export const orcidGetProfile = tool('orcid_get_profile', {
   title: 'Get ORCID Researcher Profile',
   description:
-    "Fetch a researcher's public profile from ORCID: name, other names, biography, keywords, researcher URLs, and external identifiers such as Scopus Author ID, ResearcherID, and Loop profile. This is the entry point for building a researcher dossier. Pass a bare ORCID iD (0000-0001-2345-6789) or a full URI (https://orcid.org/0000-0001-2345-6789). The profile contains only publicly visible data — researchers control visibility per field.",
+    "Fetch a researcher's public profile from ORCID: name, other names, biography, keywords, researcher URLs, external identifiers such as Scopus Author ID, ResearcherID, and Loop profile, public email addresses with their verified flags, and countries. This is the entry point for building a researcher dossier. Pass a bare ORCID iD (0000-0001-2345-6789) or a full URI (https://orcid.org/0000-0001-2345-6789). Set include_history for the record's trust signals: when and how it was created, whether the researcher claimed it, and whether it has a verified email, private addresses included. The profile contains only publicly visible data — researchers control visibility per field.",
   annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
     orcid_id: orcidIdSchema,
+    include_history: z
+      .boolean()
+      .default(false)
+      .describe(
+        "Also return the record's history. Reads ORCID's full record instead of the person section; for a researcher with many works that upstream response can exceed 10 MB, and the first call for such a record can time out while ORCID builds it, so call again after a timeout. This tool still returns only the profile and its history. Set it only when the trust signals are needed.",
+      ),
   }),
 
   output: z.object({
@@ -79,6 +86,12 @@ export const orcidGetProfile = tool('orcid_get_profile', {
               .boolean()
               .optional()
               .describe('True when this is the primary email address.'),
+            verified: z
+              .boolean()
+              .optional()
+              .describe(
+                'Whether ORCID marks the address verified, exactly as published; absent when ORCID omits it. ORCID shows only verified addresses publicly, so this reads true in practice — history.verifiedEmail is the signal that covers private addresses.',
+              ),
           })
           .describe('Email address entry.'),
       )
@@ -86,6 +99,43 @@ export const orcidGetProfile = tool('orcid_get_profile', {
     countries: z
       .array(z.string().describe('ISO 3166-1 alpha-2 country code.'))
       .describe("Countries listed in the researcher's address section."),
+    history: z
+      .object({
+        createdDate: z
+          .string()
+          .optional()
+          .describe('When the ORCID record was created (its submission date), ISO 8601 UTC.'),
+        creationMethod: z
+          .string()
+          .optional()
+          .describe(
+            'How the record was created, as ORCID publishes it: API (by a member organization), DIRECT, MEMBER_REFERRED, or WEBSITE.',
+          ),
+        claimed: z
+          .boolean()
+          .optional()
+          .describe(
+            'Whether the researcher has claimed the record. A record a member organization creates through the API stays unclaimed until the researcher takes control of it.',
+          ),
+        verifiedEmail: z
+          .boolean()
+          .optional()
+          .describe(
+            'Whether the record has at least one verified email address, private addresses included.',
+          ),
+        verifiedPrimaryEmail: z
+          .boolean()
+          .optional()
+          .describe("Whether the record's primary email address is verified, public or not."),
+        lastModifiedDate: z
+          .string()
+          .optional()
+          .describe('When the record was last modified, ISO 8601 UTC.'),
+      })
+      .optional()
+      .describe(
+        "The record's history, present only with include_history. Each field is present only when ORCID published it.",
+      ),
   }),
 
   // Agent-facing context: names the empty sections on both surfaces, since format()
@@ -111,11 +161,19 @@ export const orcidGetProfile = tool('orcid_get_profile', {
 
   async handler(input, ctx) {
     const service = getOrcidService();
-    ctx.log.info('orcid_get_profile', { orcidId: input.orcid_id });
+    ctx.log.info('orcid_get_profile', {
+      orcidId: input.orcid_id,
+      includeHistory: input.include_history,
+    });
 
-    let record: RecordResult<NormalizedPerson>;
+    // One request either way: `/record` carries the same person section plus its history.
+    let record: RecordResult<NormalizedRecord>;
     try {
-      record = await service.getPerson(input.orcid_id, ctx);
+      record = input.include_history
+        ? await service.getRecord(input.orcid_id, ctx)
+        : await service
+            .getPerson(input.orcid_id, ctx)
+            .then(({ orcidId, data }) => ({ orcidId, data: { person: data } }));
     } catch (err) {
       if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
         throw ctx.fail(
@@ -125,7 +183,10 @@ export const orcidGetProfile = tool('orcid_get_profile', {
       }
       throw err;
     }
-    const { orcidId: bareId, data: person } = record;
+    const {
+      orcidId: bareId,
+      data: { person, history },
+    } = record;
 
     ctx.log.info('orcid_get_profile completed', {
       orcidId: bareId,
@@ -165,6 +226,7 @@ export const orcidGetProfile = tool('orcid_get_profile', {
       externalIdentifiers: person.externalIdentifiers,
       emails: person.emails,
       countries: person.countries,
+      ...(history && { history }),
     };
   },
 
@@ -206,12 +268,31 @@ export const orcidGetProfile = tool('orcid_get_profile', {
     if (result.emails.length) {
       lines.push('', '### Emails');
       for (const e of result.emails) {
-        lines.push(`- ${e.email}${e.primary ? ' (primary)' : ''}`);
+        const verified =
+          e.verified === undefined ? '' : e.verified ? ' (verified)' : ' (unverified)';
+        lines.push(`- ${e.email}${e.primary ? ' (primary)' : ''}${verified}`);
       }
     }
 
     if (result.countries.length) {
       lines.push('', `**Countries:** ${result.countries.join(', ')}`);
+    }
+
+    if (result.history) {
+      const h = result.history;
+      const fields: [label: string, value: string | boolean | undefined][] = [
+        ['Created', h.createdDate],
+        ['Creation Method', h.creationMethod],
+        ['Claimed', h.claimed],
+        ['Verified Email', h.verifiedEmail],
+        ['Verified Primary Email', h.verifiedPrimaryEmail],
+        ['Last Modified', h.lastModifiedDate],
+      ];
+      // One line per field ORCID published; an empty history renders no section.
+      const history = fields.flatMap(([label, value]) =>
+        value === undefined ? [] : [`**${label}:** ${value}`],
+      );
+      if (history.length) lines.push('', '### Record History', ...history);
     }
 
     return [{ type: 'text', text: lines.join('\n') }];

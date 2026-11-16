@@ -9,11 +9,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetProfile } from '@/mcp-server/tools/definitions/get-profile.tool.js';
 
 const mockGetPerson = vi.fn();
+const mockGetRecord = vi.fn();
 vi.mock('@/services/orcid/orcid-service.js', async () => {
   const { served } = await import('../helpers/served-record.js');
   const normalizeOrcidId = (id: string) => id.replace(/^https?:\/\/orcid\.org\//, '').trim();
   return {
-    getOrcidService: () => ({ getPerson: served(mockGetPerson, normalizeOrcidId) }),
+    getOrcidService: () => ({
+      getPerson: served(mockGetPerson, normalizeOrcidId),
+      getRecord: served(mockGetRecord, normalizeOrcidId),
+    }),
     normalizeOrcidId,
   };
 });
@@ -389,5 +393,143 @@ describe('orcidGetProfile — empty-section notice (#40)', () => {
       orcidUri: 'https://orcid.org/0000-0002-1825-0097',
       ...emptyPerson,
     });
+  });
+});
+
+describe('orcidGetProfile — email verification and record history (#87)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const history = {
+    createdDate: '2018-05-10T05:58:12.742Z',
+    creationMethod: 'MEMBER_REFERRED',
+    claimed: true,
+    verifiedEmail: true,
+    verifiedPrimaryEmail: false,
+    lastModifiedDate: '2019-12-18T02:26:52.219Z',
+  };
+
+  /** Render the parsed result of one handler call on `input`. */
+  async function call(input: Record<string, unknown>) {
+    const ctx = createMockContext({ errors: orcidGetProfile.errors });
+    const result = await orcidGetProfile.handler(
+      orcidGetProfile.input.parse({ orcid_id: '0000-0002-1825-0097', ...input }),
+      ctx,
+    );
+    const [block] = orcidGetProfile.format!(orcidGetProfile.output.parse(result));
+    return { result, text: (block as { text: string }).text };
+  }
+
+  it('defaults include_history to false and accepts only a boolean', () => {
+    expect(orcidGetProfile.input.parse({ orcid_id: '0000-0002-1825-0097' })).toStrictEqual({
+      orcid_id: '0000-0002-1825-0097',
+      include_history: false,
+    });
+    expect(() =>
+      orcidGetProfile.input.parse({ orcid_id: '0000-0002-1825-0097', include_history: 'yes' }),
+    ).toThrow();
+  });
+
+  it.each([{}, { include_history: false }])(
+    'reads the person section alone and returns no history for %j',
+    async (input) => {
+      mockGetPerson.mockResolvedValueOnce(fullPerson);
+      const { result, text } = await call(input);
+
+      expect(mockGetPerson).toHaveBeenCalledTimes(1);
+      expect(mockGetRecord).not.toHaveBeenCalled();
+      expect(result).not.toHaveProperty('history');
+      expect(text).toBe(FULL_PERSON_TEXT);
+    },
+  );
+
+  it('reads the record alone with include_history and adds its history last', async () => {
+    mockGetRecord.mockResolvedValueOnce({ person: fullPerson, history });
+    const { result, text } = await call({ include_history: true });
+
+    expect(mockGetRecord).toHaveBeenCalledTimes(1);
+    expect(mockGetRecord.mock.calls[0]?.[0]).toBe('0000-0002-1825-0097');
+    expect(mockGetPerson).not.toHaveBeenCalled();
+    expect(result).toStrictEqual({
+      orcidId: '0000-0002-1825-0097',
+      orcidUri: 'https://orcid.org/0000-0002-1825-0097',
+      ...fullPerson,
+      history,
+    });
+    expect(text).toBe(
+      [
+        FULL_PERSON_TEXT,
+        '',
+        '### Record History',
+        '**Created:** 2018-05-10T05:58:12.742Z',
+        '**Creation Method:** MEMBER_REFERRED',
+        '**Claimed:** true',
+        '**Verified Email:** true',
+        '**Verified Primary Email:** false',
+        '**Last Modified:** 2019-12-18T02:26:52.219Z',
+      ].join('\n'),
+    );
+  });
+
+  it('renders one line per published history field and no section for an empty history', async () => {
+    mockGetRecord.mockResolvedValueOnce({
+      person: fullPerson,
+      history: { claimed: false, verifiedEmail: false },
+    });
+    const partial = await call({ include_history: true });
+    expect(partial.text).toBe(
+      `${FULL_PERSON_TEXT}\n\n### Record History\n**Claimed:** false\n**Verified Email:** false`,
+    );
+
+    mockGetRecord.mockResolvedValueOnce({ person: fullPerson, history: {} });
+    const empty = await call({ include_history: true });
+    expect(empty.result.history).toStrictEqual({});
+    expect(empty.text).toBe(FULL_PERSON_TEXT);
+
+    mockGetRecord.mockResolvedValueOnce({ person: fullPerson });
+    const absent = await call({ include_history: true });
+    expect(absent.result).not.toHaveProperty('history');
+    expect(absent.text).toBe(FULL_PERSON_TEXT);
+  });
+
+  it('tags each email with its verified flag as published, and nothing when it is absent', async () => {
+    mockGetPerson.mockResolvedValueOnce({
+      ...fullPerson,
+      emails: [
+        { email: 'person@example.org', primary: true, verified: true },
+        { email: 'person.alt@example.org', primary: false, verified: false },
+        { email: 'person.old@example.org' },
+      ],
+    });
+    const { result, text } = await call({});
+
+    expect(result.emails).toStrictEqual([
+      { email: 'person@example.org', primary: true, verified: true },
+      { email: 'person.alt@example.org', primary: false, verified: false },
+      { email: 'person.old@example.org' },
+    ]);
+    expect(text).toContain(
+      '### Emails\n- person@example.org (primary) (verified)\n- person.alt@example.org (unverified)\n- person.old@example.org\n',
+    );
+  });
+
+  it('fails a record 404 as profile_not_found with the contract recovery hint', async () => {
+    mockGetRecord.mockRejectedValueOnce(
+      new McpError(JsonRpcErrorCode.NotFound, 'ORCID returned HTTP 404 Not Found.'),
+    );
+    const result = await runToolContract(orcidGetProfile, {
+      orcid_id: '0000-0000-0000-0001',
+      include_history: true,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        code: JsonRpcErrorCode.NotFound,
+        data: { reason: 'profile_not_found', recovery: { hint: expect.any(String) } },
+      },
+    });
+    expect(mockGetPerson).not.toHaveBeenCalled();
   });
 });

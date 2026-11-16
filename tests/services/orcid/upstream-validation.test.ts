@@ -25,6 +25,7 @@ const methods = [
   (s: OrcidService) => s.getResearchResources(id, createMockContext()),
   (s: OrcidService) => s.getResearchResourceDetail(id, 1, createMockContext()),
   (s: OrcidService) => s.getFundingDetail(id, 1, createMockContext()),
+  (s: OrcidService) => s.getRecord(id, createMockContext()),
 ];
 afterEach(() => vi.unstubAllGlobals());
 
@@ -155,6 +156,36 @@ describe('ORCID endpoint boundaries', () => {
     [8, { 'put-code': 1, 'resource-item': [{ hosts: { organization: [{ name: [] }] } }] }],
     [9, { 'put-code': 1, amount: { value: 0 } }],
     [9, { 'put-code': 1, 'short-description': { content: 'wrong' } }],
+    [9, { 'put-code': 1, contributors: { contributor: 'wrong' } }],
+    [9, { 'put-code': 1, contributors: { contributor: [{ 'credit-name': { value: 5 } }] } }],
+    [
+      9,
+      {
+        'put-code': 1,
+        contributors: { contributor: [{ 'contributor-orcid': { path: ['0000-0002-1825-0097'] } }] },
+      },
+    ],
+    [
+      9,
+      {
+        'put-code': 1,
+        contributors: { contributor: [{ 'contributor-attributes': { 'contributor-role': 1 } }] },
+      },
+    ],
+    [9, { 'put-code': 1, 'organization-defined-type': 'BRIDGE Grant Program' }],
+    [9, { 'put-code': 1, 'organization-defined-type': { value: 5 } }],
+    [10, { 'activities-summary': {}, path: '/0000-0002-1825-0097' }],
+    [10, { history: { claimed: 'true' } }],
+    [10, { history: { 'verified-email': 1 } }],
+    [10, { history: { 'creation-method': { value: 'API' } } }],
+    [10, { history: { 'submission-date': { value: '1525931892742' } } }],
+    [10, { history: { 'last-modified-date': { value: 1.5 } } }],
+    [10, { history: { 'submission-date': { value: 8.64e15 + 1 } } }],
+    [10, { history: {}, person: { name: { 'given-names': { value: 42 } } } }],
+    [
+      10,
+      { history: {}, person: { emails: { email: [{ email: 'a@example.org', verified: 'yes' }] } } },
+    ],
   ] as const)('rejects malformed nested consumed fields at endpoint %s', async (index, payload) => {
     const fetchMock = vi.fn(async () => Response.json(payload));
     vi.stubGlobal('fetch', fetchMock);
@@ -162,6 +193,46 @@ describe('ORCID endpoint boundaries', () => {
       methods[index]!(new OrcidService(config, createInMemoryStorage())),
     ).rejects.toMatchObject({ data: { reason: 'invalid_upstream_response', retryable: false } });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads only the history and person of a record, whatever shape its activities summary takes', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          'activities-summary': { works: { group: 'wrong' }, fundings: [42], 'peer-reviews': null },
+          history: {
+            'creation-method': null,
+            'completion-date': { value: 1352727077585 },
+            'submission-date': null,
+            'last-modified-date': { value: null },
+            claimed: null,
+            source: { 'source-name': { value: 'Member' } },
+            'deactivation-date': null,
+            'verified-email': true,
+            'verified-primary-email': null,
+          },
+          person: { name: null, emails: null },
+          preferences: { locale: 'en' },
+        }),
+      ),
+    );
+    expect(
+      await new OrcidService(config, createInMemoryStorage()).getRecord(id, createMockContext()),
+    ).toStrictEqual({
+      orcidId: id,
+      data: {
+        person: {
+          otherNames: [],
+          keywords: [],
+          researcherUrls: [],
+          externalIdentifiers: [],
+          emails: [],
+          countries: [],
+        },
+        history: { verifiedEmail: true },
+      },
+    });
   });
 
   it('accepts null leaves and unknown metadata and preserves per-record bulk errors', async () => {

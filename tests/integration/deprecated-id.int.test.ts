@@ -17,7 +17,7 @@ import {
   type FetchMockHarness,
   runToolContract,
 } from '@cyanheads/mcp-ts-core/testing';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getServerConfig } from '@/config/server-config.js';
 import { researcherProfileResource } from '@/mcp-server/resources/definitions/researcher-profile.resource.js';
 import { researcherWorksResource } from '@/mcp-server/resources/definitions/researcher-works.resource.js';
@@ -482,5 +482,58 @@ describe('an iD that is not deprecated', () => {
       error: { code: JsonRpcErrorCode.NotFound, data: { reason: 'profile_not_found' } },
     });
     expect(requested()).toEqual([`/${MISSING_ID}/research-resources`, `/${MISSING_ID}/person`]);
+  });
+});
+
+describe('a merge check that cannot run', () => {
+  /** Constructed, checksum-valid iD whose /person accepts the request and never answers. */
+  const STALLED = '0000-0003-8300-0083';
+  const disclosure = `ORCID iD ${STALLED} could not be checked for a merge into another iD, so its existence and this empty result are unconfirmed; call again before relying on this answer.`;
+
+  it('answers the empty summary with the disclosure 10 s after the primary request, not at the 25 s call deadline', async () => {
+    http.route(
+      {
+        match: `${BASE}/${STALLED}/research-resources`,
+        respond: () => Response.json({ group: [], path: `/${STALLED}/research-resources` }),
+      },
+      {
+        match: `${BASE}/${STALLED}/person`,
+        respond: (request) =>
+          new Promise<Response>((_, reject) =>
+            request.signal.addEventListener('abort', () => reject(request.signal.reason), {
+              once: true,
+            }),
+          ),
+      },
+    );
+    vi.useFakeTimers();
+    try {
+      let settled = false;
+      const call = runToolContract(orcidGetResearchResources, { orcid_id: STALLED }).finally(() => {
+        settled = true;
+      });
+
+      // The primary request answers at once; the probe is the request still open.
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(settled).toBe(false);
+      expect(requested()).toEqual([`/${STALLED}/research-resources`, `/${STALLED}/person`]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(settled).toBe(true);
+
+      const result = await call;
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).toMatchObject({
+        orcidId: STALLED,
+        resourceCount: 0,
+        notice: `${disclosure} No research resources found. This ORCID section is sparsely populated — most researchers have no entries. Resources are typically deposited by allocation systems (e.g. ACCESS, XSEDE) rather than self-reported.`,
+      });
+      expect(text(result)).toContain(`> ${disclosure}`);
+      // The probe's expiry is not the call's answer, and nothing follows the probe.
+      expect(JSON.stringify(result)).not.toContain('retry deadline');
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(requested()).toEqual([`/${STALLED}/research-resources`, `/${STALLED}/person`]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

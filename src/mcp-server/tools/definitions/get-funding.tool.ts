@@ -1,6 +1,7 @@
 /**
  * @fileoverview Fetch funding records for a researcher from ORCID: grants, contracts,
- * awards, and salary awards with funder names, grant numbers, and funding periods.
+ * awards, and salary awards with funder names, grant numbers, and funding periods, or one
+ * selected deposit with its amount, description, funding subtype, and contributors.
  * @module mcp-server/tools/definitions/get-funding.tool
  */
 
@@ -54,6 +55,34 @@ const FundingOutputSchema = z.object({
             })
             .optional()
             .describe('Deposited amount and currency; missing values are not inferred.'),
+          contributors: z
+            .array(
+              z
+                .object({
+                  name: z.string().optional().describe('Credit name, as deposited.'),
+                  orcidId: z
+                    .string()
+                    .optional()
+                    .describe("The contributor's ORCID iD, when deposited."),
+                  role: z
+                    .string()
+                    .optional()
+                    .describe(
+                      'Contributor role as ORCID publishes it: lead, co-lead, supported-by, or other-contribution.',
+                    ),
+                })
+                .describe('One deposited contributor, carrying only the fields deposited.'),
+            )
+            .optional()
+            .describe(
+              "The deposit's contributors in upstream order, whole. Empty when none was deposited, which is not evidence that the researcher had no role in the award. Detail view only.",
+            ),
+          organizationDefinedType: z
+            .string()
+            .optional()
+            .describe(
+              'Funding subtype as the depositor wrote it (orcid.org labels it "Funding subtype"): free text up to 255 characters, not a program vocabulary; one deposit system writes the literal placeholder "Funding sub-type". Detail view only; omitted when none was deposited.',
+            ),
           title: z.string().optional().describe('Funding title or project name.'),
           type: z
             .string()
@@ -122,7 +151,7 @@ const FundingOutputSchema = z.object({
 export const orcidGetFunding = tool('orcid_get_funding', {
   title: 'Get ORCID Researcher Funding',
   description:
-    'List funding for an ORCID researcher, or supply a summary putCode as put_code to fetch one deposited award. Summary returns one preferred record per grant group with all sources and distinct periods. Detail returns that deposit alone with its own source, optional exact decimal amount and currency, URL, and its whole deposited description (ORCID caps it at 5,000 characters). Funding records are sparse; absence does not imply no funding.',
+    'List funding for an ORCID researcher, or supply a summary putCode as put_code to fetch one deposited award. Summary returns one preferred record per grant group with all sources and distinct periods. Detail returns that deposit alone with its own source, optional exact decimal amount and currency, URL, funding subtype, contributors with their roles (lead, co-lead, supported-by), and its whole deposited description (ORCID caps it at 5,000 characters). Funding records are sparse; absence does not imply no funding.',
   annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
 
   input: z.object({
@@ -257,6 +286,8 @@ function renderFunding(result: FundingResult): { type: 'text'; text: string }[] 
     if (f.description !== undefined)
       lines.push(`**Description (JSON string):** ${JSON.stringify(f.description)}`);
     if (f.type) lines.push(`**Type:** ${f.type}`);
+    if (f.organizationDefinedType)
+      lines.push(`**Funding subtype:** ${singleLine(f.organizationDefinedType)}`);
     if (f.funder?.name) lines.push(`**Funder:** ${singleLine(f.funder.name)}`);
     if (f.funder?.city) lines.push(`**Funder City:** ${singleLine(f.funder.city)}`);
     if (f.funder?.country) lines.push(`**Funder Country:** ${f.funder.country}`);
@@ -277,6 +308,14 @@ function renderFunding(result: FundingResult): { type: 'text'; text: string }[] 
     if (f.url) lines.push(`**URL:** ${singleLine(f.url)}`);
     const sources = sourcesText(f.sources);
     if (sources) lines.push(`**Sources:** ${sources}`);
+    if (f.contributors?.length) {
+      lines.push('', '**Contributors:**');
+      for (const c of f.contributors) {
+        const role = c.role ? ` — ${c.role}` : '';
+        const orcid = c.orcidId ? ` [${c.orcidId}]` : '';
+        lines.push(`- ${singleLine(c.name ?? '(unnamed)')}${role}${orcid}`);
+      }
+    }
     lines.push('');
   }
 

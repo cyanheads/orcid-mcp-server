@@ -7,7 +7,11 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { deprecatedIdNotice } from '@/mcp-server/tools/deprecated-id-notice.js';
+import {
+  checkMerge,
+  deprecatedIdNotice,
+  mergeCheckFailedNotice,
+} from '@/mcp-server/tools/deprecated-id-notice.js';
 import { joinNotices } from '@/mcp-server/tools/notices.js';
 import { SourceSchema, sourcesText } from '@/mcp-server/tools/record-sources.js';
 import { blockquote, fence, singleLine } from '@/mcp-server/tools/third-party-text.js';
@@ -276,7 +280,7 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
       .string()
       .optional()
       .describe(
-        'Deprecated-iD disclosure naming the primary iD, then separate notices for put-codes past the 100-code fetch cap and put-codes ORCID returned no result for; call again with deferredPutCodes.',
+        'Notes on this answer, in order: that the iD could not be checked for a merge into another iD (put-codes that did not resolve are then unconfirmed; call again), the deprecated-iD disclosure naming the primary iD, then separate notices for put-codes past the 100-code fetch cap and put-codes ORCID returned no result for; call again with deferredPutCodes.',
       ),
   },
 
@@ -310,26 +314,19 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
     ctx.log.info('orcid_get_work_detail', { orcidId: requestedId, count: putCodes.length });
 
     let record: RecordResult<BulkWorkResult[]>;
+    let mergeUnchecked = false;
     try {
       record = await service.getWorkDetails(input.orcid_id, putCodes, ctx);
       // ORCID answers the bulk endpoint for a deprecated iD with an invalid-put-code error per
       // code instead of redirecting it. When no work resolves, /person (which does redirect)
       // names the primary iD; a differing one gets the request again. A call that resolves any
-      // work makes no extra request. The probe is best-effort: when it fails for any reason but
-      // caller cancellation, the per-code errors already in hand are the answer.
+      // work makes no extra request. The per-code errors in hand stay the answer when /person
+      // 404s, and when the check could not run, which the notice then says.
       if (!record.data.some((result) => result.type === 'work')) {
-        const primaryId = await service.getPerson(input.orcid_id, ctx).then(
-          (person) => person.orcidId,
-          (error: unknown) => {
-            if (ctx.signal.aborted) throw error;
-            ctx.log.warning('Deprecated-iD probe failed; returning the bulk results as served.', {
-              orcidId: requestedId,
-            });
-            return;
-          },
-        );
-        if (primaryId !== undefined && primaryId !== record.orcidId)
-          record = await service.getWorkDetails(primaryId, putCodes, ctx);
+        const check = await checkMerge(service, requestedId, ctx);
+        mergeUnchecked = check.status === 'failed';
+        if (check.status === 'answered' && check.orcidId !== record.orcidId)
+          record = await service.getWorkDetails(check.orcidId, putCodes, ctx);
       }
     } catch (err) {
       // Caller cancellation propagates as thrown, never relabelled as an upstream failure.
@@ -397,6 +394,7 @@ export const orcidGetWorkDetail = tool('orcid_get_work_detail', {
 
     const missingCount = putCodes.filter((code) => !settled.has(code)).length;
     const notice = joinNotices(
+      mergeUnchecked && mergeCheckFailedNotice(requestedId, 'unresolved-works'),
       deprecation,
       capNotice,
       missingCount > 0 &&

@@ -4,7 +4,7 @@
  */
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, runToolContract } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { assert, beforeEach, describe, expect, it, vi } from 'vitest';
 import { orcidGetWorkDetail } from '@/mcp-server/tools/definitions/get-work-detail.tool.js';
 
@@ -278,6 +278,9 @@ describe('orcidGetWorkDetail', () => {
     expect(result.errors).toHaveLength(2);
     expect(result.errors[0]!.putCode).toBe(1);
     expect(result.errors[1]!.putCode).toBe(2);
+    // The /person merge check ran and found no merge: nothing to disclose.
+    expect(mockGetPerson).toHaveBeenCalledTimes(1);
+    expect(getEnrichment(ctx).notice).toBeUndefined();
   });
 
   it('handles error entries without a put-code', async () => {
@@ -299,7 +302,7 @@ describe('orcidGetWorkDetail', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // The zero-resolved-works /person probe is best-effort
+  // A zero-resolved-works /person merge check that cannot run keeps the per-code errors and says so
   // ---------------------------------------------------------------------------
 
   describe('a failing deprecation probe', () => {
@@ -307,6 +310,39 @@ describe('orcidGetWorkDetail', () => {
       { type: 'error', putCode: 1, message: "'1' is not a valid put code" },
       { type: 'error', putCode: 2, message: "'2' is not a valid put code" },
     ];
+    /** The per-code result the call answers with whether or not its merge check ran. */
+    const perCodeResult = {
+      orcidId: '0000-0001-9161-999X',
+      orcidUri: 'https://orcid.org/0000-0001-9161-999X',
+      works: [],
+      errors: [
+        { putCode: 1, message: "'1' is not a valid put code" },
+        { putCode: 2, message: "'2' is not a valid put code" },
+      ],
+    };
+    /** The sentence the notice opens with when the /person merge check could not run. */
+    const UNCHECKED_NOTICE =
+      'ORCID iD 0000-0001-9161-999X could not be checked for a merge into another iD, so the put-codes that did not resolve are unconfirmed; call again before relying on this answer.';
+
+    it('returns the per-code errors when /person is not found', async () => {
+      mockGetWorkDetails.mockResolvedValueOnce(allErrors);
+      mockGetPerson.mockRejectedValueOnce(
+        new McpError(JsonRpcErrorCode.NotFound, 'ORCID returned HTTP 404.'),
+      );
+
+      const result = await runToolContract(orcidGetWorkDetail, {
+        orcid_id: '0000-0001-9161-999X',
+        put_codes: [1, 2],
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).toEqual(perCodeResult);
+      const text = result.content.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
+      expect(text).toContain("- '2' is not a valid put code (put-code 2)");
+      expect(text).not.toContain('bulk works endpoint');
+      expect(mockGetPerson).toHaveBeenCalledTimes(1);
+      expect(mockGetWorkDetails).toHaveBeenCalledTimes(1);
+    });
 
     it.each([
       [
@@ -315,32 +351,55 @@ describe('orcidGetWorkDetail', () => {
           retryable: true,
         }),
       ],
-      ['not found', new McpError(JsonRpcErrorCode.NotFound, 'ORCID returned HTTP 404.')],
+      [
+        'past its wait bound',
+        new McpError(
+          JsonRpcErrorCode.Timeout,
+          'ORCID request exceeded its 10000ms retry deadline after 1 attempt.',
+          { reason: 'retry_deadline_exceeded' },
+        ),
+      ],
       ['an unexpected error', new Error('socket hang up')],
-    ])('returns the per-code errors when /person is %s', async (_label, failure) => {
+    ])(
+      'returns the per-code errors opening the notice with the unchecked-merge disclosure when /person is %s',
+      async (_label, failure) => {
+        mockGetWorkDetails.mockResolvedValueOnce(allErrors);
+        mockGetPerson.mockRejectedValueOnce(failure);
+
+        const result = await runToolContract(orcidGetWorkDetail, {
+          orcid_id: '0000-0001-9161-999X',
+          put_codes: [1, 2],
+        });
+
+        expect(result.isError).toBeFalsy();
+        expect(result.structuredContent).toEqual({ ...perCodeResult, notice: UNCHECKED_NOTICE });
+        const text = result.content.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
+        expect(text).toContain(`> ${UNCHECKED_NOTICE}`);
+        expect(text).toContain("- '2' is not a valid put code (put-code 2)");
+        // The probe's own failure is never the call's answer.
+        expect(JSON.stringify(result)).not.toContain(failure.message);
+        expect(mockGetPerson).toHaveBeenCalledTimes(1);
+        expect(mockGetPerson.mock.calls[0]?.[2]).toEqual({ maxWaitMs: 10_000 });
+        expect(mockGetWorkDetails).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it('composes the disclosure with the fetch-cap and missing-result notices in one notice', async () => {
       mockGetWorkDetails.mockResolvedValueOnce(allErrors);
-      mockGetPerson.mockRejectedValueOnce(failure);
+      mockGetPerson.mockRejectedValueOnce(
+        new McpError(JsonRpcErrorCode.ServiceUnavailable, 'ORCID returned HTTP 503.'),
+      );
 
       const result = await runToolContract(orcidGetWorkDetail, {
         orcid_id: '0000-0001-9161-999X',
-        put_codes: [1, 2],
+        put_codes: Array.from({ length: 101 }, (_, i) => i + 1),
       });
 
+      const notice = `${UNCHECKED_NOTICE} Requested 101 raw put-codes (101 distinct); effective fetch cap 100 distinct put-codes in one request; 1 put-codes deferred by the input cap. ORCID returned no identified result for 98 requested put-codes; they remain deferred. Call orcid_get_work_detail again with deferredPutCodes as put_codes.`;
       expect(result.isError).toBeFalsy();
-      expect(result.structuredContent).toEqual({
-        orcidId: '0000-0001-9161-999X',
-        orcidUri: 'https://orcid.org/0000-0001-9161-999X',
-        works: [],
-        errors: [
-          { putCode: 1, message: "'1' is not a valid put code" },
-          { putCode: 2, message: "'2' is not a valid put code" },
-        ],
-      });
+      expect(result.structuredContent).toMatchObject({ ...perCodeResult, notice });
       const text = result.content.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
-      expect(text).toContain("- '2' is not a valid put code (put-code 2)");
-      expect(text).not.toContain('bulk works endpoint');
-      expect(mockGetPerson).toHaveBeenCalledTimes(1);
-      expect(mockGetWorkDetails).toHaveBeenCalledTimes(1);
+      expect(text).toContain(`> ${notice}`);
     });
 
     it('rethrows caller cancellation that lands during the probe', async () => {

@@ -715,6 +715,147 @@ describe('OrcidService — one deadline across the retry ladder, and transport f
   });
 });
 
+describe('OrcidService — a request bounded below the call budget (#83)', () => {
+  const realFetch = globalThis.fetch;
+  const ORCID_ID = '0000-0002-1825-0097';
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  const newService = () => new OrcidService(appConfig, storage);
+
+  /** A response after `delayMs`, or an upstream that never answers when it is omitted. */
+  const answerAfter =
+    (delayMs?: number) =>
+    (_url: string | URL | Request, init?: RequestInit): Promise<Response> =>
+      new Promise((resolve, reject) => {
+        const timer =
+          delayMs === undefined
+            ? undefined
+            : setTimeout(() => resolve(Response.json({ name: null })), delayMs);
+        init?.signal?.addEventListener(
+          'abort',
+          () => {
+            clearTimeout(timer);
+            reject(init.signal?.reason);
+          },
+          { once: true },
+        );
+      });
+
+  /** Track a call's settlement so a test can assert it is still pending at a given instant. */
+  function track(call: Promise<unknown>) {
+    const state: { settled: boolean; error?: unknown } = { settled: false };
+    call.then(
+      () => {
+        state.settled = true;
+      },
+      (error: unknown) => {
+        state.settled = true;
+        state.error = error;
+      },
+    );
+    return state;
+  }
+
+  /** A context whose first request answered after `elapsedMs` of the 25 s budget. */
+  async function contextAfter(service: OrcidService, elapsedMs: number) {
+    const ctx = createMockContext();
+    const first = track(service.getPerson(ORCID_ID, ctx));
+    await vi.advanceTimersByTimeAsync(elapsedMs);
+    expect(first).toEqual({ settled: true });
+    return ctx;
+  }
+
+  it('ends a stalled request at maxWaitMs, well inside the 25 s budget', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(answerAfter());
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const state = track(
+      newService().getPerson(ORCID_ID, createMockContext(), { maxWaitMs: 10_000 }),
+    );
+
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(state.settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(state.settled).toBe(true);
+
+    const err = state.error as McpError;
+    expect(err).toBeInstanceOf(McpError);
+    expect(err.code).toBe(JsonRpcErrorCode.Timeout);
+    expect(err.data).toMatchObject({
+      reason: 'retry_deadline_exceeded',
+      deadlineMs: 10_000,
+      retryAttempts: 1,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('never waits past what is left of the call budget', async () => {
+    vi.useFakeTimers();
+    // The first request answers after 21 s; the bounded one never does.
+    const fetchMock = vi.fn(answerAfter()).mockImplementationOnce(answerAfter(21_000));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const service = newService();
+    const ctx = await contextAfter(service, 21_000);
+
+    // 4 s of the budget remain, below the 10 s bound.
+    const state = track(service.getPerson(ORCID_ID, ctx, { maxWaitMs: 10_000 }));
+    await vi.advanceTimersByTimeAsync(3_999);
+    expect(state.settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(state.settled).toBe(true);
+    expect(state.error).toMatchObject({
+      code: JsonRpcErrorCode.Timeout,
+      data: { reason: 'retry_deadline_exceeded', deadlineMs: 4_000 },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('sends nothing when no time is left of the call budget', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(answerAfter(20_000));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const service = newService();
+    const ctx = await contextAfter(service, 20_000);
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    const state = track(service.getPerson(ORCID_ID, ctx, { maxWaitMs: 10_000 }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(state.settled).toBe(true);
+    expect(state.error).toMatchObject({
+      code: JsonRpcErrorCode.Timeout,
+      data: { reason: 'retry_deadline_exceeded' },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('ends on a caller abort during a bounded request with the abort itself', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(answerAfter());
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const controller = new AbortController();
+    const state = track(
+      newService().getPerson(ORCID_ID, createMockContext({ signal: controller.signal }), {
+        maxWaitMs: 10_000,
+      }),
+    );
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(state.settled).toBe(true);
+    expect(state.error).not.toBeInstanceOf(McpError);
+    expect((state.error as DOMException).name).toBe('AbortError');
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('OrcidService — a deprecated iD resolves to its primary record (#80)', () => {
   const realFetch = globalThis.fetch;
   const BASE = getServerConfig().orcidApiBaseUrl.replace(/\/$/, '');
@@ -833,6 +974,12 @@ describe('OrcidService — a deprecated iD resolves to its primary record (#80)'
       body: { 'put-code': 1, source: byPrimary },
       call: (s, id) => s.getResearchResourceDetail(id, 1, ctx()),
       source: (data: { sources: { selfAsserted: boolean }[] }) => data.sources[0],
+    },
+    {
+      name: 'getRecord',
+      path: 'record',
+      body: { history: { claimed: true }, person: { name: null } },
+      call: (s, id) => s.getRecord(id, ctx()),
     },
   ];
   const ctx = () => createMockContext();

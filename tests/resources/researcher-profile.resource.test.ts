@@ -34,7 +34,8 @@ const fullPerson = {
       relationship: 'self',
     },
   ],
-  emails: [{ email: 'jdoudna@example.edu', primary: true }],
+  // getPerson relays each email's verified flag; the resource exposes no emails at all.
+  emails: [{ email: 'jdoudna@example.edu', primary: true, verified: true }],
   countries: ['US'],
 };
 

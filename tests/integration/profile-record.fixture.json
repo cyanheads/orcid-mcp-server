@@ -1,0 +1,199 @@
+{
+  "orcid-identifier": {
+    "uri": "https://orcid.org/0000-0001-5406-5852",
+    "path": "0000-0001-5406-5852",
+    "host": "orcid.org"
+  },
+  "preferences": {
+    "locale": "en"
+  },
+  "history": {
+    "creation-method": "MEMBER_REFERRED",
+    "completion-date": null,
+    "submission-date": {
+      "value": 1525931892742
+    },
+    "last-modified-date": {
+      "value": 1576636012219
+    },
+    "claimed": true,
+    "source": null,
+    "deactivation-date": null,
+    "verified-email": true,
+    "verified-primary-email": true
+  },
+  "person": {
+    "last-modified-date": {
+      "value": 1576636012217
+    },
+    "name": {
+      "created-date": {
+        "value": 1525931892742
+      },
+      "last-modified-date": {
+        "value": 1525931892974
+      },
+      "given-names": {
+        "value": "matthew"
+      },
+      "family-name": {
+        "value": "menezes"
+      },
+      "credit-name": null,
+      "source": null,
+      "visibility": "public",
+      "path": "0000-0001-5406-5852"
+    },
+    "other-names": {
+      "last-modified-date": null,
+      "other-name": [],
+      "path": "/0000-0001-5406-5852/other-names"
+    },
+    "biography": null,
+    "researcher-urls": {
+      "last-modified-date": null,
+      "researcher-url": [],
+      "path": "/0000-0001-5406-5852/researcher-urls"
+    },
+    "emails": {
+      "last-modified-date": {
+        "value": 1576636012217
+      },
+      "email": [
+        {
+          "created-date": {
+            "value": 1525931892974
+          },
+          "last-modified-date": {
+            "value": 1576636012217
+          },
+          "source": {
+            "source-orcid": {
+              "uri": "https://orcid.org/0000-0001-5406-5852",
+              "path": "0000-0001-5406-5852",
+              "host": "orcid.org"
+            },
+            "source-client-id": null,
+            "source-name": {
+              "value": "matthew menezes"
+            },
+            "assertion-origin-orcid": null,
+            "assertion-origin-client-id": null,
+            "assertion-origin-name": null
+          },
+          "email": "person@example.org",
+          "path": null,
+          "visibility": "public",
+          "verified": true,
+          "primary": true,
+          "put-code": null
+        },
+        {
+          "created-date": {
+            "value": 1525931892974
+          },
+          "last-modified-date": {
+            "value": 1525932378317
+          },
+          "source": {
+            "source-orcid": {
+              "uri": "https://orcid.org/0000-0001-5406-5852",
+              "path": "0000-0001-5406-5852",
+              "host": "orcid.org"
+            },
+            "source-client-id": null,
+            "source-name": {
+              "value": "matthew menezes"
+            },
+            "assertion-origin-orcid": null,
+            "assertion-origin-client-id": null,
+            "assertion-origin-name": null
+          },
+          "email": "person.alt@example.org",
+          "path": null,
+          "visibility": "public",
+          "verified": true,
+          "primary": false,
+          "put-code": null
+        }
+      ],
+      "path": "/0000-0001-5406-5852/email"
+    },
+    "addresses": {
+      "last-modified-date": null,
+      "address": [],
+      "path": "/0000-0001-5406-5852/address"
+    },
+    "keywords": {
+      "last-modified-date": null,
+      "keyword": [],
+      "path": "/0000-0001-5406-5852/keywords"
+    },
+    "external-identifiers": {
+      "last-modified-date": null,
+      "external-identifier": [],
+      "path": "/0000-0001-5406-5852/external-identifiers"
+    },
+    "path": "/0000-0001-5406-5852/person"
+  },
+  "activities-summary": {
+    "last-modified-date": null,
+    "distinctions": {
+      "last-modified-date": null,
+      "affiliation-group": [],
+      "path": "/0000-0001-5406-5852/distinctions"
+    },
+    "educations": {
+      "last-modified-date": null,
+      "affiliation-group": [],
+      "path": "/0000-0001-5406-5852/educations"
+    },
+    "employments": {
+      "last-modified-date": null,
+      "affiliation-group": [],
+      "path": "/0000-0001-5406-5852/employments"
+    },
+    "fundings": {
+      "last-modified-date": null,
+      "group": [],
+      "path": "/0000-0001-5406-5852/fundings"
+    },
+    "invited-positions": {
+      "last-modified-date": null,
+      "affiliation-group": [],
+      "path": "/0000-0001-5406-5852/invited-positions"
+    },
+    "memberships": {
+      "last-modified-date": null,
+      "affiliation-group": [],
+      "path": "/0000-0001-5406-5852/memberships"
+    },
+    "peer-reviews": {
+      "last-modified-date": null,
+      "group": [],
+      "path": "/0000-0001-5406-5852/peer-reviews"
+    },
+    "qualifications": {
+      "last-modified-date": null,
+      "affiliation-group": [],
+      "path": "/0000-0001-5406-5852/qualifications"
+    },
+    "research-resources": {
+      "last-modified-date": null,
+      "group": [],
+      "path": "/0000-0001-5406-5852/research-resources"
+    },
+    "services": {
+      "last-modified-date": null,
+      "affiliation-group": [],
+      "path": "/0000-0001-5406-5852/services"
+    },
+    "works": {
+      "last-modified-date": null,
+      "group": [],
+      "path": "/0000-0001-5406-5852/works"
+    },
+    "path": "/0000-0001-5406-5852/activities"
+  },
+  "path": "/0000-0001-5406-5852"
+}

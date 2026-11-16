@@ -6,7 +6,12 @@
 
 import type { Context, z } from '@cyanheads/mcp-ts-core';
 import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
-import { JsonRpcErrorCode, type McpError, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
+import {
+  JsonRpcErrorCode,
+  type McpError,
+  serviceUnavailable,
+  timeout,
+} from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import {
   httpErrorFromResponse,
@@ -14,7 +19,7 @@ import {
   withRetry,
 } from '@cyanheads/mcp-ts-core/utils';
 import { getServerConfig } from '@/config/server-config.js';
-import type { NormalizedPerson } from './normalizers.js';
+import type { NormalizedPerson, NormalizedRecord } from './normalizers.js';
 import {
   normalizeActivities,
   normalizeBulkWorks,
@@ -23,6 +28,7 @@ import {
   normalizeFundings,
   normalizePeerReviews,
   normalizePerson,
+  normalizeRecord,
   normalizeResearchResourceDetail,
   normalizeResearchResources,
   normalizeWorks,
@@ -193,13 +199,27 @@ export class OrcidService {
    * names ORCID only, retried like an outage. The runtime's message can carry the request URL
    * and the parser's quotes the body, so both stay on `cause`; logs use a fixed endpoint
    * label (#28, #31). Redirects are followed; `finalUrl` is set only when one was.
+   *
+   * `options.maxWaitMs` bounds this one request below the call's budget: its deadline is the
+   * lesser of the two. A bounded request with no time left is not sent; it fails at once as the
+   * same `Timeout` expiry, with `retryAttempts: 0`.
    */
   private async fetchJson<T>(
     url: string,
     endpoint: string,
     ctx: Context,
     schema: z.ZodType<T>,
+    options?: { maxWaitMs?: number },
   ): Promise<{ data: T; finalUrl?: string }> {
+    let deadlineMs = this.remainingBudgetMs(ctx);
+    if (options?.maxWaitMs !== undefined) {
+      deadlineMs = Math.min(deadlineMs, options.maxWaitMs);
+      if (deadlineMs === 0)
+        throw timeout('ORCID request was not sent: no time was left of its deadline.', {
+          reason: 'retry_deadline_exceeded',
+          retryAttempts: 0,
+        });
+    }
     // Create a RequestContext from the handler Context for withRetry's structured logging.
     const reqCtx = requestContextService.createRequestContext({
       operation: 'OrcidService.fetchJson',
@@ -243,7 +263,7 @@ export class OrcidService {
         operation: 'ORCID request',
         context: reqCtx,
         baseDelayMs: 1000,
-        deadlineMs: this.remainingBudgetMs(ctx),
+        deadlineMs,
         signal: ctx.signal,
       },
     );
@@ -258,7 +278,7 @@ export class OrcidService {
    * `fetch` follows; the record is then the primary's, and its iD — the one the normalizers
    * compare `selfAsserted` against, passed to `normalize` — is the final URL's iD segment. A
    * redirect that leaves the configured API base, or whose final URL carries no valid iD
-   * there, fails as `invalid_upstream_response`.
+   * there, fails as `invalid_upstream_response`. `options` reaches {@link fetchJson}.
    */
   private async fetchRecord<T, R>(
     id: string,
@@ -267,12 +287,14 @@ export class OrcidService {
     ctx: Context,
     schema: z.ZodType<T>,
     normalize: (raw: T, orcidId: string) => R,
+    options?: { maxWaitMs?: number },
   ): Promise<RecordResult<R>> {
     const { data, finalUrl } = await this.fetchJson(
       `${this.baseUrl}/${id}/${section}`,
       endpoint,
       ctx,
       schema,
+      options,
     );
     if (finalUrl === undefined) return { orcidId: id, data: normalize(data, id) };
     const base = new URL(this.baseUrl);
@@ -311,9 +333,14 @@ export class OrcidService {
 
   /**
    * Fetch the person section for an ORCID iD.
-   * Returns name, biography, keywords, researcher URLs, external IDs.
+   * Returns name, biography, keywords, researcher URLs, external IDs. `options.maxWaitMs`
+   * bounds the request below the call's budget (see {@link fetchJson}).
    */
-  async getPerson(orcidId: string, ctx: Context): Promise<RecordResult<NormalizedPerson>> {
+  async getPerson(
+    orcidId: string,
+    ctx: Context,
+    options?: { maxWaitMs?: number },
+  ): Promise<RecordResult<NormalizedPerson>> {
     const id = normalizeOrcidId(orcidId);
     ctx.log.debug('ORCID getPerson', { orcidId: id });
     return await this.fetchRecord(
@@ -323,6 +350,25 @@ export class OrcidService {
       ctx,
       upstreamSchemas.person,
       normalizePerson,
+      options,
+    );
+  }
+
+  /**
+   * Fetch the whole record for an ORCID iD and keep its person section and `history`, which no
+   * lighter endpoint serves. The response also carries the activities summary — more than 10 MB on
+   * a heavily published record — which the schema passes through unvalidated and nothing reads.
+   */
+  async getRecord(orcidId: string, ctx: Context): Promise<RecordResult<NormalizedRecord>> {
+    const id = normalizeOrcidId(orcidId);
+    ctx.log.debug('ORCID getRecord', { orcidId: id });
+    return await this.fetchRecord(
+      id,
+      'record',
+      'record',
+      ctx,
+      upstreamSchemas.record,
+      normalizeRecord,
     );
   }
 

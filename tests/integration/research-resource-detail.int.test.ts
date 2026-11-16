@@ -243,6 +243,7 @@ describe('allocation detail contract', () => {
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({
       error: {
+        message: 'The selected allocation detail does not exist or is not public.',
         data: {
           reason: 'resource_not_found',
           recovery: { hint: expect.stringContaining('summary') },
@@ -264,16 +265,43 @@ describe('allocation detail contract', () => {
       'research-resource/5724',
       'person',
     ]);
+    // The message discloses the check that could not run; the declared recovery still applies.
+    const message = `Allocation 5724 was not found. ORCID iD ${id} could not be checked for a merge into another iD, so this not-found answer is unconfirmed; call again before relying on this answer.`;
     expect(result.structuredContent).toMatchObject({
       error: {
         code: JsonRpcErrorCode.NotFound,
+        message,
         data: {
           reason: 'resource_not_found',
-          recovery: { hint: expect.stringContaining('summary') },
+          recovery: { hint: 'Fetch the summary list and choose a public resource put-code.' },
         },
       },
     });
-    expect(JSON.stringify(result.content)).toContain('resource_not_found');
+    const text = result.content.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
+    expect(text).toContain(`Error: ${message}`);
+    expect(text).toContain(
+      'Recovery: Fetch the summary list and choose a public resource put-code.',
+    );
+    expect(text).toContain('resource_not_found');
+  });
+
+  it('keeps resource_not_found without the disclosure when /person answers 404', async () => {
+    status = 404;
+    person = () => new Response('', { status: 404 });
+    const before = http.calls.length;
+    const result = await call();
+    expect(http.calls.slice(before).map((c) => c.request.url.split(`/${id}/`)[1])).toEqual([
+      'research-resource/5724',
+      'person',
+    ]);
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        code: JsonRpcErrorCode.NotFound,
+        message: 'The selected allocation detail does not exist or is not public.',
+        data: { reason: 'resource_not_found' },
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain('merge');
   });
 
   it('rethrows caller cancellation that lands during the /person probe', async () => {

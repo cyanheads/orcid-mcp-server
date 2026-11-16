@@ -6,11 +6,13 @@
  * @module tests/integration/record-contracts.int.test
  */
 
+import { readFileSync } from 'node:fs';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import type { FetchMockHarness } from '@cyanheads/mcp-ts-core/testing';
 import { runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { toolContractSuite } from '@cyanheads/mcp-ts-core/testing/vitest';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { getServerConfig } from '@/config/server-config.js';
 import { orcidGetProfile } from '@/mcp-server/tools/definitions/get-profile.tool.js';
 import { orcidGetWorkDetail } from '@/mcp-server/tools/definitions/get-work-detail.tool.js';
 import { orcidGetWorks } from '@/mcp-server/tools/definitions/get-works.tool.js';
@@ -265,5 +267,206 @@ describe('orcid_get_work_detail upstream rate limit, through the real service', 
     const text = result.content.map((block) => (block.type === 'text' ? block.text : '')).join('');
     expect(text).not.toContain('203.0.113.7');
     expect(text).not.toContain('/works/');
+  });
+});
+
+describe('orcid_get_profile include_history, through the real service (#87)', () => {
+  const BASE = getServerConfig().orcidApiBaseUrl.replace(/\/$/, '');
+  /** `/record` of this iD as ORCID served it, its public email addresses replaced. */
+  const RECORD_ID = '0000-0001-5406-5852';
+  const record = JSON.parse(
+    readFileSync(new URL('./profile-record.fixture.json', import.meta.url), 'utf8'),
+  ) as { person: unknown };
+  const HISTORY_BLOCK = [
+    '### Record History',
+    '**Created:** 2018-05-10T05:58:12.742Z',
+    '**Creation Method:** MEMBER_REFERRED',
+    '**Claimed:** true',
+    '**Verified Email:** true',
+    '**Verified Primary Email:** true',
+    '**Last Modified:** 2019-12-18T02:26:52.219Z',
+  ].join('\n');
+  const textOf = (result: Awaited<ReturnType<typeof runToolContract>>) =>
+    result.content.map((block) => (block.type === 'text' ? block.text : '')).join('');
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  /** Answer every request with `respond(url)`, recording each URL requested. */
+  function serve(respond: (url: string) => Response) {
+    const fetchMock = vi.fn(async (url: string) => respond(url));
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  it('returns the record history on both surfaces and reads /record alone', async () => {
+    const fetchMock = serve(() => Response.json(record));
+    const result = await runToolContract(orcidGetProfile, {
+      orcid_id: RECORD_ID,
+      include_history: true,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([`${BASE}/${RECORD_ID}/record`]);
+    const structured = result.structuredContent as Record<string, unknown>;
+    expect(structured.history).toStrictEqual({
+      createdDate: '2018-05-10T05:58:12.742Z',
+      creationMethod: 'MEMBER_REFERRED',
+      claimed: true,
+      verifiedEmail: true,
+      verifiedPrimaryEmail: true,
+      lastModifiedDate: '2019-12-18T02:26:52.219Z',
+    });
+    expect(structured.emails).toStrictEqual([
+      { email: 'person@example.org', primary: true, verified: true },
+      { email: 'person.alt@example.org', primary: false, verified: true },
+    ]);
+    expect(textOf(result)).toContain(HISTORY_BLOCK);
+    expect(textOf(result)).toContain(
+      '### Emails\n- person@example.org (primary) (verified)\n- person.alt@example.org (verified)',
+    );
+  });
+
+  it.each([{}, { include_history: false }])(
+    'reads /person alone and returns no history for %j',
+    async (option) => {
+      const fetchMock = serve(() => Response.json(record.person));
+      const result = await runToolContract(orcidGetProfile, { orcid_id: RECORD_ID, ...option });
+
+      expect(result.isError).toBeFalsy();
+      expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([`${BASE}/${RECORD_ID}/person`]);
+      expect(result.structuredContent).not.toHaveProperty('history');
+      expect(textOf(result)).not.toContain('### Record History');
+    },
+  );
+
+  it('returns every field the option-off call returns, unchanged, for the same person data', async () => {
+    serve(() => Response.json(record.person));
+    const off = await runToolContract(orcidGetProfile, { orcid_id: RECORD_ID });
+    serve(() => Response.json(record));
+    const on = await runToolContract(orcidGetProfile, {
+      orcid_id: RECORD_ID,
+      include_history: true,
+    });
+
+    const { history, ...shared } = on.structuredContent as Record<string, unknown>;
+    expect(history).toBeDefined();
+    expect(shared).toStrictEqual(off.structuredContent);
+    expect(textOf(on).replace(`\n\n${HISTORY_BLOCK}`, '')).toBe(textOf(off));
+  });
+
+  it('leaves out every history field ORCID publishes as null or omits', async () => {
+    serve(() =>
+      Response.json({
+        history: {
+          'creation-method': null,
+          'completion-date': null,
+          'last-modified-date': { value: null },
+          claimed: null,
+          source: null,
+          'deactivation-date': null,
+          'verified-email': true,
+          'verified-primary-email': null,
+        },
+        person: record.person,
+      }),
+    );
+    const result = await runToolContract(orcidGetProfile, {
+      orcid_id: RECORD_ID,
+      include_history: true,
+    });
+
+    expect((result.structuredContent as { history?: unknown }).history).toStrictEqual({
+      verifiedEmail: true,
+    });
+    expect(textOf(result)).toContain('### Record History\n**Verified Email:** true');
+    for (const label of ['Created', 'Creation Method', 'Claimed', 'Verified Primary Email'])
+      expect(textOf(result)).not.toContain(`**${label}:**`);
+    expect(textOf(result)).not.toContain('**Last Modified:**');
+  });
+
+  it("follows a deprecated iD's redirect to the primary's /record and reports the primary iD", async () => {
+    const DEPRECATED = '0000-0002-7759-8499';
+    const PRIMARY = '0000-0001-8143-9338';
+    const fetchMock = serve(() => {
+      const response = Response.json(record);
+      Object.defineProperties(response, {
+        redirected: { value: true },
+        url: { value: `${BASE}/${PRIMARY}/record` },
+      });
+      return response;
+    });
+    const result = await runToolContract(orcidGetProfile, {
+      orcid_id: DEPRECATED,
+      include_history: true,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([`${BASE}/${DEPRECATED}/record`]);
+    const structured = result.structuredContent as {
+      orcidId: string;
+      notice?: string;
+      history?: unknown;
+    };
+    expect(structured.orcidId).toBe(PRIMARY);
+    expect(structured.history).toMatchObject({ creationMethod: 'MEMBER_REFERRED' });
+    expect(structured.notice).toContain(`ORCID iD ${DEPRECATED} is deprecated`);
+    expect(textOf(result)).toContain(`ORCID iD ${DEPRECATED} is deprecated`);
+  });
+
+  /** A failed call's envelope without its per-call request id. */
+  function envelopeOf(result: Awaited<ReturnType<typeof runToolContract>>) {
+    const { error } = result.structuredContent as {
+      error: { code: number; message: string; data?: Record<string, unknown> };
+    };
+    const { requestId: _requestId, ...data } = error.data ?? {};
+    return { code: error.code, message: error.message, data };
+  }
+
+  it('fails a /record 404 as profile_not_found, as a /person 404 fails', async () => {
+    serve(() => new Response('', { status: 404, statusText: 'Not Found' }));
+    const off = await runToolContract(orcidGetProfile, { orcid_id: RECORD_ID });
+    const fetchMock = serve(() => new Response('', { status: 404, statusText: 'Not Found' }));
+    const on = await runToolContract(orcidGetProfile, {
+      orcid_id: RECORD_ID,
+      include_history: true,
+    });
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([`${BASE}/${RECORD_ID}/record`]);
+    expect(on.isError).toBe(true);
+    expect(envelopeOf(on)).toMatchObject({
+      code: JsonRpcErrorCode.NotFound,
+      data: { reason: 'profile_not_found' },
+    });
+    expect(envelopeOf(on)).toStrictEqual(envelopeOf(off));
+    expect(textOf(on)).toContain('orcid_search_researchers');
+  });
+
+  it('keeps a /record 503 transient, retried and carrying Retry-After, as a /person 503 is', async () => {
+    vi.useFakeTimers();
+    const unavailable = () =>
+      new Response('down', {
+        status: 503,
+        statusText: 'Service Unavailable',
+        headers: { 'Retry-After': '1' },
+      });
+    const run = async (input: Record<string, unknown>) => {
+      const fetchMock = serve(unavailable);
+      const pending = runToolContract(orcidGetProfile, { orcid_id: RECORD_ID, ...input });
+      await vi.advanceTimersByTimeAsync(120_000);
+      return { result: await pending, urls: fetchMock.mock.calls.map(([url]) => url) };
+    };
+    const off = await run({});
+    const on = await run({ include_history: true });
+
+    expect(on.urls).toEqual(Array(4).fill(`${BASE}/${RECORD_ID}/record`));
+    expect(off.urls).toHaveLength(4);
+    expect(envelopeOf(on.result)).toMatchObject({
+      code: JsonRpcErrorCode.ServiceUnavailable,
+      data: { retryAfter: '1' },
+    });
+    expect(envelopeOf(on.result)).toStrictEqual(envelopeOf(off.result));
   });
 });

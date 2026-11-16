@@ -220,6 +220,25 @@ export type RawPerson = {
       };
 };
 
+/**
+ * The consumed part of a record's `history`. Timestamps are epoch milliseconds. The verified
+ * flags cover every email address on the record, private ones included.
+ */
+export type RawRecordHistory = {
+  'creation-method'?: undefined | string;
+  'submission-date'?: undefined | { value?: undefined | number };
+  'last-modified-date'?: undefined | { value?: undefined | number };
+  claimed?: undefined | boolean;
+  'verified-email'?: undefined | boolean;
+  'verified-primary-email'?: undefined | boolean;
+};
+
+/** The consumed sections of `/record`; its activities summary is never read. */
+export type RawRecord = {
+  history?: undefined | RawRecordHistory;
+  person?: undefined | RawPerson;
+};
+
 /** Work summary as returned by /works. */
 export type RawWorkSummary = {
   'put-code'?: undefined | number;
@@ -319,6 +338,16 @@ export type RawWorkContributor = {
     | null;
 };
 
+/**
+ * Contributor entry from a funding deposit. ORCID validates the role against `lead`,
+ * `co-lead`, `supported-by`, and `other-contribution`; funding contributors carry no sequence.
+ */
+export type RawFundingContributor = {
+  'contributor-orcid'?: undefined | { path?: undefined | string } | null;
+  'credit-name'?: undefined | { value?: undefined | string } | null;
+  'contributor-attributes'?: undefined | { 'contributor-role'?: undefined | string | null } | null;
+};
+
 /** Funding summary. */
 export type RawFundingSummary = {
   'put-code'?: undefined | number;
@@ -348,6 +377,9 @@ export type RawFundingGroup = {
 export type RawFundingDetail = RawFundingSummary & {
   'short-description'?: string | undefined | null;
   amount?: { value?: string | undefined; 'currency-code'?: string | undefined } | undefined | null;
+  /** The depositor's free-text subtype, shown on orcid.org as "Funding subtype". */
+  'organization-defined-type'?: undefined | { value?: undefined | string } | null;
+  contributors?: undefined | { contributor?: undefined | RawFundingContributor[] } | null;
 };
 
 /** Top-level fundings response. */
@@ -560,13 +592,15 @@ export type Work = {
   sources: Source[];
 };
 
-/** Normalized contributor from a full work detail. */
-export type WorkContributor = {
+/** Normalized contributor from a funding deposit, carrying only the fields deposited. */
+export type Contributor = {
   name?: string;
   orcidId?: string;
   role?: string;
-  sequence?: string;
 };
+
+/** Normalized contributor from a full work detail. */
+export type WorkContributor = Contributor & { sequence?: string };
 
 /** Normalized full work detail record. */
 export type WorkDetail = {
@@ -596,6 +630,10 @@ export type FundingRecord = {
   putCode?: number;
   description?: string;
   amount?: { value?: string; currency?: string };
+  /** Detail only: the deposit's contributors in upstream order, empty when none was deposited. */
+  contributors?: Contributor[];
+  /** Detail only: the deposit's free-text funding subtype. */
+  organizationDefinedType?: string;
   title?: string;
   type?: string;
   funder?: Organization;

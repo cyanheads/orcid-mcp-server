@@ -11,6 +11,7 @@ import {
   normalizeFundings,
   normalizePeerReviews,
   normalizePerson,
+  normalizeRecord,
   normalizeWorks,
 } from '@/services/orcid/normalizers.js';
 import type {
@@ -20,6 +21,7 @@ import type {
   RawFundingsResponse,
   RawPeerReviewsResponse,
   RawPerson,
+  RawRecord,
   RawWorksResponse,
 } from '@/services/orcid/types.js';
 
@@ -77,8 +79,28 @@ describe('normalizePerson', () => {
     expect(scopusId.type).toBe('Scopus Author ID');
     expect(scopusId.value).toBe('6603342255');
     expect(scopusId.relationship).toBe('self');
-    expect(result.emails).toEqual([{ email: 'jdoudna@berkeley.edu', primary: true }]);
+    expect(result.emails).toStrictEqual([
+      { email: 'jdoudna@berkeley.edu', primary: true, verified: true },
+    ]);
     expect(result.countries).toEqual(['US']);
+  });
+
+  it("relays each email's verified flag exactly as published, with no key when absent", () => {
+    const raw: RawPerson = {
+      emails: {
+        email: [
+          { email: 'person@example.org', primary: true, verified: true },
+          { email: 'person.alt@example.org', primary: false, verified: false },
+          { email: 'person.old@example.org' },
+        ],
+      },
+    };
+
+    expect(normalizePerson(raw).emails).toStrictEqual([
+      { email: 'person@example.org', primary: true, verified: true },
+      { email: 'person.alt@example.org', primary: false, verified: false },
+      { email: 'person.old@example.org' },
+    ]);
   });
 
   it('keeps other names in upstream (descending display-index) order', () => {
@@ -162,6 +184,61 @@ describe('normalizePerson', () => {
     const raw: RawPerson = { biography: { content: '   ' } };
     const result = normalizePerson(raw);
     expect(result.biography).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeRecord
+// ---------------------------------------------------------------------------
+
+describe('normalizeRecord', () => {
+  /** `/record` of 0000-0001-5406-5852, history as ORCID published it. */
+  const history: RawRecord['history'] = {
+    'creation-method': 'MEMBER_REFERRED',
+    'submission-date': { value: 1525931892742 },
+    'last-modified-date': { value: 1576636012219 },
+    claimed: true,
+    'verified-email': true,
+    'verified-primary-email': true,
+  };
+
+  it('converts the history timestamps to ISO 8601 and keeps every other value as published', () => {
+    expect(normalizeRecord({ history, person: {} }).history).toStrictEqual({
+      createdDate: '2018-05-10T05:58:12.742Z',
+      creationMethod: 'MEMBER_REFERRED',
+      claimed: true,
+      verifiedEmail: true,
+      verifiedPrimaryEmail: true,
+      lastModifiedDate: '2019-12-18T02:26:52.219Z',
+    });
+  });
+
+  it('keeps false flags and leaves out every field ORCID did not publish', () => {
+    expect(
+      normalizeRecord({
+        history: {
+          'creation-method': 'API',
+          'submission-date': {},
+          claimed: false,
+          'verified-email': false,
+        },
+      }).history,
+    ).toStrictEqual({ creationMethod: 'API', claimed: false, verifiedEmail: false });
+    expect(normalizeRecord({ history: {} }).history).toStrictEqual({});
+  });
+
+  it('returns no history when the record carries none', () => {
+    expect(normalizeRecord({ person: {} })).not.toHaveProperty('history');
+  });
+
+  it('normalizes the person section exactly as normalizePerson does', () => {
+    const person: RawPerson = {
+      name: { 'family-name': { value: 'Menezes' } },
+      emails: { email: [{ email: 'person@example.org', primary: true, verified: true }] },
+      addresses: { address: [{ country: { value: 'US' } }] },
+    };
+    expect(normalizeRecord({ history, person }).person).toStrictEqual(normalizePerson(person));
+    expect(normalizeRecord({ history }).person).toStrictEqual(normalizePerson({}));
   });
 });
 
@@ -1159,6 +1236,25 @@ describe('normalizeExpandedSearch', () => {
     expect(r.institutionNames).toEqual(['UC Berkeley', 'Innovative Genomics Institute']);
   });
 
+  it('keeps every other name in upstream order', () => {
+    // Neither sorted nor reverse-sorted, so a sort or a reversal changes it.
+    const raw: RawExpandedSearchResponse = {
+      'num-found': 1,
+      'expanded-result': [
+        {
+          'orcid-id': '0000-0001-9522-8779',
+          'other-name': ['Jennifer Anne Doudna', 'Дудна', 'J. A. Doudna'],
+        },
+      ],
+    };
+
+    expect(normalizeExpandedSearch(raw).results[0]?.otherNames).toEqual([
+      'Jennifer Anne Doudna',
+      'Дудна',
+      'J. A. Doudna',
+    ]);
+  });
+
   it('skips results with no orcid-id', () => {
     const raw: RawExpandedSearchResponse = {
       'num-found': 1,
@@ -1332,5 +1428,48 @@ describe('normalizeBulkWorks', () => {
   it('returns an empty array for an empty bulk response', () => {
     expect(normalizeBulkWorks({}, ORCID_ID)).toEqual([]);
     expect(normalizeBulkWorks({ bulk: [] }, ORCID_ID)).toEqual([]);
+  });
+
+  it('keeps every work contributor in order with the fields it carries, sequence included', () => {
+    const raw: RawBulkWorksResponse = {
+      bulk: [
+        {
+          work: {
+            'put-code': 1,
+            contributors: {
+              contributor: [
+                {
+                  'credit-name': { value: 'Jinek M' },
+                  'contributor-orcid': { path: '0000-0001-9161-999X' },
+                  'contributor-email': null,
+                  'contributor-attributes': {
+                    'contributor-role': 'author',
+                    'contributor-sequence': 'first',
+                  },
+                },
+                { 'contributor-attributes': { 'contributor-role': 'editor' } },
+                { 'credit-name': { value: '' }, 'contributor-attributes': null },
+              ],
+            },
+          },
+        },
+      ],
+    };
+
+    const [entry] = normalizeBulkWorks(raw, ORCID_ID);
+
+    expect(entry).toStrictEqual({
+      type: 'work',
+      detail: {
+        putCode: 1,
+        externalIds: [],
+        contributors: [
+          { name: 'Jinek M', orcidId: '0000-0001-9161-999X', role: 'author', sequence: 'first' },
+          { role: 'editor' },
+          {},
+        ],
+        sources: [],
+      },
+    });
   });
 });

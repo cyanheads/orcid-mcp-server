@@ -15,6 +15,7 @@ import type {
   Affiliation,
   AffiliationSummaryKey,
   BulkWorkResult,
+  Contributor,
   ExpandedSearchResponse,
   ExpandedSearchResult,
   ExternalIdentifier,
@@ -30,6 +31,7 @@ import type {
   RawBulkWorksResponse,
   RawExpandedSearchResponse,
   RawExpandedSearchResult,
+  RawFundingContributor,
   RawFundingDetail,
   RawFundingGroup,
   RawFundingSummary,
@@ -39,6 +41,7 @@ import type {
   RawPeerReviewGroup,
   RawPeerReviewsResponse,
   RawPerson,
+  RawRecord,
   RawResearchResourceDetail,
   RawResearchResourceGroup,
   RawResearchResourcesResponse,
@@ -274,7 +277,8 @@ export type NormalizedPerson = {
   keywords: string[];
   researcherUrls: Array<{ name?: string; url: string }>;
   externalIdentifiers: ExternalIdentifier[];
-  emails: Array<{ email: string; primary?: boolean }>;
+  /** `primary` and `verified` exactly as published; each key is absent when ORCID omits it. */
+  emails: Array<{ email: string; primary?: boolean; verified?: boolean }>;
   countries: string[];
 };
 
@@ -320,8 +324,9 @@ export function normalizePerson(raw: RawPerson): NormalizedPerson {
   result.emails =
     raw.emails?.email?.flatMap((e) => {
       if (!e.email) return [];
-      const entry: { email: string; primary?: boolean } = { email: e.email };
+      const entry: NormalizedPerson['emails'][number] = { email: e.email };
       if (typeof e.primary === 'boolean') entry.primary = e.primary;
+      if (typeof e.verified === 'boolean') entry.verified = e.verified;
       return [entry];
     }) ?? [];
 
@@ -332,6 +337,44 @@ export function normalizePerson(raw: RawPerson): NormalizedPerson {
     }) ?? [];
 
   return result;
+}
+
+/** Trust signals from a record's `history`, each present only when ORCID published it. */
+export type RecordHistory = {
+  /** `submission-date`: when the record was created, ISO 8601 UTC. */
+  createdDate?: string;
+  /** As published: `API`, `DIRECT`, `MEMBER_REFERRED`, `WEBSITE`. */
+  creationMethod?: string;
+  claimed?: boolean;
+  /** Whether any address on the record is verified, private addresses included. */
+  verifiedEmail?: boolean;
+  /** Whether the record's primary address is verified, public or not. */
+  verifiedPrimaryEmail?: boolean;
+  lastModifiedDate?: string;
+};
+
+/** The person section and history `/record` carries; `history` is absent when it has none. */
+export type NormalizedRecord = { person: NormalizedPerson; history?: RecordHistory };
+
+/** Epoch milliseconds as ISO 8601 UTC. */
+const isoDate = (epochMs: number) => new Date(epochMs).toISOString();
+
+export function normalizeRecord(raw: RawRecord): NormalizedRecord {
+  const record: NormalizedRecord = { person: normalizePerson(raw.person ?? {}) };
+  const h = raw.history;
+  if (!h) return record;
+  const history: RecordHistory = {};
+  const created = h['submission-date']?.value;
+  if (created !== undefined) history.createdDate = isoDate(created);
+  if (h['creation-method']) history.creationMethod = h['creation-method'];
+  if (h.claimed !== undefined) history.claimed = h.claimed;
+  if (h['verified-email'] !== undefined) history.verifiedEmail = h['verified-email'];
+  if (h['verified-primary-email'] !== undefined)
+    history.verifiedPrimaryEmail = h['verified-primary-email'];
+  const modified = h['last-modified-date']?.value;
+  if (modified !== undefined) history.lastModifiedDate = isoDate(modified);
+  record.history = history;
+  return record;
 }
 
 function normalizeWorkSummary(
@@ -409,7 +452,10 @@ function normalizeFundingSummary(raw: RawFundingSummary, sources: Source[]): Fun
   return record;
 }
 
-/** Normalize one deposit without inheriting other deposits' sources or periods. */
+/**
+ * Normalize one deposit without inheriting other deposits' sources or periods. Its
+ * contributors are kept whole and in upstream order, `[]` when none was deposited.
+ */
 export function normalizeFundingDetail(raw: RawFundingDetail, orcidId: string): FundingRecord {
   const record = normalizeFundingSummary(raw, normalizeSources([raw], orcidId));
   if (raw['short-description'] != null) record.description = raw['short-description'];
@@ -419,6 +465,9 @@ export function normalizeFundingDetail(raw: RawFundingDetail, orcidId: string): 
     if (raw.amount['currency-code'] !== undefined) amount.currency = raw.amount['currency-code'];
     if (Object.keys(amount).length) record.amount = amount;
   }
+  record.contributors = (raw.contributors?.contributor ?? []).map(normalizeContributor);
+  const subtype = raw['organization-defined-type']?.value;
+  if (subtype) record.organizationDefinedType = subtype;
   return record;
 }
 
@@ -510,14 +559,20 @@ export function normalizeExpandedSearch(raw: RawExpandedSearchResponse): Expande
   return { results, numFound: raw['num-found'] ?? 0 };
 }
 
-function normalizeContributor(raw: RawWorkContributor): WorkContributor {
-  const contributor: WorkContributor = {};
+/** One work or funding contributor with the fields it carries; an entry carrying none is `{}`. */
+function normalizeContributor(raw: RawFundingContributor): Contributor {
+  const contributor: Contributor = {};
   const name = raw['credit-name']?.value;
   if (name) contributor.name = name;
   const orcidPath = raw['contributor-orcid']?.path;
   if (orcidPath) contributor.orcidId = orcidPath;
   const role = raw['contributor-attributes']?.['contributor-role'];
   if (role) contributor.role = role;
+  return contributor;
+}
+
+function normalizeWorkContributor(raw: RawWorkContributor): WorkContributor {
+  const contributor: WorkContributor = normalizeContributor(raw);
   const sequence = raw['contributor-attributes']?.['contributor-sequence'];
   if (sequence) contributor.sequence = sequence;
   return contributor;
@@ -525,7 +580,7 @@ function normalizeContributor(raw: RawWorkContributor): WorkContributor {
 
 export function normalizeWorkDetail(raw: RawWorkDetail, orcidId: string): WorkDetail {
   const externalIds = normalizeExternalIds(raw['external-ids']?.['external-id']);
-  const contributors = (raw.contributors?.contributor ?? []).map(normalizeContributor);
+  const contributors = (raw.contributors?.contributor ?? []).map(normalizeWorkContributor);
   const detail: WorkDetail = {
     putCode: raw['put-code'] ?? 0,
     externalIds,

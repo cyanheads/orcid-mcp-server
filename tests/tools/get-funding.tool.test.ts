@@ -232,6 +232,57 @@ describe('orcidGetFunding', () => {
     );
   });
 
+  it('formats a detail deposit with its subtype after the type and contributors last', () => {
+    const output = orcidGetFunding.output.parse({
+      orcidId: '0000-0001-9540-6625',
+      orcidUri: 'https://orcid.org/0000-0001-9540-6625',
+      view: 'detail',
+      fundingCount: 1,
+      funding: [
+        {
+          putCode: 173219,
+          title: 'BioCollaborative Life Science Immersion Program',
+          type: 'award',
+          organizationDefinedType: 'BRIDGE Grant Program',
+          funder: { name: 'BIOCOM' },
+          startDate: '2013-07',
+          endDate: '2014-07',
+          grantNumbers: [],
+          contributors: [
+            { name: 'Sophia D. Espanola', role: 'supported-by' },
+            { role: 'lead', orcidId: '0000-0002-1825-0097' },
+            { name: 'Name Only' },
+          ],
+          sources: [{ name: 'Sophia D. Espanola', selfAsserted: true }],
+        },
+      ],
+    });
+
+    const [block] = orcidGetFunding.format!(output);
+    expect((block as { text: string }).text).toBe(
+      [
+        '## Funding for ORCID 0000-0001-9540-6625',
+        '**URI:** https://orcid.org/0000-0001-9540-6625',
+        '**View:** detail',
+        '**Total Funding Records:** 1',
+        '',
+        '### BioCollaborative Life Science Immersion Program',
+        '**Put-code:** 173219',
+        '**Type:** award',
+        '**Funding subtype:** BRIDGE Grant Program',
+        '**Funder:** BIOCOM',
+        '**Period:** 2013-07 – 2014-07',
+        '**Sources:** Sophia D. Espanola (self-asserted)',
+        '',
+        '**Contributors:**',
+        '- Sophia D. Espanola — supported-by',
+        '- (unnamed) — lead [0000-0002-1825-0097]',
+        '- Name Only',
+        '',
+      ].join('\n'),
+    );
+  });
+
   it('formats empty funding', () => {
     const output = orcidGetFunding.output.parse({
       orcidId: '0000-0002-1825-0097',

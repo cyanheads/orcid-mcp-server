@@ -11,6 +11,7 @@ import type {
   RawFundingsResponse,
   RawPeerReviewsResponse,
   RawPerson,
+  RawRecord,
   RawResearchResourceDetail,
   RawResearchResourcesResponse,
   RawWorksResponse,
@@ -63,6 +64,21 @@ const common = {
   'end-date': date,
   'external-ids': externalIds,
 };
+/** A work's or funding deposit's contributor list; the two differ only in their attributes. */
+const contributors = <T extends z.ZodRawShape>(attributes: T) =>
+  optional(
+    z.object({
+      contributor: optional(
+        z.array(
+          z.object({
+            'credit-name': value,
+            'contributor-orcid': optional(z.object({ path: text })),
+            'contributor-attributes': optional(z.object(attributes)),
+          }),
+        ),
+      ),
+    }),
+  );
 const work = z.object({
   ...common,
   'publication-date': date,
@@ -70,21 +86,7 @@ const work = z.object({
   'short-description': text,
   'language-code': text,
   citation: optional(z.object({ 'citation-type': text, 'citation-value': text })),
-  contributors: optional(
-    z.object({
-      contributor: optional(
-        z.array(
-          z.object({
-            'credit-name': value,
-            'contributor-orcid': optional(z.object({ path: text })),
-            'contributor-attributes': optional(
-              z.object({ 'contributor-role': text, 'contributor-sequence': text }),
-            ),
-          }),
-        ),
-      ),
-    }),
-  ),
+  contributors: contributors({ 'contributor-role': text, 'contributor-sequence': text }),
 });
 const affiliation = optional(
   z.object({
@@ -118,6 +120,45 @@ const section = optional(
   }),
 );
 const funding = z.object({ ...common, organization: optional(organization) });
+/** The person section, served alone by `/person` and inside `/record`. */
+const person = {
+  name: optional(z.object({ 'given-names': value, 'family-name': value, 'credit-name': value })),
+  'other-names': optional(
+    z.object({
+      'other-name': optional(z.array(z.object({ content: text, 'display-index': number }))),
+    }),
+  ),
+  biography: optional(z.object({ content: text })),
+  keywords: optional(z.object({ keyword: optional(z.array(z.object({ content: text }))) })),
+  'researcher-urls': optional(
+    z.object({ 'researcher-url': optional(z.array(z.object({ 'url-name': text, url: value }))) }),
+  ),
+  'external-identifiers': optional(
+    z.object({ 'external-identifier': optional(z.array(externalId)) }),
+  ),
+  emails: optional(
+    z.object({
+      email: optional(
+        z.array(
+          z.object({
+            email: text,
+            primary: optional(z.boolean()),
+            verified: optional(z.boolean()),
+          }),
+        ),
+      ),
+    }),
+  ),
+  addresses: optional(
+    z.object({
+      address: optional(z.array(z.object({ country: value, primary: optional(z.boolean()) }))),
+    }),
+  ),
+};
+/** Epoch milliseconds within the range `Date` represents, so conversion to ISO 8601 holds. */
+const timestamp = optional(
+  z.object({ value: optional(z.number().int().min(-8.64e15).max(8.64e15)) }),
+);
 const hosts = optional(z.object({ organization: optional(z.array(organization)) }));
 const resource = z.object({
   'put-code': number,
@@ -168,6 +209,7 @@ const envelope = <T extends z.ZodRawShape>(shape: T) =>
 export const upstreamSchemas: {
   search: z.ZodType<RawExpandedSearchResponse>;
   person: z.ZodType<RawPerson>;
+  record: z.ZodType<RawRecord>;
   works: z.ZodType<RawWorksResponse>;
   activities: z.ZodType<RawActivities>;
   fundings: z.ZodType<RawFundingsResponse>;
@@ -193,39 +235,19 @@ export const upstreamSchemas: {
       ),
     ),
   }),
-  person: envelope({
-    name: optional(z.object({ 'given-names': value, 'family-name': value, 'credit-name': value })),
-    'other-names': optional(
+  person: envelope(person),
+  record: envelope({
+    history: optional(
       z.object({
-        'other-name': optional(z.array(z.object({ content: text, 'display-index': number }))),
+        'creation-method': text,
+        'submission-date': timestamp,
+        'last-modified-date': timestamp,
+        claimed: optional(z.boolean()),
+        'verified-email': optional(z.boolean()),
+        'verified-primary-email': optional(z.boolean()),
       }),
     ),
-    biography: optional(z.object({ content: text })),
-    keywords: optional(z.object({ keyword: optional(z.array(z.object({ content: text }))) })),
-    'researcher-urls': optional(
-      z.object({ 'researcher-url': optional(z.array(z.object({ 'url-name': text, url: value }))) }),
-    ),
-    'external-identifiers': optional(
-      z.object({ 'external-identifier': optional(z.array(externalId)) }),
-    ),
-    emails: optional(
-      z.object({
-        email: optional(
-          z.array(
-            z.object({
-              email: text,
-              primary: optional(z.boolean()),
-              verified: optional(z.boolean()),
-            }),
-          ),
-        ),
-      }),
-    ),
-    addresses: optional(
-      z.object({
-        address: optional(z.array(z.object({ country: value, primary: optional(z.boolean()) }))),
-      }),
-    ),
+    person: optional(z.object(person)),
   }),
   works: envelope({
     group: optional(
@@ -265,6 +287,8 @@ export const upstreamSchemas: {
     'put-code': z.number().int().positive().safe(),
     'short-description': text,
     amount: optional(z.object({ value: text, 'currency-code': text })),
+    'organization-defined-type': value,
+    contributors: contributors({ 'contributor-role': text }),
   }),
   peerReviews: envelope({
     group: optional(
